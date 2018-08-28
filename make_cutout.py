@@ -5,26 +5,29 @@ import lsst.afw.geom as afwGeom
 
 # Mostly shamelessly stolen from Sophie Reed (thanks)
 
+
 def mad(l, med):
     return np.median(abs(l - med))
 
 
-def make_cutout_lsst(coords, exp, coord_units="pixels", size=100, w_units="pixels", width=30.0):
+def make_cutout_lsst(coords, exp, coord_units=None, size=100, w_units="pixels", width=30.0):
     wcs = exp.getWcs()
     im = exp.maskedImage.image.array
     bbox = exp.getBBox()
     xoffset = bbox.getBeginX()
     yoffset = bbox.getBeginY()
 
-    if len(coords) != 2:
-        raise ValueError("len(coords) != 2")
-    if coord_units == "radec":
-        radec = afwGeom.SpherePoint(coords[0], coords[1], afwiGeom.degrees)
-        pix = wcs.skyToPixel(coord)
-    elif coord_units == "pixels":
-        pix = coords
-    else:
-        raise ValueError("Unknown coordinate units " + coord_units)
+    if not isinstance(coords, afwGeom.SpherePoint):
+        if len(coords) != 2:
+            raise ValueError("len(coords) != 2")
+
+        if coord_units == "radec":
+            radec = afwGeom.SpherePoint(coords[0], coords[1], afwGeom.degrees)
+            pix = wcs.skyToPixel(radec)
+        elif coord_units == "pixels":
+            pix = coords
+        else:
+            raise ValueError("Unknown coordinate units " + coord_units)
 
     if w_units == "pixels":
         id1 = int(round(pix[0]))+size-xoffset
