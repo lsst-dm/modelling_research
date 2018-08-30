@@ -17,12 +17,14 @@ def make_cutout_lsst(coords, exp, coord_units=None, size=100, w_units="pixels", 
     xoffset = bbox.getBeginX()
     yoffset = bbox.getBeginY()
 
-    if not isinstance(coords, afwGeom.SpherePoint):
+    if isinstance(coords, afwGeom.SpherePoint):
+        pix = wcs.skyToPixel(coords)
+    else:
         if len(coords) != 2:
             raise ValueError("len(coords) != 2")
 
         if coord_units == "radec":
-            radec = afwGeom.SpherePoint(coords[0], coords[1], afwGeom.degrees)
+            radec = afwGeom.SpherePoint(coords[0], coords[1], afwGeom.degrees).getPosition()
             pix = wcs.skyToPixel(radec)
         elif coord_units == "pixels":
             pix = coords
@@ -38,8 +40,7 @@ def make_cutout_lsst(coords, exp, coord_units=None, size=100, w_units="pixels", 
         im_blank = np.zeros((size*2, size*2))
         ids = np.array([id1, id2, id3, id4])
         # print(ids)
-
-    if w_units == "arcsecs":
+    elif w_units == "arcsecs":
         width = width/3600.0/2.0
 
         ra_w1 = ra - width/np.cos(np.deg2rad(dec))
