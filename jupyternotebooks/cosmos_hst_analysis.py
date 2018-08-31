@@ -14,6 +14,7 @@ import os
 
 import pandas as pd
 import pickle
+
 import seaborn as sns
 
 # Setup for plotting
@@ -87,8 +88,10 @@ idxprofitunlog = range(4)
 idxprofitunlogtwo = list(np.concatenate([np.arange(4), 7 + np.arange(4)]))
 idxparamsprofit = {
     "gauss": (idxprofit, idxprofitunlog),
+    "multiexp": (idxprofit, idxprofitunlog),
     "exp": (idxprofit, idxprofitunlog),
     "multidev": (idxprofit, idxprofitunlog),
+    "dev": (idxprofit, idxprofitunlog),
     "ser": (idxprofit, idxprofitunlog),
     "cmodel": (idxprofittwo, idxprofitunlogtwo),
     "devexp": (idxprofittwo, idxprofitunlogtwo),
@@ -97,7 +100,7 @@ paramsser = ["flux", "re", "n", "q", "phi", "x0", "y0"]
 models = {
     "single": {
         "cosmos": ["ser"],
-        "profit": ["gauss", "exp", "multidev", "ser"],
+        "profit": ["gauss", "multiexp", "exp", "multidev", "dev", "ser"],
     },
     "double": {
         "cosmos": ["devexp"],
@@ -108,7 +111,6 @@ modellers = {
     "cosmos": [None],
     "profit": sources,
 }
-print(modellers)
 colnames = {
     modeller if src is None else ".".join([modeller, src]): 
         [".".join([model, param]) for model in models["single"][modeller] for param in paramsser] +
@@ -116,7 +118,6 @@ colnames = {
          [comp + "." + param for comp in ["exp", "dev"] for param in paramsser]]
     for modeller, srcs in modellers.items() for src in srcs
 }
-print(colnames)
 colnames = (["id", "ra", "dec"] +
             [".".join(["cosmos", param]) for param in params["cosmos"]] +
             [".".join(["profit", src, model, param, str(idx)])
@@ -129,7 +130,7 @@ colnames = (["id", "ra", "dec"] +
 print(colnames)
 
 
-# In[7]:
+# In[5]:
 
 
 # Some hideous code to get all of the right values in the right order, for which I apologize
@@ -143,8 +144,9 @@ rows = []
 for datatab in data:
     appended = 0
     for idx in datatab:
-        hasfits = True
+        hasfits = False
         if isinstance(datatab[idx], dict) and idx in indexmap:
+            hasfits = True
             row = [idx] + list(rgcfits[idx][1:3])
             rec = ccat.getParametricRecord(indexmap[idx])
             row += [rec[param] for param in params["cosmos"]]
@@ -187,7 +189,7 @@ for datatab in data:
     #row += profit["paramsbest"]
 
 
-# In[8]:
+# In[6]:
 
 
 # Write to a plain old CSV, then read it back in to double-check
@@ -201,13 +203,13 @@ with open(os.path.join(path, "galfits.csv"), "w", newline="") as f:
     
 
 
-# In[9]:
+# In[7]:
 
 
 tab = pd.read_csv(os.path.join(path, "galfits.csv"))
 
 
-# In[11]:
+# In[8]:
 
 
 # How well are parameters recovered?
@@ -222,6 +224,7 @@ prefixes = [
 #    ("profit.hst.ser", "profit.hst2hsc_devexp.ser", vars),
 #    ("profit.hst.ser", "profit.hst2hsc.ser", vars)
 ]
+
 for prefixx, prefixy, varnames in prefixes:
     ratios = {var: tab[".".join([prefixx, var])]/tab[".".join([prefixy,var])]
               for var in varnames}
@@ -243,7 +246,7 @@ for prefixx, prefixy, varnames in prefixes:
                 'log10({}_ratio) ({}/{})'.format(y, prefixx, prefixy))
 
 
-# In[58]:
+# In[9]:
 
 
 # Which are the best models?
@@ -259,9 +262,56 @@ print(modelbestcounts)
 for colx, coly in [("ser", "devexp"), ("ser", "cmodel"), ("devexp", "cmodel")]:
     sns.jointplot(
         x=np.log10(tab[chisqredcols[colx]]),
-        y=tab[chisqredcols[colx]]/tab[chisqredcols[coly]],
+        y=np.log10(tab[chisqredcols[colx]]/tab[chisqredcols[coly]]),
         color="k", joint_kws={'marker': '.', 's': 8},
         marginal_kws={'hist_kws': {'log': True}},
     ).set_axis_labels(
-        'log10(chisqred {})'.format(colx), 'chisqred({}/{})'.format(colx, coly))
+        'log10(chisqred) ({})'.format(colx),
+        'log10(chisqred) ({}/{})'.format(colx, coly))
+
+
+# In[10]:
+
+
+# Now compare only single-component models: Sersic vs best fixed n
+modelsfixedn = ["gauss", "exp", "dev"] 
+chisqredcolsfixedn = {
+    model: ".".join(["profit", "hst", model, "chisqred",
+                     "0" if model == "cmodel" else "1"]) 
+    for model in modelsfixedn
+}
+print(list(chisqredcolsfixedn.values()))
+modelbest = tab[list(chisqredcolsfixedn.values())].idxmin(axis=1)
+print(modelbest.value_counts())
+# I seriously cannot figure out how to slice with modelbest
+# Surely there's a better way to do this?
+modelchisqmin = tab[list(chisqredcolsfixedn.values())].min(axis=1)
+colxname = "ser"
+labelbest = 'log10(chisqred) ({}/{})'.format(colxname, "best{gauss,exp,dev}")
+ratiobest = tab[chisqredcols[colxname]]/modelchisqmin
+# Plots:
+# How much better is Sersic than the best [gauss/exp/dev] vs how good is the 
+# fit and vs Sersic index
+# As above but vs exp only
+cols = [
+    (tab[chisqredcols[colxname]], ratiobest,
+     'log10(chisqred) ({})'.format(colxname), labelbest), 
+    (tab["profit.hst.ser.n"], ratiobest, 'log10(n_ser)', labelbest),
+    (tab["profit.hst.ser.n"],
+     tab[chisqredcols[colxname]]/tab[chisqredcols["exp"]],
+     'log10(n_ser)', 'log10(chisqred) ({}/exp)'.format(colxname)),
+]
+for x, y, labelx, labely in cols:
+    sns.jointplot(
+        x=np.log10(x),
+        y=np.log10(y),
+        color="k", joint_kws={'marker': '.', 's': 8},
+        marginal_kws={'hist_kws': {'log': True}},
+    ).set_axis_labels(labelx, labely)
+
+
+# In[ ]:
+
+
+
 
