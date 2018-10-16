@@ -11,16 +11,12 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-
 import pandas as pd
-
 import pickle
-
 import seaborn as sns
 
 # Setup for plotting
 get_ipython().magic('matplotlib inline')
-import matplotlib.pyplot as plt
 
 #plt.style.use('seaborn-notebook')
 sns.set_style('darkgrid')
@@ -174,6 +170,9 @@ for datatab in data:
                                     row += [profitmodelfit[param]
                                             for param in params["profit"]
                                             for profitmodelfit in profitmodel]
+                if idx == 0:
+                    print(datatab[idx]['hst2hsc_mgserbgepx'].keys())
+                    print(src, model, hasfits)
             if hasfits:
                 row += [rec["flux"][0]] + list(rec["sersicfit"][idxparamscosmos[0]])
                 for offset in range(2):
@@ -197,17 +196,19 @@ for datatab in data:
         if hasfits:
             rows.append(row)
             appended += 1
-    print("Read {}/{} rows".format(appended, len(datatab)))
+    listids = datatab.keys()
+    print("Read {}/{} rows from {}-{}".format(
+        appended, len(datatab), min(listids),
+        max(listids)))
 
     # TODO: Convert mu_re into flux for use_bulgefit=0
     #row += profit["paramsbest"]
 
 
-# In[6]:
+# In[7]:
 
 
 # Write to a plain old CSV, then read it back in to double-check
-
 import csv
 
 with open(os.path.join(path, "galfits.csv"), "w", newline="") as f:
@@ -217,13 +218,13 @@ with open(os.path.join(path, "galfits.csv"), "w", newline="") as f:
     
 
 
-# In[7]:
+# In[8]:
 
 
 tab = pd.read_csv(os.path.join(path, "galfits.csv"))
 
 
-# In[8]:
+# In[9]:
 
 
 # How well are parameters recovered?
@@ -231,7 +232,7 @@ tab = pd.read_csv(os.path.join(path, "galfits.csv"))
 # Then HSC vs HST
 
 
-varnames = ["flux", "re"]
+varnames = ["flux", "re", "n"]
 prefixes = [
     ("profit.hst.serb", "cosmos.ser", varnames),
     ("profit.hst.mgserbgedpx", "cosmos.ser", varnames),
@@ -279,7 +280,7 @@ for prefixx, prefixy, varnames in prefixes:
         #cax = fig.add_axes([.94, .25, .02, .6])
 
 
-# In[ ]:
+# In[10]:
 
 
 # Which are the best models?
@@ -294,16 +295,17 @@ modelbest = tab[list(chisqredcols.values())].idxmin(axis=1)
 modelbestcounts = modelbest.value_counts()
 print(modelbestcounts)
 for colx, coly in [("mgserbgedpx", "mgdevexppx"), ("mgserbgedpx", "mgcmodelpx"), 
-                   ("mgdevexppx", "mgcmodelpx")]:
+                   ("mgdevexppx", "mgcmodelpx"), ("mgserbgedpx", "serb")]:
     fig = sns.JointGrid(x=np.log10(tab[chisqredcols[colx]]),
                         y=np.log10(tab[chisqredcols[colx]]/tab[chisqredcols[coly]]))
     fig.plot_joint(plt.scatter, c=colors, marker='.',
                    edgecolor='k', s=24).set_axis_labels(
         'log10(chisqred) ({})'.format(colx),
         'log10(chisqred) ({}/{})'.format(colx, coly))
+    fig.plot_marginals(sns.distplot, kde=False, hist_kws={'log': True})
 
 
-# In[17]:
+# In[12]:
 
 
 # Now compare only single-component models: Sersic vs best fixed n
@@ -318,28 +320,28 @@ print(modelbest.value_counts())
 # I seriously cannot figure out how to slice with modelbest
 # Surely there's a better way to do this?
 modelchisqmin = tab[list(chisqredcolsfixedn.values())].min(axis=1)
-colxname = "mgserbgedpx"
-labelbest = 'log10(chisqred) ({}/{})'.format(colxname, "best{gauss,exp,n2,dev}")
-ratiobest = tab[chisqredcols[colxname]]/modelchisqmin
-# Plots:
-# How much better is Sersic than the best [gauss/exp/dev] vs how good is the 
-# fit and vs Sersic index
-# As above but vs exp only
-cols = [
-    (tab[chisqredcols[colxname]], ratiobest,
-     'log10(chisqred) ({})'.format(colxname), labelbest), 
-    (tab["profit.hst.mgserbgedpx.n"], ratiobest, 'log10(n_ser)', labelbest),
-    (tab["profit.hst.mgserbgedpx.n"],
-     tab[chisqredcols[colxname]]/tab[chisqredcols["mgexppx"]],
-     'log10(n_ser)', 'log10(chisqred) ({}/exp)'.format(colxname)),
-]
-for x, y, labelx, labely in cols:
-    sns.jointplot(
-        x=np.log10(x),
-        y=np.log10(y),
-        color="k", joint_kws={'marker': '.', 's': 4},
-        marginal_kws={'hist_kws': {'log': True}},
-    ).set_axis_labels(labelx, labely)
+for colxname in ["mgserbgedpx", 'serb']: 
+    labelbest = 'log10(chisqred) ({}/{})'.format(colxname, "best{gauss,exp,n2,dev}")
+    ratiobest = tab[chisqredcols[colxname]]/modelchisqmin
+    # Plots:
+    # How much better is Sersic than the best [gauss/exp/dev] vs how good is the 
+    # fit and vs Sersic index
+    # As above but vs exp only
+    colnser = colxname.join(["profit.hst.", ".n"])
+    cols = [
+        (tab[chisqredcols[colxname]], ratiobest,
+         'log10(chisqred) ({})'.format(colxname), labelbest), 
+        (tab[colnser], ratiobest, 'log10(n_ser)', labelbest),
+        (tab[colnser], tab[chisqredcols[colxname]]/tab[chisqredcols["mgexppx"]],
+         'log10(n_ser)', 'log10(chisqred) ({}/exp)'.format(colxname)),
+    ]
+    for x, y, labelx, labely in cols:
+        sns.jointplot(
+            x=np.log10(x),
+            y=np.log10(y),
+            color="k", joint_kws={'marker': '.', 's': 4},
+            marginal_kws={'hist_kws': {'log': True}},
+        ).set_axis_labels(labelx, labely)
 
 
 # In[ ]:
