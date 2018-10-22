@@ -138,6 +138,8 @@ for n in [0.5, 1, 2, 4]:
 plt.tight_layout()
 for axis in ['x','y']:
     plt.autoscale(enable=True, axis=axis, tight=True)
+plt.xlabel('$r/r_{eff}$')
+plt.ylabel('log10(surface density)')
 plt.show()
 
 weightssigmas = mpfobj.MultiGaussianApproximationProfile.weights['sersic'][order]
