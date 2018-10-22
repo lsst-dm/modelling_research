@@ -223,26 +223,61 @@ nvals = [
 fitweights(nvals)
 
 
-# In[5]:
+# In[9]:
 
 
-nbins2 = 20000
-remax2 = 16
-redge2 = np.linspace(0, remax2, nbins2+1)
-rmid2 = (redge2[1:] + redge2[:-1])/2.
-weightsvars2 = (
-    np.array([2.35664934e-01, 2.47200716e-01, 2.15434097e-01, 1.52002399e-01,
-              8.82420146e-02, 4.19064584e-02, 1.55837863e-02, 3.96559442e-03]),
-    np.array([7.48576191e+00, 2.00069998e+00, 7.36312757e-01, 2.88738813e-01,
-              1.13519914e-01, 4.27457135e-02, 1.44861835e-02, 3.82934208e-03]),
-)
-params2 = weightrestoparams(weightsvars2[0], weightsvars2[1])
-y2 = sersic(rmid2, 4, 1)
-rsq2 = redge2**2
-areasq2 = np.pi*(rsq2[1:] - rsq2[:-1])
-rv, ymodel2 = chisq_sersic(params2, rmid2, y2, areasq2, plotdata=True, plotmodel=True, returnall=True)
-print(np.sum((y2*areasq2)[0:10000]), np.sum((ymodel2*areasq2)[0:10000]))
-print(np.sum(y2*areasq2), np.sum(ymodel2*areasq2))
+# Check out the resulting splines once implemented in MultiProfit
+
+import scipy.interpolate as spinterp
+
+order = 8
+weightvars = mpfobj.MultiGaussianApproximationProfile.weights['sersic'][order]
+
+weightsplines = []
+sigmasplines = []
+indices = np.log10(np.array(list(weightvars.keys())))
+weightvalues = np.array(list(weightvars.values()))
+for i in range(order):
+    # Weights we want to ignore are flagged by negative radii
+    # you might want a spline knot at r=0 and weight=0, although there is a danger of getting r < 0
+    isweight = np.array([value[1][i] >= 0 for value in weightvalues])
+    weightvaluestouse = weightvalues[isweight]
+    for j, (splines, ext) in enumerate([(weightsplines, 'zeros'), (sigmasplines, 'const')]):
+        splines.append(spinterp.InterpolatedUnivariateSpline(
+            indices[isweight], [values[j][i] for values in weightvaluestouse], ext=ext))
+            
+nsers = np.linspace(np.log10(0.5), np.log10(6.3), 10000)
+
+weightsums = [np.sum(np.array([weightsplines[i](nserlog) for i in range(order)])) for nserlog in nsers]
+plt.plot(nsers, np.log10(weightsums), 'k-', linewidth=3)
+for i in range(order):
+    plt.plot(nsers, np.log10(weightsplines[i](nsers)), linewidth=2)
+    
+plt.xlabel('log10(n)')
+plt.ylabel('log10(weight)')
+plt.show()
+
+for i in range(order):
+    plt.plot(nsers, np.log10(sigmasplines[i](nsers)), linewidth=2)
+plt.xlabel('log10(n)')
+plt.ylabel('log10(r)')
+plt.show()
+
+for idxn, nser in enumerate(indices):
+    if idxn < 10 or idxn % 12 == 1:
+        plt.plot(
+            np.log10(np.array([weightsplines[i](nser) for i in range(order)
+                               if weightvalues[idxn][0][i] > 1e-12])),
+            np.log10(np.array([sigmasplines[i](nser) for i in range(order)
+                               if weightvalues[idxn][0][i] > 1e-12])),
+            'k-', linewidth=1)
+
+for i in range(order):
+    plt.plot(np.log10(weightsplines[i](nsers)), np.log10(sigmasplines[i](nsers)), linewidth=2)
+
+plt.xlim([-5.2, 0])
+
+plt.show()
 
 
 # In[ ]:
