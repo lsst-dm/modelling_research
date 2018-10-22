@@ -69,7 +69,7 @@ for file in files:
 
 sources = ["hst"] + ["_".join(["hst2hsc", postfix]) for postfix in [
 #    "",
-    "mgserbgepx",
+    "mgserbpx",
 #    "_devexp"
 ]]
 params = {
@@ -87,9 +87,9 @@ idxparamsprofit = {
     "mgexppx":     idxprofit,
 #    "mgexpgpx": idxprofit,
     "mgn2px":      idxprofit,
-    "mgdevepx":    idxprofit,
-    "mgserbgedpx": idxprofit,
-    "mgserbgepx":  idxprofit,
+    "mgdev2px":    idxprofit,
+    "mgserbpx": idxprofit,
+    "mgserbedpx":  idxprofit,
     "serbpx":  idxprofit,
     "serb":  idxprofit,
     "mgcmodelpx":  idxprofittwo,
@@ -100,8 +100,8 @@ paramsser = ["flux", "re", "n", "q", "phi", "x0", "y0"]
 models = {
     "single": {
         "cosmos": ["ser"],
-        "profit": ["gausspx", "mgexppx", "mgn2px", "mgdevepx", 
-                   "mgserbgedpx", "mgserbgepx", "serbpx", "serb"],
+        "profit": ["gausspx", "mgexppx", "mgn2px", "mgdev2px", 
+                   "mgserbpx", "mgserbedpx", "serbpx", "serb"],
     },
     "double": {
         "cosmos": ["devexp"],
@@ -171,7 +171,7 @@ for datatab in data:
                                             for param in params["profit"]
                                             for profitmodelfit in profitmodel]
                 if idx == 0:
-                    print(datatab[idx]['hst2hsc_mgserbgepx'].keys())
+                    print(datatab[idx]['hst2hsc_mgserbpx'].keys())
                     print(src, model, hasfits)
             if hasfits:
                 row += [rec["flux"][0]] + list(rec["sersicfit"][idxparamscosmos[0]])
@@ -205,7 +205,7 @@ for datatab in data:
     #row += profit["paramsbest"]
 
 
-# In[7]:
+# In[6]:
 
 
 # Write to a plain old CSV, then read it back in to double-check
@@ -218,13 +218,13 @@ with open(os.path.join(path, "galfits.csv"), "w", newline="") as f:
     
 
 
-# In[8]:
+# In[7]:
 
 
 tab = pd.read_csv(os.path.join(path, "galfits.csv"))
 
 
-# In[9]:
+# In[8]:
 
 
 # How well are parameters recovered?
@@ -235,15 +235,15 @@ tab = pd.read_csv(os.path.join(path, "galfits.csv"))
 varnames = ["flux", "re", "n"]
 prefixes = [
     ("profit.hst.serb", "cosmos.ser", varnames),
-    ("profit.hst.mgserbgedpx", "cosmos.ser", varnames),
-    ("profit.hst.mgserbgedpx", "profit.hst2hsc_mgserbgepx.mgserbgedpx", 
+    ("profit.hst.mgserbpx", "cosmos.ser", varnames),
+    ("profit.hst.mgserbpx", "profit.hst2hsc_mgserbpx.mgserbpx", 
      varnames),
 #    ("profit.hst.ser", "profit.hst2hsc_devexp.ser", vars),
 #    ("profit.hst.ser", "profit.hst2hsc.ser", vars)
 ]
 
 cmap = mpl.colors.ListedColormap(sns.color_palette("RdYlBu_r", 100))
-colors = (np.log10(tab["profit.hst.mgserbgedpx.n"])+1)/np.log10(60)
+colors = (np.log10(tab["profit.hst.mgserbpx.n"])+1)/np.log10(60)
 colors = cmap(np.rint(100*colors)/100)
 
 
@@ -268,7 +268,7 @@ for prefixx, prefixy, varnames in prefixes:
                            edgecolor='k', s=24).set_axis_labels(
                 'log10({}_ratio) ({}/{})'.format(x, prefixx, prefixy),
                 'log10({}_ratio) ({}/{})'.format(y, prefixx, prefixy))
-            fig.plot_marginals(sns.distplot, kde=False, hist_kws={'log': True})
+            fig.plot_marginals(sns.distplot, kde=False, hist_kws={'log': False})
 
         ylog = np.log10(tab[getname(x, prefixx)])
         fig = sns.JointGrid(x=ylog, y=xlog)
@@ -276,11 +276,11 @@ for prefixx, prefixy, varnames in prefixes:
                        edgecolor='k', s=24).set_axis_labels(
             'log10({}) ({})'.format(x, prefixx),
             'log10({}_ratio) ({}/{})'.format(x, prefixx, prefixy))
-        fig.plot_marginals(sns.distplot, kde=False, hist_kws={'log': True})
+        fig.plot_marginals(sns.distplot, kde=False, hist_kws={'log': False})
         #cax = fig.add_axes([.94, .25, .02, .6])
 
 
-# In[10]:
+# In[9]:
 
 
 # Which are the best models?
@@ -294,8 +294,9 @@ print(chisqredcols)
 modelbest = tab[list(chisqredcols.values())].idxmin(axis=1)
 modelbestcounts = modelbest.value_counts()
 print(modelbestcounts)
-for colx, coly in [("mgserbgedpx", "mgdevexppx"), ("mgserbgedpx", "mgcmodelpx"), 
-                   ("mgdevexppx", "mgcmodelpx"), ("mgserbgedpx", "serb")]:
+for colx, coly in [("mgserbpx", "mgdevexppx"), ("mgserbedpx", "mgcmodelpx"), 
+                   ("mgdevexppx", "mgcmodelpx"), ("mgserbedpx", "serb"),
+                   ("mgserbedpx", "mgserbpx")]:
     fig = sns.JointGrid(x=np.log10(tab[chisqredcols[colx]]),
                         y=np.log10(tab[chisqredcols[colx]]/tab[chisqredcols[coly]]))
     fig.plot_joint(plt.scatter, c=colors, marker='.',
@@ -305,14 +306,13 @@ for colx, coly in [("mgserbgedpx", "mgdevexppx"), ("mgserbgedpx", "mgcmodelpx"),
     fig.plot_marginals(sns.distplot, kde=False, hist_kws={'log': True})
 
 
-# In[12]:
+# In[10]:
 
 
 # Now compare only single-component models: Sersic vs best fixed n
-modelsfixedn = ["gausspx", "mgexppx", 'mgn2px', "mgdevepx"] 
+modelsfixedn = ["gausspx", "mgexppx", 'mgn2px', "mgdev2px"] 
 chisqredcolsfixedn = {
-    model: ".".join(["profit", "hst", model, "chisqred",
-                     "0" if model == "cmodel" else "0"]) 
+    model: ".".join(["profit", "hst", model, "chisqred", "0"]) 
     for model in modelsfixedn
 }
 modelbest = tab[list(chisqredcolsfixedn.values())].idxmin(axis=1)
@@ -320,8 +320,8 @@ print(modelbest.value_counts())
 # I seriously cannot figure out how to slice with modelbest
 # Surely there's a better way to do this?
 modelchisqmin = tab[list(chisqredcolsfixedn.values())].min(axis=1)
-for colxname in ["mgserbgedpx", 'serb']: 
-    labelbest = 'log10(chisqred) ({}/{})'.format(colxname, "best{gauss,exp,n2,dev}")
+for colxname in ["mgserbpx", 'serb']: 
+    labelbest = 'log10(chisqred) ({}/{})'.format(colxname, "best([gauss,exp,n2,dev]px)")
     ratiobest = tab[chisqredcols[colxname]]/modelchisqmin
     # Plots:
     # How much better is Sersic than the best [gauss/exp/dev] vs how good is the 
@@ -340,7 +340,7 @@ for colxname in ["mgserbgedpx", 'serb']:
             x=np.log10(x),
             y=np.log10(y),
             color="k", joint_kws={'marker': '.', 's': 4},
-            marginal_kws={'hist_kws': {'log': True}},
+            marginal_kws={'hist_kws': {'log': False}},
         ).set_axis_labels(labelx, labely)
 
 
