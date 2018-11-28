@@ -1,8 +1,21 @@
 
 # coding: utf-8
 
+# # Deriving multi-Gaussian approximations to Sersic profiles
+# 
+# This notebook demonstrates how to derive optimal parameters for Gaussian mixture model approximations to the Sersic (1963, 1968) function commonly used to model galaxy radial surface brightness profiles.
+# 
+# The main motivation behind doing this is that a Gaussian convolved with a Gaussian has an analytic solution - namely, another Gaussian - and so Gaussian mixture galaxy models convolved with Gaussian mixture PSF models are simple and fast to evaluate.
+# There are some other advantages that won't be detailed here. The only serious disadvantage is the introduction of 'wiggles' in the profile and therefore roughly sinusoidal variations in the second derivative.
+# 
+# The approach here is similar to Hogg & Lang (2013), but that paper did not publish weights for entire useful range of Sersic indices 0.5 <= n < 10. We will actually only go up to n=6.3 as this is the upper limit supported in GalSim.
+# 
+# For convenience, after this we'll refer to multi-Gaussian approximations (i.e. Gaussian mixture models) as MGAs for short.
+
 # In[1]:
 
+
+# Setup
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -15,6 +28,14 @@ get_ipython().magic('matplotlib inline')
 sns.set_style("darkgrid")
 mpl.rcParams['figure.dpi'] = 240
 
+
+# ## Define useful functions
+# 
+# Here we'll define functions for a unit Sersic profile, and for optimizing the weights in an MGA for a chi-square like objective function.
+# 
+# The fitting functions allow for matching the profile over a limited range after re-normalization - the justification for this will be explained later.
+# 
+# Note that the size unit is always Re, and Re = FWHM/2 ~ 1.17741 sigma; the weight is just a fraction for convenience.
 
 # In[2]:
 
@@ -30,8 +51,8 @@ def sersic(r, n, re):
 
 # Compute chisq as log difference in 2D binned flux
 # i.e. not really chisq since it's a sum of squares but without any error
-# Rangefit allows re-normalizing model to match data normalization within the specified range
-# Otherwise, model and data are normalized from r=0 to infinity
+# Rangefit allows re-normalizing the model to match data normalization within the specified range
+# Otherwise, the model and data are normalized from r=0 to infinity
 def chisq_sersic(params, x, y, weightsbins, rangefit=None, rdivreslog=None,
                  plotdata=False, plotmodel=False, returnall=False):
     ymodel = np.zeros(len(x))
@@ -118,6 +139,8 @@ def fitweights(nvals, radii, areasq, weightssigmas={}, methods=['BFGS'], plot=Tr
                 params = fit['x']
             print(fit['fun'], fit['x'])
             chisq = chisq_sersic(params, radii, y, areasq, rangefit, rdivreslog, plotmodel=plot)
+            plt.xlabel('$r/r_{eff}$')
+            plt.ylabel('log10(surface density)')
             plt.show()
             weights, res = paramstoweightres(params, rdivreslog)
             idxsort = np.argsort(res)[::-1]
@@ -143,6 +166,10 @@ def normalize(array):
     return array
 
 
+# ## Define the fit range and plot the Sersic profile for reference
+# 
+# We choose to fit out to R/Re = 12 rather than the more typical limit of R/Re=8 commonly used in SDSS. This allows the fits to better match the n>4 profiles at R/Re > 4. Massive elliptical galaxies often do have very extended outer profiles with large Sersic indices (see papers by Kormendy & co. on Virgo galaxies), so we do want to reproduce the shape at large radii. Eventually, the MGA profile will truncate more quickly than a Sersic profile as only the outer Gaussian contributes to the flux, but that's fine - we don't really trust the extrapolation at such large radii unless there's very deep data to constrain it.
+
 # In[3]:
 
 
@@ -166,6 +193,20 @@ plt.xlabel('$r/r_{eff}$')
 plt.ylabel('log10(surface density)')
 plt.show()
 
+
+# ## Carefully fit MGA weights/sizes for n < 1
+# 
+# This section begins fitting the optimal weights and sizes of the MGA.
+# 
+# The trickiest part of this problem is finding optimal weights for an MGA with N components as n -> 0.5. Of course, you only need a single component to reproduce n=0.5 exactly, and for n=0.5 + a small epsilon, you need only two Gaussians - one slightly smaller and one slightly larger - for a good approximation. As n grows, the minimal N for a good fit grows too. There are essentially two options, then - either grow N gradually with increasing n, or keep N fixed and hope that the weights change smoothly down to n=0.5. Unfortunately, the latter option is practically quite difficult as many of the best-fit weights asymptote to zero but are very noisy, which is a problem if we want to smoothly interpolate the weights for any value of N (see below). That leaves the first option of gradually adding components.
+# 
+# After some experimentation, two things are apparent. First, as n->0.5, the best-fit model tends to two components of (weight, size) = (1-delta, 1+eps), (delta, 0.716). Why that specifical value of 0.716, I'm not sure.
+# 
+# Secondly, adding components while maintaining a smooth variation in the weights and sizes becomes tricky, because the best-fit solutions for an MGA with N and N-1 components can be significantly different. The solution here is to ensure delta n is large enough when incrementing N such that the weights still change smoothly. However, it turns out that the weights derived here through a combination of working from n=0.5 up and from n=1 down (meeting in the middle) don't change smoothly enough to be useable for interpolation and fitting - see the plots further below.
+# 
+# Thirdly, there were only two things, but there's no legend in the plots so it should be mentioned that blue is true profile, orange is the initial guess, and green is the final best fit.
+# 
+# Note that it's impossible to fit n < 0.5 profiles with an MGA without spatially offsetting the components. Note that as n <= 0, the Sersic profile approaches a step function. This isn't a very useful approximation for most 'normal' galaxies, but it can be a useful approximation of parts of barred/ring galaxies, so we will revisit this issue later.
 
 # In[4]:
 
@@ -256,6 +297,10 @@ nvals = [
 fitweights(nvals, rmid, areasq, methods=['BFGS'])
 
 
+# ## Why can't you just fit N components down to n=0.5?
+# 
+# You can try, but it doesn't work well below n=0.6 as the smallest component(s) gradually reduce their weights to near-zero values. Once this happens, it becomes very difficult to ensure smooth changes in the best-fit weight even given small changes in n - the best-fit weights are essentially 'noisy'.
+
 # In[5]:
 
 
@@ -272,6 +317,10 @@ nvals = [
 ]
 fitweights(nvals, rmid, areasq)
 
+
+# ## Fitting weights with fixed, linearly-extrapolated sizes for n < 1
+# 
+# In plots below, one can see that the best-fit *sizes* change nearly linearly from about n=1 to n=0.7. It's tempting to try to extrapolate the sizes to n=0.5 and fit only the weights. This approach works a little better down to n=0.6 but suffers the same issues of weights tending to noisy, near-zero values as n->0.5.
 
 # In[6]:
 
@@ -330,6 +379,10 @@ nvals = [
 fitweights(nvals, rmid, areasq, funcrdivreslog=RadiusExtrapolator.r)
 
 
+# ## Drop components after a weight threshold is reached
+# 
+# Continuing with fits with a fixed size but free weights, we drop one component at n=0.6 and a second at n=0.52 - values where the smallest weights drop rapidly below 1e-6. Waiting until this point keeps weights of the remaining components changing smoothly as they adapt to dropping what turns out to be the smallest component the first time and the second-smallest component the second time. Sticking to N=6 works well enough down to n=0.50025, surprisingly, after which the size of the largest components asymptotes to one and all of the other weights drop to zero.
+
 # In[7]:
 
 
@@ -355,6 +408,10 @@ nvals = (
 ),
 fitweights(nvals, rmid, areasq, funcrdivreslog=funcrvdivreslog2)
 
+
+# ## Fitting large n profiles
+# 
+# Up to n=2.5, we continue from the exponential solution. Beyond n=2.5, it becomes very difficult to fit the outer profile because more of the Gaussian components trend to tiny sizes. By masking the inner bins, we can limit this issue and ensure a nearly constant central surface brightness. In the real universe, most massive nearby ellipticals don't have the steep cusp of an n>4 profile - only the outer part is well-approximated by an n>4 profile. Kormendy & co. discuss this at length in a number of papers, hypothesizing that the shallow inner cores are due to massive black holes scattering stars and scouring the inner regions of stars. It could be possible that higher-redshift ellipticals and/or recent merger remnants do have very cuspy centers, but these are probably merger-induced and distinct enough from the rest of the galaxy that they should be considered a separate component.
 
 # In[8]:
 
@@ -449,7 +506,11 @@ nvals = [
 fitweights(nvals, rmid, areasq, funcrangefit=funcrangefitn)
 
 
-# In[4]:
+# ## The graveyard of failed ideas
+# 
+# These are best-fit weights from the unsuccesful attempts - keeping both the weights and sizes free and either dropping components manually or keeping N=8 fixed and hoping for the best. We'll plot these up later along with the more successful fixed size below n=1 approach.
+
+# In[9]:
 
 
 # Test out various spline weighting methods
@@ -931,7 +992,15 @@ weightvarslinrev = {
 weightvarslin = {key: weightvarslinrev[key] for key in list(weightvarslinrev.keys())[::-1]}
 
 
-# In[22]:
+# ## Verifying the smoothness of the interpolation of the weights/sizes
+# 
+# This section verifies that the first presented attempt worked reasonably well, whereas the alternatives immediately above do not. Actually, the free weights/size splines are not pathological, but the size control points create curves with too many inflection points that turn out to 
+# 
+# Note that the gradual increase in the masked region for n>2.5 introducess a kink in the curves right at n=2.5; a smoother parameterization of the fit exclusion region could avoid this.
+# 
+# Lastly, it's worth noting that not every control point was used for the final set in MultiProFit; some were excluded to 
+
+# In[10]:
 
 
 import multiprofit.util as mpfutil
@@ -982,27 +1051,6 @@ for weightvars in weightvarssmrt, weightvarslin, None:
     plt.show()
 
 
-# In[6]:
-
-
-nvals = [
-    (
-        np.array(
-            [1.0, 0.9951]),
-        (
-                    normalize(np.array(
-                        [7.8089302552e-02, 3.1272845739e-01, 3.3917942231e-01, 1.8385320987e-01,
-                         6.5409357632e-02, 1.7092487306e-02, 3.2648315688e-03])),
-                    np.array([2.1696970478e+00, 1.4762958638e+00, 9.9472902755e-01, 6.5048026983e-01,
-                              4.0697572620e-01, 2.3875345782e-01, 1.2628845935e-01]),
-        ),
-    )
-]
-fitweights(nvals, rmid, areasq)
-
-
-# In[ ]:
-
-
-
-
+# ### How well does the interpolation work far away from the spline control points?
+# 
+# This is TBD. At the least, the COSMOS analysis shows that it's not terribly bad. On the other hand, you could argue that the Sersic profile isn't physically motivated anyways, so it's not worth worrying too much about reproducing it to arbitrarily small tolerances, except insofar as adding more components minimizes the amplitude of the wiggles in the MGA profile.

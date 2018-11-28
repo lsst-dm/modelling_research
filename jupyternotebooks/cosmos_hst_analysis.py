@@ -1,6 +1,10 @@
 
 # coding: utf-8
 
+# # Fitting COSMOS galaxes with MultiProFit
+# 
+# This notebook plots results from fitting COSMOS galaxies with MultiProFit. It does not (yet) demonstrate how to run the code in the first place; example scripts in the MultiProFit repo do that.
+
 # In[1]:
 
 
@@ -25,6 +29,12 @@ mpl.rcParams['image.origin'] = 'lower'
 sns.set(rc={'axes.facecolor': '0.85', 'figure.facecolor': 'w'})
 
 
+# ### Read COSMOS catalog and pickled MultiProFit results
+# 
+# The example script to generate these results can be found at https://github.com/lsst-dm/multiprofit/blob/master/examples/fitcosmos.py (for now).
+# 
+# The COSMOS catalog is from GalSim: https://github.com/GalSim-developers/GalSim/wiki/RealGalaxy-Data
+
 # In[2]:
 
 
@@ -47,13 +57,16 @@ for file in files:
         data.append(pickle.load(f))
 
 
+# ### Define the table column names
+# 
+# This (admitted ugly) section defines column names and indices for reading both the MultiProFit fit results and the results from the COSMOS-GalSim catalog itself for a consistency check.
+
 # In[4]:
 
 
 # See https://github.com/GalSim-developers/GalSim/blob/8d9bc8ce568e3fa791ab658650fce592cdf03735/galsim/scene.py
 # lines 615-625
 # Presumably copypasta'd from the original COSMOS fit catalog table/paper
-
 
 #     SERSICFIT[0]: intensity of light profile at the half-light radius.
 #     SERSICFIT[1]: half-light radius measured along the major axis, in units of pixels
@@ -131,6 +144,10 @@ colnames = (["id", "ra", "dec"] +
 print(colnames)
 
 
+# ### Read the MultiProFit results
+# 
+# Continuing the trend of unseemly code, this section reads every MultiProFit result pickle and saves a row with numbers in the same order as the column names above. TBD: Combine these into one.
+
 # In[5]:
 
 
@@ -205,6 +222,10 @@ for datatab in data:
     #row += profit["paramsbest"]
 
 
+# ### Writing a table with the results
+# 
+# The table of results isn't quite human-readable, but you can analyze it any which way you like.
+
 # In[6]:
 
 
@@ -223,6 +244,12 @@ with open(os.path.join(path, "galfits.csv"), "w", newline="") as f:
 
 tab = pd.read_csv(os.path.join(path, "galfits.csv"))
 
+
+# ### Make joint parameter plots
+# 
+# This section makes an alarmingly large number of plots. Most of them check consistency between the MultiProFit fits and the COSMOS-GalSim catalog values with marginalized histograms thereof. The last set compares the results from HST fits to synthetic HSC-quality images of the same galaxy. More specifically, we take the best-fit HST F814W model (single MG Sersic for now), convolve it with the HSC r-band PSF, re-normalize the magnitude to match the original HSC image since they're different resolutions and the F814W band is wider than r, and use the observed HSC inverse variance map (which isn't completely consistent with the 'true' model, but it's close enough and saves the effort of having to back out the HSC background, etc.).
+# 
+# Note that the colour coding is by log(Sersic index), such that low values (~disk-like) are blue and high values (~bulge-like) are red.
 
 # In[8]:
 
@@ -280,6 +307,14 @@ for prefixx, prefixy, varnames in prefixes:
         #cax = fig.add_axes([.94, .25, .02, .6])
 
 
+# ### Model comparison plots
+# 
+# These plots compare the goodness of fit (reduced chi-squared in this case) of different model combinations. This mainly helps to determine which models are worth fitting and - judging by the absolute goodness of fit and the best-fit Sersic index for the single MG Sersic - what kind of galaxies each model is good for.
+# 
+# The first plot is probably the most interesting, as it shows that a single Sersic fit is better for most galaxies with a best-fit Sersic index n~0.5 or n~6 than a more complicated DevExp model, whereas the devExp model appears to do better for more typical galaxies with intermediate values of 1 < n < 4. We also see that most of the galaxies for which a low-n single Sersic fit is preferred (light blue dots below 0 on the y-axis) tend to have relatively low reduced chi-squared values; these galaxies are probably not very well resolved and the fact that the devExp fit is usually not much worse suggests that they're most likely not truly Gaussian-like profiles. On the other hand, there are a significant number of galaxies preferring high-n Sersic fits to devExp; it's possible that some of these really are extended elliptical galaxies rather than bulge+disk systems.
+# 
+# Some of the later plots compare equivalent models where the only differences are the initial parameters; an ideal optimizer should reach identical solutions for both.
+
 # In[9]:
 
 
@@ -305,6 +340,14 @@ for colx, coly in [("mgserbpx", "mgdevexppx"), ("mgserbedpx", "mgcmodelpx"),
         'log10(chisqred) ({}/{})'.format(colx, coly))
     fig.plot_marginals(sns.distplot, kde=False, hist_kws={'log': True})
 
+
+# ### MG Sersic fixed-n vs free-n fits
+# 
+# These plots compare fixed- versus free-n single Sersic fits. This is to help determine an optimal workflow for fitting increasingly complicated models. For example, the Gaussian model is the fastest to evaluate, but it's also the least likely to be the best fit out of the four fixed-n models (n=0.5, 1, 2, 4).
+# 
+# Another plot compares the goodness of fit for the free-n versus the best-fit fixed-n model, showing that in most cases a fixed-n model is not far off - that is, there are not many galaxies where there's a very significant benefit to fitting n=1.5 or n=3 vs n=2. The exception is the galaxies that prefer n=6 to n=4.
+# 
+# The last plot compares the free Sersic to an exponential, showing that an exponential is 'good enough' for most galaxies except those with best-fit n>4. This suggests that the exponential model would be a reasonable choice if we had to pick just one, which is in line with expectations that most of the galaxies in any given deep field are disky.
 
 # In[10]:
 
@@ -342,10 +385,4 @@ for colxname in ["mgserbpx", 'serb']:
             color="k", joint_kws={'marker': '.', 's': 4},
             marginal_kws={'hist_kws': {'log': False}},
         ).set_axis_labels(labelx, labely)
-
-
-# In[ ]:
-
-
-
 
