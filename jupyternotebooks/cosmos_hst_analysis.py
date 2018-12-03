@@ -95,6 +95,7 @@ idxparamscosmos = [[x + offset for x in [1, 2, 3, 7, 5, 6]] for offset in [0, 8]
 # profit was setup to output [cenx, ceny, flux, fluxrat, re, axrat, ang, nser]
 idxprofit = [2, 4, 7, 5, 6, 0, 1]
 idxprofittwo = [3, 4, 7, 5, 6, 0, 1, 8, 9, 12, 10, 11, 0, 1]
+idxprofitmg8 = [2, 4, 5, 6, 0, 1, 3, 8, 13, 18, 23, 28, 33, 38, 4, 9, 14, 19, 24, 29, 34, 39]
 idxparamsprofit = {
     "gausspx":     idxprofit,
     "mgexppx":     idxprofit,
@@ -105,20 +106,29 @@ idxparamsprofit = {
     "mgserbedpx":  idxprofit,
     "serbpx":  idxprofit,
     "serb":  idxprofit,
+    "mg8bpx": idxprofitmg8,
     "mgcmodelpx":  idxprofittwo,
     "mgdevexppx":  idxprofittwo,
     "mgdevexpcpx": idxprofittwo,
+    "mgserserbpx": idxprofittwo,
 }
 paramsser = ["flux", "re", "n", "q", "phi", "x0", "y0"]
+paramsmg8 = ["flux", "re", "q", "phi", "x0", "y0", 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8']
+# Keep track of the 're' field for Gaussian mixture models and the indices of the weights and sizes of each component
+idxprofitmg8weightsizes = (1, np.arange(6, 6+8), np.arange(14, 14+8))
 models = {
     "single": {
         "cosmos": ["ser"],
-        "profit": ["gausspx", "mgexppx", "mgn2px", "mgdev2px", 
+        "profit": ["gausspx", "mgexppx", "mgn2px", "mgdev2px",
                    "mgserbpx", "mgserbedpx", "serbpx", "serb"],
     },
     "double": {
         "cosmos": ["devexp"],
-        "profit": ["mgcmodelpx", "mgdevexppx", "mgdevexpcpx"],
+        "profit": ["mgcmodelpx", "mgdevexppx", "mgdevexpcpx", "mgserserbpx"],
+    },
+    "mg8": {
+        "cosmos": [],
+        "profit": ["mg8bpx"],
     },
 }
 modellers = {
@@ -128,6 +138,7 @@ modellers = {
 colnames = {
     modeller if src is None else ".".join([modeller, src]): 
         [".".join([model, param]) for model in models["single"][modeller] for param in paramsser] +
+        [".".join([model, param]) for model in models["mg8"][modeller] for param in paramsmg8] +
         [".".join([model, param]) for model in models["double"][modeller] for param in
          [comp + "." + param for comp in ["exp", "dev"] for param in paramsser]]
     for modeller, srcs in modellers.items() for src in srcs
@@ -138,17 +149,47 @@ colnames = (["id", "ra", "dec"] +
              for src in sources
              for model in idxparamsprofit.keys()
              for param in params["profit"]
-             for idx in range(1 + (model in models['double']['profit']))] +
+             for idx in range(1 + (model in models['double']['profit'] or model in models['mg8']['profit']))] +
             [".".join([prefix, x]) for prefix, colnames in colnames.items() for x in colnames])
 
 print(colnames)
+print(len(colnames))
+
+
+# ### Compute R_eff for MGA
+# 
+# These functions compute the effective (half-light) radius R_eff for MGA profiles. These should almost exactly equal the nominal Sersic R_eff for the Sersic MGA for values of n fitted over the full range of r/R_eff, but for n>2 the truncation at large radii and any exclusion of the inner part of the profile from the fit will change R_eff. Also, this can be used to measure R_eff for any Gaussian mixture model consisting of components with shared ellipse parameters.
+
+# In[5]:
+
+
+# https://www.wolframalpha.com/input/?i=Integrate+x*exp(-x%5E2%2F(2*s%5E2))%2F(s*sqrt(2*pi))+dx+from+0+to+r
+# For efficiency, we can replace r with r/sigma
+def gauss2dint(xdivsigma):
+     return 1 - np.exp(-xdivsigma**2/2.)
+
+
+# Compute the integrated flux to some radius x for a sum of Gaussians
+def multigauss2dint(x, weightsizes, init=0):
+     retosigma = np.sqrt(2.*np.log(2.))
+     weightsum = init
+     for weight, size in weightsizes:
+         weightsum += weight*gauss2dint(x/size*retosigma)
+     return weightsum
+
+
+import scipy.optimize as spopt
+# Compute r_quant for a sum of Gaussians, where 0<quant<1
+# There's probably an analytic solution to this if you care to work it out
+def multigauss2drquant(weightsizes, quant=0.5, xmin=0, xmax=1e5):
+    return spopt.brentq(multigauss2dint, a=xmin, b=xmax, args=(weightsizes, -quant))
 
 
 # ### Read the MultiProFit results
 # 
 # Continuing the trend of unseemly code, this section reads every MultiProFit result pickle and saves a row with numbers in the same order as the column names above. TBD: Combine these into one.
 
-# In[5]:
+# In[6]:
 
 
 # Some hideous code to get all of the right values in the right order, for which I apologize
@@ -161,6 +202,7 @@ rows = []
 
 # Shouldn't have hardcoded this but here we are
 scaleratio = 0.168/0.03
+printrow = False
 for datatab in data:
     appended = 0
     for idx in datatab:
@@ -187,13 +229,19 @@ for datatab in data:
                                     row += [profitmodelfit[param]
                                             for param in params["profit"]
                                             for profitmodelfit in profitmodel]
+                                    if printrow:
+                                        print(len(row), model, params['profit'], len(profitmodel))
                 if idx == 0:
                     print(datatab[idx]['hst2hsc_mgserbpx'].keys())
                     print(src, model, hasfits)
             if hasfits:
                 row += [rec["flux"][0]] + list(rec["sersicfit"][idxparamscosmos[0]])
+                if printrow:
+                    print(len(row), 'cosmos.ser')
                 for offset in range(2):
                     row += [rec["flux"][1+offset]] + list(rec["bulgefit"][idxparamscosmos[offset]])
+                    if printrow:
+                        print(len(row), 'cosmos.devexp.' + str(offset))
                 for src in sources:
                     profit = datatab[idx][src]['fits']
                     for model, idxs in idxparamsprofit.items():
@@ -209,10 +257,29 @@ for datatab in data:
                             values[9] *= scaleratio
                             for col in [3, 8]:
                                 values[col] *= values[2]
+                        # print(idx, model, len(values))
+                        # This is a bit ugly - replace the placeholder re value with a proper calculation
+                        if idxs is idxprofitmg8:
+                            idxs = np.array(idxs)
+                            weights = values[idxs[idxprofitmg8weightsizes[1]]]
+                            weightsum = 1.0
+                            for idxweight, weight in enumerate(weights):
+                                weight *= weightsum
+                                weightsum -= weight
+                                weights[idxweight] = weight
+                            # Ensure that the weights sum to unity += machine eps.
+                            weights[-1] = 1.0-np.sum(weights[:-1])
+                            sizes = values[idxs[idxprofitmg8weightsizes[2]]]
+                            re = multigauss2drquant(list(zip(weights, sizes)))
+                            values[idxs[idxprofitmg8weightsizes[0]]] = re
                         row += list(values[idxs])
+                        if printrow:
+                            print(len(row), model)
         if hasfits:
             rows.append(row)
             appended += 1
+            if printrow:
+                printrow = False
     listids = datatab.keys()
     print("Read {}/{} rows from {}-{}".format(
         appended, len(datatab), min(listids),
@@ -226,7 +293,7 @@ for datatab in data:
 # 
 # The table of results isn't quite human-readable, but you can analyze it any which way you like.
 
-# In[6]:
+# In[7]:
 
 
 # Write to a plain old CSV, then read it back in to double-check
@@ -239,7 +306,7 @@ with open(os.path.join(path, "galfits.csv"), "w", newline="") as f:
     
 
 
-# In[7]:
+# In[8]:
 
 
 tab = pd.read_csv(os.path.join(path, "galfits.csv"))
@@ -251,7 +318,7 @@ tab = pd.read_csv(os.path.join(path, "galfits.csv"))
 # 
 # Note that the colour coding is by log(Sersic index), such that low values (~disk-like) are blue and high values (~bulge-like) are red.
 
-# In[8]:
+# In[9]:
 
 
 # How well are parameters recovered?
@@ -263,6 +330,7 @@ varnames = ["flux", "re", "n"]
 prefixes = [
     ("profit.hst.serb", "cosmos.ser", varnames),
     ("profit.hst.mgserbpx", "cosmos.ser", varnames),
+    ("profit.hst.mgserbpx", "profit.hst.mg8bpx", ["flux", "re"]),
     ("profit.hst.mgserbpx", "profit.hst2hsc_mgserbpx.mgserbpx", 
      varnames),
 #    ("profit.hst.ser", "profit.hst2hsc_devexp.ser", vars),
@@ -315,23 +383,30 @@ for prefixx, prefixy, varnames in prefixes:
 # 
 # Some of the later plots compare equivalent models where the only differences are the initial parameters; an ideal optimizer should reach identical solutions for both.
 
-# In[9]:
+# In[10]:
 
 
 # Which are the best models?
-modelsprofit = models["single"]["profit"] + models["double"]["profit"] 
-chisqredcols = {
-    model: ".".join(["profit", "hst", model, "chisqred",
-                     "1" if model in models['double']['profit'] else "0"]) 
-    for model in modelsprofit
-}
-print(chisqredcols)
-modelbest = tab[list(chisqredcols.values())].idxmin(axis=1)
-modelbestcounts = modelbest.value_counts()
-print(modelbestcounts)
+modelslist = [
+    [model for model in models["single"]["profit"] if not model.startswith('serb')] + [model for model in models["double"]["profit"] if model != 'mgserserbpx'],
+    models["single"]["profit"] + [model for model in models["double"]["profit"] if model != 'mgserserbpx'] + models['mg8']['profit'],
+    models["single"]["profit"] + models["double"]["profit"] + models['mg8']['profit'],
+]
+for modelsprofit in modelslist:
+    chisqredcols = {
+        model: ".".join(["profit", "hst", model, "chisqred",
+                         "1" if model in models['double']['profit'] else "0"]) 
+        for model in modelsprofit
+    }
+    print(chisqredcols)
+    modelbest = tab[list(chisqredcols.values())].idxmin(axis=1)
+    modelbestcounts = modelbest.value_counts()
+    print(modelbestcounts)
+
+# Plot direct model comparisons
 for colx, coly in [("mgserbpx", "mgdevexppx"), ("mgserbedpx", "mgcmodelpx"), 
                    ("mgdevexppx", "mgcmodelpx"), ("mgserbedpx", "serb"),
-                   ("mgserbedpx", "mgserbpx")]:
+                   ("mgserbedpx", "mgserbpx"), ("mgserserbpx", "mg8bpx")]:
     fig = sns.JointGrid(x=np.log10(tab[chisqredcols[colx]]),
                         y=np.log10(tab[chisqredcols[colx]]/tab[chisqredcols[coly]]))
     fig.plot_joint(plt.scatter, c=colors, marker='.',
@@ -349,7 +424,7 @@ for colx, coly in [("mgserbpx", "mgdevexppx"), ("mgserbedpx", "mgcmodelpx"),
 # 
 # The last plot compares the free Sersic to an exponential, showing that an exponential is 'good enough' for most galaxies except those with best-fit n>4. This suggests that the exponential model would be a reasonable choice if we had to pick just one, which is in line with expectations that most of the galaxies in any given deep field are disky.
 
-# In[10]:
+# In[11]:
 
 
 # Now compare only single-component models: Sersic vs best fixed n
