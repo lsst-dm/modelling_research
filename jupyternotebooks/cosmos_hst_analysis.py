@@ -3,7 +3,38 @@
 
 # # Fitting COSMOS galaxes with MultiProFit
 # 
-# This notebook plots results from fitting COSMOS galaxies with MultiProFit. It does not (yet) demonstrate how to run the code in the first place; example scripts in the MultiProFit repo do that.
+# This notebook plots results from fitting galaxies from the COSMOS survey (http://cosmos.astro.caltech.edu/) with MultiProFit. The first few sections explain how to run the scripts if you choose to do so yourself; feel free to skip those and head straight to the results.
+
+# ### Fitting galaxies
+# 
+# Firstly, you'll need to install MultiProFit, available here: https://github.com/lsst-dm/multiprofit.
+# 
+# To fit true Sersic models, you'll need one of GalSim: https://github.com/GalSim-developers/GalSim/ or PyProFit: https://github.com/ICRAR/pyprofit/. Despite the fact that I am an author of ProFit, I suggest using GalSim as its rendering methods are faster and/or more robust in most cases. The only exception is that its more stringent accuracy requirements mean that it can be much slower or consume large amounts of RAM evaluating some parameter combinations, but that's more of an indictment of the Sersic profile than of GalSim.
+# 
+# For fitting Hubble Space Telescope images (HST), these scripts make use of the GalSim COSMOS 25.2 training sample, available here: https://github.com/GalSim-developers/GalSim/wiki/RealGalaxy%20Data.
+# 
+# For fitting Subaru Hyper-Suprime Cam images (HSC), these scripts make use of the LSST software pipelines (https://github.com/lsst/) to access data available on LSST servers. HSC periodically releases data publicly and you can 'quarry' (download images) from here after registering an account: https://hsc-release.mtk.nao.ac.jp/doc/index.php/tools/. The older PyProFit fork had an example script that used this public data (https://github.com/lsst-dm/pyprofit/blob/master/examples/hsc.py), but this is not yet available in MultiProFit.
+# 
+# This notebook does not yet actually show the results of fitting HSC images; instead, it takes a best-fit HST model, degrades it to HSC resolution using the actual i-band HSC PSF, and then adds noise according to the observed variance map. These measurements essentially measure only the effects of noise bias on the recovered galaxy properties for isolated galaxies, although deblending (contamination from overlapping sources) is also an issue in HSC and occasionally even in HST - that's a subject for another day. It's worth noting that the HST filter used in COSMOS (F814W; http://svo2.cab.inta-csic.es/svo/theory/fps3/index.php?id=HST/WFPC2.f814w) approximately covers HSC/SDSS i- and z-bands (http://svo2.cab.inta-csic.es/svo/theory/fps3/index.php?mode=browse&gname=Subaru&gname2=HSC), so a multi-band fit to HSC i+z should also be consistent with HST F814W. For single-band fits, HSC-I is more convenient as it is broader, tends to have better seeing and covers a larger fraction of F814W.
+# 
+# Multi-band fitting is possible in principle but not yet fully implemented.
+
+# ### Galaxy fitting scripts
+# 
+# The data analyzed here were generated using MultiProFit's fitcosmos.py example script (https://github.com/lsst-dm/multiprofit/blob/master/examples/fitcosmos.py).
+# 
+# MultiProFit allows for flexible fitting workflows specified in a CSV; the specifications used here are kept in this repo as well: https://github.com/lsst-dm/modelling_research/blob/master/cosmos/modelspecs-hst-mg.csv
+# 
+# fitcosmos.py was run in batches of 100 galaxies using the following invocations. The choice of batches isn't important; you could output one file per galaxy if you so desired. The exact commands run are as follows:
+# 
+# #Fit Sersic-family models to HST images
+# python ~/src/mine/multiprofit/examples/fitcosmos.py -catalogpath ~/raid/hsc/cosmos/COSMOS_25.2_training_sample/ -catalogfile real_galaxy_catalog_25.2.fits -indices 0,100 -fithst 1 -modelspecfile ~/raid/lsst/cosmos/modelspecs-hst.csv -fileout ~/raid/lsst/cosmos/cosmos_25.2_fits_0_100_pickle.dat > ~/raid/lsst/cosmos/cosmos_25.2_fits_0_100.log 2>~/raid/lsst/cosmos/cosmos_25.2_fits_0_100.err &
+# #Fit GMMs to HST images
+# python ~/src/mine/multiprofit/examples/fitcosmos.py -catalogpath ~/raid/hsc/cosmos/COSMOS_25.2_training_sample/ -catalogfile real_galaxy_catalog_25.2.fits -indices 0,100 -fithst 1 -modelspecfile ~/raid/lsst/cosmos/modelspecs-hst-mg.csv -fileout ~/raid/lsst/cosmos/cosmos_25.2_fits_0_100_pickle.dat -redo 0 > ~/raid/lsst/cosmos/cosmos_25.2_fits_0_100_mg8.log 2>~/raid/lsst/cosmos/cosmos_25.2_fits_0_100_mg8.err &
+# #Fit all models to realistic mock HSC images taking the HST Sersic fit as the ground truth
+# python ~/src/mine/multiprofit/examples/fitcosmos.py -catalogpath ~/raid/hsc/cosmos/COSMOS_25.2_training_sample/ -catalogfile real_galaxy_catalog_25.2.fits -indices 0,100 -fithst2hsc 1 -modelspecfile ~/raid/lsst/cosmos/modelspecs-hsc-mg.csv -redo 0 -fileout ~/raid/lsst/cosmos/cosmos_25.2_fits_0_100_pickle.dat -hst2hscmodel mgserbpx > ~/raid/lsst/cosmos/cosmos_25.2_fits_0_100_hst2hsc_ser.log 2>~/raid/lsst/cosmos/cosmos_25.2_fits_0_100_hst2hsc_ser.err &
+
+# ### Analyze the results
 
 # In[1]:
 
@@ -50,7 +81,7 @@ rgcfits = ap.io.fits.open(os.path.join(path, file))[1].data
 data = []
  
 files = glob.glob(os.path.expanduser(
-    "~/raid/lsst/cosmos/cosmos_25.2_fits_*_*_pickle.dat"))
+    "~/raid/lsst/cosmos/cosmos_25.2_fits_[1-9]*_*_pickle.dat"))
 files.sort()
 for file in files:
     with open(file, 'rb') as f:
@@ -202,7 +233,7 @@ rows = []
 
 # Shouldn't have hardcoded this but here we are
 scaleratio = 0.168/0.03
-printrow = False
+printrow = True
 for datatab in data:
     appended = 0
     for idx in datatab:
@@ -231,7 +262,7 @@ for datatab in data:
                                             for profitmodelfit in profitmodel]
                                     if printrow:
                                         print(len(row), model, params['profit'], len(profitmodel))
-                if idx == 0:
+                if printrow:
                     print(datatab[idx]['hst2hsc_mgserbpx'].keys())
                     print(src, model, hasfits)
             if hasfits:
@@ -324,37 +355,26 @@ tab = pd.read_csv(os.path.join(path, "galfits.csv"))
 # How well are parameters recovered?
 # First check consistency with previous fits (Sersic only for now)
 # Then HSC vs HST
+# TODO: Rename this: prefix -> var and var->postfix
+def getname(var, prefix, postfix):
+    namevar = ".".join([prefix, var]) if prefix is not None else var
+    namevar = ".".join([namevar, postfix]) if postfix is not None else namevar
+    return namevar
 
 
-varnames = ["flux", "re", "n"]
-prefixes = [
-    ("profit.hst.serb", "cosmos.ser", varnames),
-    ("profit.hst.mgserbpx", "cosmos.ser", varnames),
-    ("profit.hst.mgserbpx", "profit.hst.mg8bpx", ["flux", "re"]),
-    ("profit.hst.mgserbpx", "profit.hst2hsc_mgserbpx.mgserbpx", 
-     varnames),
-#    ("profit.hst.ser", "profit.hst2hsc_devexp.ser", vars),
-#    ("profit.hst.ser", "profit.hst2hsc.ser", vars)
-]
-
-cmap = mpl.colors.ListedColormap(sns.color_palette("RdYlBu_r", 100))
-colors = (np.log10(tab["profit.hst.mgserbpx.n"])+1)/np.log10(60)
-colors = cmap(np.rint(100*colors)/100)
-
-
-def getname(var, prefix):
-    return ".".join([prefix, var])
-
-
-for prefixx, prefixy, varnames in prefixes:
-    ratios = {var: tab[getname(var, prefixx)]/tab[getname(var, prefixy)] for 
+def plotjoint(tab, prefixx, prefixy, varnames, varcolor="profit.hst.mgserbpx.n",
+              cmap = mpl.colors.ListedColormap(sns.color_palette("RdYlBu_r", 100)),
+              plotmarginals=True, hist_kws={'log': False}, postfixx=None, postfixy=None):
+    ratios = {var: tab[getname(var, prefixx, postfixx)]/tab[getname(var, prefixy, postfixy)] for 
               var in varnames}
+    colors = (np.log10(tab[varcolor])+1)/np.log10(60)
+    colors = cmap(np.rint(100*colors)/100)
     for i, x in enumerate(varnames): 
         xlog = np.log10(ratios[x])
         xlog[xlog > 1] = 1
         xlog[xlog < -1] = -1
         for y in varnames[(i+1):(len(varnames)+1)]:
-            namey = getname(y, prefixy)
+            namey = getname(y, prefixy, postfixy)
             ylog = np.log10(ratios[y])
             ylog[ylog > 1] = 1
             ylog[ylog < -1] = -1
@@ -363,16 +383,64 @@ for prefixx, prefixy, varnames in prefixes:
                            edgecolor='k', s=24).set_axis_labels(
                 'log10({}_ratio) ({}/{})'.format(x, prefixx, prefixy),
                 'log10({}_ratio) ({}/{})'.format(y, prefixx, prefixy))
-            fig.plot_marginals(sns.distplot, kde=False, hist_kws={'log': False})
+            if plotmarginals:
+                fig.plot_marginals(sns.distplot, kde=False, hist_kws=hist_kws)
 
-        ylog = np.log10(tab[getname(x, prefixx)])
+        ylog = np.log10(tab[getname(x, prefixx, postfixx)])
         fig = sns.JointGrid(x=ylog, y=xlog)
         fig.plot_joint(plt.scatter, c=colors, marker='.',
                        edgecolor='k', s=24).set_axis_labels(
             'log10({}) ({})'.format(x, prefixx),
             'log10({}_ratio) ({}/{})'.format(x, prefixx, prefixy))
-        fig.plot_marginals(sns.distplot, kde=False, hist_kws={'log': False})
+        if plotmarginals:
+            fig.plot_marginals(sns.distplot, kde=False, hist_kws=hist_kws)
         #cax = fig.add_axes([.94, .25, .02, .6])
+
+varnames = ["flux", "re", "n"]
+
+
+# ### COSMOS-HST: GalSim catalog Sersic fit versus MultiProfit Sersic fit
+# 
+# This is a sanity check comparing MultiProFit's true Sersic profile fit (albeit convolved with a 3-Gaussian PSF rather than the PSF image) compared to the values in the GalSim catalog.
+# 
+# The results are reasonably consistent, though not without systematic differences.
+
+# In[10]:
+
+
+plotjoint(tab, "profit.hst.serb", "cosmos.ser", varnames)
+
+
+# ### COSMOS-HST: MultiProFit Sersic vs MultiProFit MGA Sersic
+# 
+# How close is the N=8 MGA to a true Sersic fit? The answer is quite close, except at n>4 where the MGA intentionally does not match the inner profile and for n < 0.5 where the MGA can't possibly match a true Sersic.
+# 
+# It seems like there are two different tracks of outliers: objects with n>4 where the MGA has some large but not unreasonable scatter, and objects with 2.5>n>4 where the MGA has systematically lower n (somewhat more mysterious).
+
+# In[11]:
+
+
+plotjoint(tab, "profit.hst.mgserbpx", "profit.hst.serbpx", varnames)
+
+
+# ### COSMOS-HST: MultiProFit MGA Sersic vs MultiProFit GMM
+# 
+# How much different is a free GMM compared to a constrained Sersic MGA? The answer might surprise you. In fact there are non-negligible systematic differences. It may be expected that large-n galaxies tend to smaller fluxes and sizes with a full GMM, whereas the opposite is true for low-n galaxies.
+
+# In[12]:
+
+
+plotjoint(tab, "profit.hst.mgserbpx", "profit.hst.mg8bpx", ["flux", "re"])
+
+
+# ### MultiProFit MGA Sersic: COSMOS-HST vs COSMOS-HSC
+# 
+# How well does a fit to Subaru-HSC data recover the parameters derived from the HST fits? It should do well modulo noise bias, because I generated an image of the true model but used the observed variance to give it noise.
+
+# In[13]:
+
+
+plotjoint(tab, "profit.hst.mgserbpx", "profit.hst2hsc_mgserbpx.mgserbpx", varnames)
 
 
 # ### Model comparison plots
@@ -383,23 +451,28 @@ for prefixx, prefixy, varnames in prefixes:
 # 
 # Some of the later plots compare equivalent models where the only differences are the initial parameters; an ideal optimizer should reach identical solutions for both.
 
-# In[10]:
+# In[14]:
 
 
 # Which are the best models?
+
+def getpostfix(model):
+    return "0" if model in models['single']['profit'] else "1"
+
 modelslist = [
     [model for model in models["single"]["profit"] if not model.startswith('serb')] + [model for model in models["double"]["profit"] if model != 'mgserserbpx'],
     models["single"]["profit"] + [model for model in models["double"]["profit"] if model != 'mgserserbpx'] + models['mg8']['profit'],
     models["single"]["profit"] + models["double"]["profit"] + models['mg8']['profit'],
 ]
+chisqredcols = {}
 for modelsprofit in modelslist:
-    chisqredcols = {
-        model: ".".join(["profit", "hst", model, "chisqred",
-                         "1" if model in models['double']['profit'] else "0"]) 
-        for model in modelsprofit
-    }
-    print(chisqredcols)
-    modelbest = tab[list(chisqredcols.values())].idxmin(axis=1)
+    chisqredcolsprint = {}
+    for model in modelsprofit:
+        if model not in chisqredcols:
+            chisqredcols[model] = ".".join(["profit", "hst", model, "chisqred", getpostfix(model)])
+        chisqredcolsprint[model] = chisqredcols[model]
+    print(chisqredcolsprint)
+    modelbest = tab[list(chisqredcolsprint.values())].idxmin(axis=1)
     modelbestcounts = modelbest.value_counts()
     print(modelbestcounts)
 
@@ -407,13 +480,11 @@ for modelsprofit in modelslist:
 for colx, coly in [("mgserbpx", "mgdevexppx"), ("mgserbedpx", "mgcmodelpx"), 
                    ("mgdevexppx", "mgcmodelpx"), ("mgserbedpx", "serb"),
                    ("mgserbedpx", "mgserbpx"), ("mgserserbpx", "mg8bpx")]:
-    fig = sns.JointGrid(x=np.log10(tab[chisqredcols[colx]]),
-                        y=np.log10(tab[chisqredcols[colx]]/tab[chisqredcols[coly]]))
-    fig.plot_joint(plt.scatter, c=colors, marker='.',
-                   edgecolor='k', s=24).set_axis_labels(
-        'log10(chisqred) ({})'.format(colx),
-        'log10(chisqred) ({}/{})'.format(colx, coly))
-    fig.plot_marginals(sns.distplot, kde=False, hist_kws={'log': True})
+    prefixx = ".".join(["profit", "hst", colx])
+    prefixy = ".".join(["profit", "hst", coly])
+    plotjoint(tab, prefixx, prefixy, ['chisqred'], varcolor="profit.hst.mgserbpx.n",
+              cmap = mpl.colors.ListedColormap(sns.color_palette("RdYlBu_r", 100)),
+              hist_kws={'log': True}, postfixx=getpostfix(colx), postfixy=getpostfix(coly))
 
 
 # ### MG Sersic fixed-n vs free-n fits
@@ -424,7 +495,7 @@ for colx, coly in [("mgserbpx", "mgdevexppx"), ("mgserbedpx", "mgcmodelpx"),
 # 
 # The last plot compares the free Sersic to an exponential, showing that an exponential is 'good enough' for most galaxies except those with best-fit n>4. This suggests that the exponential model would be a reasonable choice if we had to pick just one, which is in line with expectations that most of the galaxies in any given deep field are disky.
 
-# In[11]:
+# In[15]:
 
 
 # Now compare only single-component models: Sersic vs best fixed n
@@ -461,3 +532,20 @@ for colxname in ["mgserbpx", 'serb']:
             marginal_kws={'hist_kws': {'log': False}},
         ).set_axis_labels(labelx, labely)
 
+
+# ### Compare GMM radial profiles to Sersic MGA
+# 
+# Todo. It would make sense to plot the radial profiles of the N=8 GMM and compare it to the MGA Sersic for the same galaxy. 
+
+# ### Compare model running times
+# 
+# Todo. It would be useful to plot, say, runtime ratio vs chisqred ratio, and identify when and why some model fits take absurdly long times to complete.
+# 
+# The main caveat with this is that both quantities (runtime and goodness of fit) are optimizer-dependent, so it may take more thorough testing of optimization pathways before we can determine whether it's worth fitting models of increasing complexity.
+
+# ### N=8 vs N=4 Sersic MGA/GMM
+# 
+# Todo. Can we do two-component N=4 GMM? Probably. Perhaps we should test n=4 Sersic MGA (x2) for completeness.
+
+# ### Multi-band COSMOS-HSC
+# Todo. It should work in principle, but we'll see.
