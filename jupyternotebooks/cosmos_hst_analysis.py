@@ -3,7 +3,13 @@
 
 # # Fitting COSMOS galaxes with MultiProFit
 # 
-# This notebook plots results from fitting galaxies from the COSMOS survey (http://cosmos.astro.caltech.edu/) with MultiProFit. The first few sections explain how to run the scripts if you choose to do so yourself; feel free to skip those and head straight to the results.
+# This notebook plots results from fitting galaxies from the COSMOS survey (http://cosmos.astro.caltech.edu/) with MultiProFit. This investigation is to help determine what kind of galaxy models LSST Data Management should fit for annual Data Releases, where we would like to fit the best possible model(s) but will be constrained in computing time by the overwhelming size of the dataset (billions of objects).
+# 
+# A couple of other points need to be addressed before moving on:
+# 
+# 1. Why COSMOS? COSMOS has a full square degree of very deep, high-resolution Hubble Space Telescope (HST) imaging in the F814W band. This matches up nicely with the slightly deeper but lower resolution ground-based grizy imaging from Subaru Hyper-Suprime Cam (HSC). The approach we take here is to fit the HST images first, the higher resolution being preferable for resolved features like compact bulges and for minimizing the impact of blending (overlapping sources). We then fit HSC-UltraDeep images, which are of comparable resolution and depth to 10-year LSST images (actually slightly better resolution and deeper, but that's fine). An intermediate step involves taking a best-fit HST model, generating a mock HSC-quality image, and then fitting this mock image. This is meant to gauge how well the true parameters are recovered both in cases where we used the correct model - that is, when the model used to fit HSC-quality data can perfectly represent the true HST model - and also to measure the bias when fitting wrong models that can't represent the true galaxy profile exactly.
+# 
+# 2. All of the models tested here are either a) traditional Sersic profiles or b) Gaussian mixture models (GMMs). In fact, most of the 'Sersic' are multi-Gaussian approximations thereof (MGAs). For more details, see this notebook on deriving optimal MGAs for the Sersic profile: https://github.com/lsst-dm/modelling_research/blob/master/jupyternotebooks/multigaussian_sersic1d.ipynb.
 
 # ### Fitting galaxies
 # 
@@ -11,9 +17,9 @@
 # 
 # To fit true Sersic models, you'll need one of GalSim: https://github.com/GalSim-developers/GalSim/ or PyProFit: https://github.com/ICRAR/pyprofit/. Despite the fact that I am an author of ProFit, I suggest using GalSim as its rendering methods are faster and/or more robust in most cases. The only exception is that its more stringent accuracy requirements mean that it can be much slower or consume large amounts of RAM evaluating some parameter combinations, but that's more of an indictment of the Sersic profile than of GalSim.
 # 
-# For fitting Hubble Space Telescope images (HST), these scripts make use of the GalSim COSMOS 25.2 training sample, available here: https://github.com/GalSim-developers/GalSim/wiki/RealGalaxy%20Data.
+# For fitting HST images, these scripts make use of the GalSim COSMOS 25.2 training sample, available here: https://github.com/GalSim-developers/GalSim/wiki/RealGalaxy%20Data. This sample is designed to test algorithms for weak lensing shear measurements, which typically have stricter requirements than galaxy models for galaxy evolution science.
 # 
-# For fitting Subaru Hyper-Suprime Cam images (HSC), these scripts make use of the LSST software pipelines (https://github.com/lsst/) to access data available on LSST servers. HSC periodically releases data publicly and you can 'quarry' (download images) from here after registering an account: https://hsc-release.mtk.nao.ac.jp/doc/index.php/tools/. The older PyProFit fork had an example script that used this public data (https://github.com/lsst-dm/pyprofit/blob/master/examples/hsc.py), but this is not yet available in MultiProFit.
+# For fitting HSC images, these scripts make use of the LSST software pipelines (https://github.com/lsst/) to access data available on LSST servers. HSC periodically releases data publicly and you can 'quarry' (download images) from here after registering an account: https://hsc-release.mtk.nao.ac.jp/doc/index.php/tools/. The older PyProFit fork had an example script that used this public data (https://github.com/lsst-dm/pyprofit/blob/master/examples/hsc.py), but this is not yet available in MultiProFit.
 # 
 # This notebook does not yet actually show the results of fitting HSC images; instead, it takes a best-fit HST model, degrades it to HSC resolution using the actual i-band HSC PSF, and then adds noise according to the observed variance map. These measurements essentially measure only the effects of noise bias on the recovered galaxy properties for isolated galaxies, although deblending (contamination from overlapping sources) is also an issue in HSC and occasionally even in HST - that's a subject for another day. It's worth noting that the HST filter used in COSMOS (F814W; http://svo2.cab.inta-csic.es/svo/theory/fps3/index.php?id=HST/WFPC2.f814w) approximately covers HSC/SDSS i- and z-bands (http://svo2.cab.inta-csic.es/svo/theory/fps3/index.php?mode=browse&gname=Subaru&gname2=HSC), so a multi-band fit to HSC i+z should also be consistent with HST F814W. For single-band fits, HSC-I is more convenient as it is broader, tends to have better seeing and covers a larger fraction of F814W.
 # 
@@ -35,6 +41,8 @@
 # python ~/src/mine/multiprofit/examples/fitcosmos.py -catalogpath ~/raid/hsc/cosmos/COSMOS_25.2_training_sample/ -catalogfile real_galaxy_catalog_25.2.fits -indices 0,100 -fithst2hsc 1 -modelspecfile ~/raid/lsst/cosmos/modelspecs-hsc-mg.csv -redo 0 -fileout ~/raid/lsst/cosmos/cosmos_25.2_fits_0_100_pickle.dat -hst2hscmodel mgserbpx > ~/raid/lsst/cosmos/cosmos_25.2_fits_0_100_hst2hsc_ser.log 2>~/raid/lsst/cosmos/cosmos_25.2_fits_0_100_hst2hsc_ser.err &
 
 # ### Analyze the results
+# 
+# Import required packages and set matplotlib/seaborn defaults for slightly nicer plots.
 
 # In[1]:
 
@@ -60,13 +68,51 @@ mpl.rcParams['image.origin'] = 'lower'
 sns.set(rc={'axes.facecolor': '0.85', 'figure.facecolor': 'w'})
 
 
+# ### Compute R_eff for MGA
+# 
+# These functions compute the effective (half-light) radius R_eff for MGA profiles. These should almost exactly equal the nominal Sersic R_eff for the Sersic MGA for values of n fitted over the full range of r/R_eff, but for n>2 the truncation at large radii and any exclusion of the inner part of the profile from the fit will change R_eff. Also, this can be used to measure R_eff for any Gaussian mixture model consisting of components with shared ellipse parameters (i.e. isophote shapes).
+
+# In[2]:
+
+
+# https://www.wolframalpha.com/input/?i=Integrate+2*pi*x*exp(-x%5E2%2F(2*s%5E2))%2F(s*sqrt(2*pi))+dx+from+0+to+r
+# The fraction of the total flux of a 2D Sersic profile contained within r
+# For efficiency, we can replace r with r/sigma.
+# Note the trivial renormalization allows us to drop annoying sigma and pi constants - it returns (0, 1) for inputs of (0, inf)
+def gauss2dint(xdivsigma):
+     return 1 - np.exp(-xdivsigma**2/2.)
+
+
+# Compute the integrated flux to some radius x for a sum of Gaussians
+# x is a length in arbitrary units
+# Weightsizes is a list of tuples of the weight (total flux) and size (r_eff in the same units as x) of each gaussian
+# Note that gauss2dint expects x/sigma, but size is re, so we pass x/re*re/sigma = x/sigma
+# 0 > quant > 1 turns it into a function that returns zero at the value of x containing a fraction quant of the total flux
+# This is so you can use root finding algorithms to find x for a given quant (see below)
+def multigauss2dint(x, weightsizes, quant=0):
+     retosigma = np.sqrt(2.*np.log(2.))
+     weightsum = -quant
+     for weight, size in weightsizes:
+         weightsum += weight*gauss2dint(x/size*retosigma)
+     return weightsum
+
+
+import scipy.optimize as spopt
+# Compute x_quant for a sum of Gaussians, where 0<quant<1
+# There's probably an analytic solution to this if you care to work it out
+# Weightsizes and quant are as above
+# Choose xmin, xmax so that xmin < x_quant < xmax. Ideally we'd just set xmax=np.inf but brentq doesn't work then
+def multigauss2drquant(weightsizes, quant=0.5, xmin=0, xmax=1e5):
+    return spopt.brentq(multigauss2dint, a=xmin, b=xmax, args=(weightsizes, quant))
+
+
 # ### Read COSMOS catalog and pickled MultiProFit results
 # 
 # The example script to generate these results can be found at https://github.com/lsst-dm/multiprofit/blob/master/examples/fitcosmos.py (for now).
 # 
 # The COSMOS catalog is from GalSim: https://github.com/GalSim-developers/GalSim/wiki/RealGalaxy-Data
 
-# In[2]:
+# In[3]:
 
 
 path = os.path.expanduser('~/raid/hsc/cosmos/COSMOS_25.2_training_sample/')
@@ -75,13 +121,13 @@ ccat = gs.COSMOSCatalog(file, dir=path)
 rgcfits = ap.io.fits.open(os.path.join(path, file))[1].data
 
 
-# In[3]:
+# In[4]:
 
 
 data = []
  
 files = glob.glob(os.path.expanduser(
-    "~/raid/lsst/cosmos/cosmos_25.2_fits_[1-9]*_*_pickle.dat"))
+    "~/raid/lsst/cosmos/cosmos_25.2_fits_*_*_pickle.dat"))
 files.sort()
 for file in files:
     with open(file, 'rb') as f:
@@ -92,7 +138,7 @@ for file in files:
 # 
 # This (admitted ugly) section defines column names and indices for reading both the MultiProFit fit results and the results from the COSMOS-GalSim catalog itself for a consistency check.
 
-# In[4]:
+# In[5]:
 
 
 # See https://github.com/GalSim-developers/GalSim/blob/8d9bc8ce568e3fa791ab658650fce592cdf03735/galsim/scene.py
@@ -113,7 +159,7 @@ for file in files:
 
 sources = ["hst"] + ["_".join(["hst2hsc", postfix]) for postfix in [
 #    "",
-    "mgserbpx",
+    "mg8serbpx",
 #    "_devexp"
 ]]
 params = {
@@ -127,39 +173,65 @@ idxparamscosmos = [[x + offset for x in [1, 2, 3, 7, 5, 6]] for offset in [0, 8]
 idxprofit = [2, 4, 7, 5, 6, 0, 1]
 idxprofittwo = [3, 4, 7, 5, 6, 0, 1, 8, 9, 12, 10, 11, 0, 1]
 idxprofitmg8 = [2, 4, 5, 6, 0, 1, 3, 8, 13, 18, 23, 28, 33, 38, 4, 9, 14, 19, 24, 29, 34, 39]
+idxprofitmg4 = [2, 4, 5, 6, 0, 1, 3, 8, 13, 18, 4, 9, 14, 19]
+idxprofitmg4x2 = [2, 4, 5, 6, 0, 1, 3, 8, 13, 18, 23, 28, 33, 38, 4, 9, 14, 19, 24, 29, 34, 39, 24, 25, 26]
+
+orders = ['8', '4']
 idxparamsprofit = {
     "gausspx":     idxprofit,
-    "mgexppx":     idxprofit,
-#    "mgexpgpx": idxprofit,
-    "mgn2px":      idxprofit,
-    "mgdev2px":    idxprofit,
-    "mgserbpx": idxprofit,
-    "mgserbedpx":  idxprofit,
-    "serbpx":  idxprofit,
-    "serb":  idxprofit,
-    "mg8bpx": idxprofitmg8,
-    "mgcmodelpx":  idxprofittwo,
-    "mgdevexppx":  idxprofittwo,
-    "mgdevexpcpx": idxprofittwo,
-    "mgserserbpx": idxprofittwo,
 }
+mgmodels = {
+    order: ['mg' + order + model + 'px' for model in ['exp', 'n2', 'dev2', 'serb', 'serbed']]
+    for order in orders
+}
+for order in orders:
+    for model in mgmodels[order]:
+        idxparamsprofit[model] = idxprofit
+idxparamsprofit.update(
+    {
+        "serbpx":  idxprofit,
+        "serb":  idxprofit,
+        "mg8bpx": idxprofitmg8,
+        "mg4bpx": idxprofitmg4,
+        "mg4x2px": idxprofitmg4x2
+    }
+)
+mgmodelstwo = {
+    order: ['mg' + order + model + 'px' for model in ['cmodel', 'devexp', 'devexpc', 'serserb']]
+    for order in orders
+}
+for order in orders:
+    for model in mgmodelstwo[order]:
+        idxparamsprofit[model] = idxprofittwo
+print(idxparamsprofit)
+
 paramsser = ["flux", "re", "n", "q", "phi", "x0", "y0"]
 paramsmg8 = ["flux", "re", "q", "phi", "x0", "y0", 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8']
+paramsmg4 = ["flux", "re", "q", "phi", "x0", "y0", 'f1', 'f2', 'f3', 'f4', 'r1', 'r2', 'r3', 'r4']
+paramsmg4x2 = ["flux", "re", "q", "phi", "x0", "y0", 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 're2', 'q2', 'phi2']
 # Keep track of the 're' field for Gaussian mixture models and the indices of the weights and sizes of each component
-idxprofitmg8weightsizes = (1, np.arange(6, 6+8), np.arange(14, 14+8))
+idxmgweightsizes = {
+    '4': [(1, np.arange(6, 6+4), np.arange(10, 10+4))],
+    '8': [(1, np.arange(6, 6+8), np.arange(14, 14+8))],
+    '4x2': [(1, np.arange(6, 6+4), np.arange(14, 14+4)), (22, np.arange(10, 10+4), np.arange(18, 18+4))],
+}
+paramweightsizeskeymodel = {
+    'mg8bpx': (paramsmg8, '8'),
+    'mg4bpx': (paramsmg4, '4'),
+    'mg4x2px': (paramsmg4x2, '4x2'),
+}
 models = {
     "single": {
         "cosmos": ["ser"],
-        "profit": ["gausspx", "mgexppx", "mgn2px", "mgdev2px",
-                   "mgserbpx", "mgserbedpx", "serbpx", "serb"],
+        "profit": ["gausspx"] + mgmodels['8'] + mgmodels['4'] + ["serbpx", "serb"],
     },
     "double": {
         "cosmos": ["devexp"],
-        "profit": ["mgcmodelpx", "mgdevexppx", "mgdevexpcpx", "mgserserbpx"],
+        "profit": mgmodelstwo['8'] + mgmodelstwo['4'],
     },
-    "mg8": {
+    "mg": {
         "cosmos": [],
-        "profit": ["mg8bpx"],
+        "profit": ["mg8bpx", "mg4bpx", "mg4x2px"],
     },
 }
 modellers = {
@@ -169,7 +241,7 @@ modellers = {
 colnames = {
     modeller if src is None else ".".join([modeller, src]): 
         [".".join([model, param]) for model in models["single"][modeller] for param in paramsser] +
-        [".".join([model, param]) for model in models["mg8"][modeller] for param in paramsmg8] +
+        [".".join([model, param]) for model in models["mg"][modeller] for param in paramweightsizeskeymodel[model][0]] +
         [".".join([model, param]) for model in models["double"][modeller] for param in
          [comp + "." + param for comp in ["exp", "dev"] for param in paramsser]]
     for modeller, srcs in modellers.items() for src in srcs
@@ -180,40 +252,11 @@ colnames = (["id", "ra", "dec"] +
              for src in sources
              for model in idxparamsprofit.keys()
              for param in params["profit"]
-             for idx in range(1 + (model in models['double']['profit'] or model in models['mg8']['profit']))] +
+             for idx in range(1 + (model in models['double']['profit'] or model in models['mg']['profit']))] +
             [".".join([prefix, x]) for prefix, colnames in colnames.items() for x in colnames])
 
 print(colnames)
 print(len(colnames))
-
-
-# ### Compute R_eff for MGA
-# 
-# These functions compute the effective (half-light) radius R_eff for MGA profiles. These should almost exactly equal the nominal Sersic R_eff for the Sersic MGA for values of n fitted over the full range of r/R_eff, but for n>2 the truncation at large radii and any exclusion of the inner part of the profile from the fit will change R_eff. Also, this can be used to measure R_eff for any Gaussian mixture model consisting of components with shared ellipse parameters.
-
-# In[5]:
-
-
-# https://www.wolframalpha.com/input/?i=Integrate+x*exp(-x%5E2%2F(2*s%5E2))%2F(s*sqrt(2*pi))+dx+from+0+to+r
-# For efficiency, we can replace r with r/sigma
-def gauss2dint(xdivsigma):
-     return 1 - np.exp(-xdivsigma**2/2.)
-
-
-# Compute the integrated flux to some radius x for a sum of Gaussians
-def multigauss2dint(x, weightsizes, init=0):
-     retosigma = np.sqrt(2.*np.log(2.))
-     weightsum = init
-     for weight, size in weightsizes:
-         weightsum += weight*gauss2dint(x/size*retosigma)
-     return weightsum
-
-
-import scipy.optimize as spopt
-# Compute r_quant for a sum of Gaussians, where 0<quant<1
-# There's probably an analytic solution to this if you care to work it out
-def multigauss2drquant(weightsizes, quant=0.5, xmin=0, xmax=1e5):
-    return spopt.brentq(multigauss2dint, a=xmin, b=xmax, args=(weightsizes, -quant))
 
 
 # ### Read the MultiProFit results
@@ -233,6 +276,7 @@ rows = []
 
 # Shouldn't have hardcoded this but here we are
 scaleratio = 0.168/0.03
+verbose = False
 printrow = True
 for datatab in data:
     appended = 0
@@ -244,27 +288,39 @@ for datatab in data:
             rec = ccat.getParametricRecord(indexmap[idx])
             row += [rec[param] for param in params["cosmos"]]
             for src in sources:
+                stage = 0
                 hasfits = hasfits and src in datatab[idx]
                 if hasfits:
+                    stage = 1
                     profit = datatab[idx][src]
                     hasfits = hasfits and 'fits' in profit
-                    if hasfits:               
+                    if hasfits:
+                        stage = 2
                         profit = profit['fits']
                         for model in idxparamsprofit:
                             hasfits = hasfits and model in profit['galsim']
                             if hasfits:
+                                stage = 3
                                 profitmodel = profit['galsim'][model]
                                 hasfits = hasfits and 'fits' in profitmodel
                                 if hasfits:
+                                    stage = 4
                                     profitmodel = profitmodel['fits']
                                     row += [profitmodelfit[param]
                                             for param in params["profit"]
                                             for profitmodelfit in profitmodel]
                                     if printrow:
-                                        print(len(row), model, params['profit'], len(profitmodel))
+                                        print(src, idx, len(row), model, params['profit'], len(profitmodel), hasfits)
+                                elif verbose:
+                                    print(src, idx, model, profitmodel.keys(), hasfits, stage)
+                            elif verbose:
+                                print(src, idx, model, profit['galsim'].keys(), hasfits, stage)
+                    elif verbose:
+                        print(src, idx, model, profit.keys(), hasfits, stage)
+                elif verbose:
+                    print(src, idx, datatab[idx].keys(), model, hasfits, stage)
                 if printrow:
-                    print(datatab[idx]['hst2hsc_mgserbpx'].keys())
-                    print(src, model, hasfits)
+                    print(src, idx, datatab[idx].keys(), model, hasfits, stage)
             if hasfits:
                 row += [rec["flux"][0]] + list(rec["sersicfit"][idxparamscosmos[0]])
                 if printrow:
@@ -288,29 +344,27 @@ for datatab in data:
                             values[9] *= scaleratio
                             for col in [3, 8]:
                                 values[col] *= values[2]
-                        # print(idx, model, len(values))
                         # This is a bit ugly - replace the placeholder re value with a proper calculation
-                        if idxs is idxprofitmg8:
+                        if model in models['mg']['profit']:
                             idxs = np.array(idxs)
-                            weights = values[idxs[idxprofitmg8weightsizes[1]]]
-                            weightsum = 1.0
-                            for idxweight, weight in enumerate(weights):
-                                weight *= weightsum
-                                weightsum -= weight
-                                weights[idxweight] = weight
-                            # Ensure that the weights sum to unity += machine eps.
-                            weights[-1] = 1.0-np.sum(weights[:-1])
-                            sizes = values[idxs[idxprofitmg8weightsizes[2]]]
-                            re = multigauss2drquant(list(zip(weights, sizes)))
-                            values[idxs[idxprofitmg8weightsizes[0]]] = re
+                            for idxsparams in idxmgweightsizes[paramweightsizeskeymodel[model][1]]:
+                                weights = values[idxs[idxsparams[1]]]
+                                weightsum = 1.0
+                                for idxweight, weight in enumerate(weights):
+                                    weight *= weightsum
+                                    weightsum -= weight
+                                    weights[idxweight] = weight
+                                # Ensure that the weights sum to unity += machine eps.
+                                weights[-1] = 1.0-np.sum(weights[:-1])
+                                sizes = values[idxs[idxsparams[2]]]
+                                values[idxs[idxsparams[0]]] = multigauss2drquant(list(zip(weights, sizes)))
                         row += list(values[idxs])
                         if printrow:
                             print(len(row), model)
+                    printrow = False
         if hasfits:
             rows.append(row)
             appended += 1
-            if printrow:
-                printrow = False
     listids = datatab.keys()
     print("Read {}/{} rows from {}-{}".format(
         appended, len(datatab), min(listids),
@@ -362,7 +416,7 @@ def getname(var, prefix, postfix):
     return namevar
 
 
-def plotjoint(tab, prefixx, prefixy, varnames, varcolor="profit.hst.mgserbpx.n",
+def plotjoint(tab, prefixx, prefixy, varnames, varcolor="profit.hst.mg8serbpx.n",
               cmap = mpl.colors.ListedColormap(sns.color_palette("RdYlBu_r", 100)),
               plotmarginals=True, hist_kws={'log': False}, postfixx=None, postfixy=None):
     ratios = {var: tab[getname(var, prefixx, postfixx)]/tab[getname(var, prefixy, postfixy)] for 
@@ -411,7 +465,7 @@ varnames = ["flux", "re", "n"]
 plotjoint(tab, "profit.hst.serb", "cosmos.ser", varnames)
 
 
-# ### COSMOS-HST: MultiProFit Sersic vs MultiProFit MGA Sersic
+# ### COSMOS-HST: MultiProFit Sersic vs MultiProFit MGA Sersic (N=8)
 # 
 # How close is the N=8 MGA to a true Sersic fit? The answer is quite close, except at n>4 where the MGA intentionally does not match the inner profile and for n < 0.5 where the MGA can't possibly match a true Sersic.
 # 
@@ -420,27 +474,47 @@ plotjoint(tab, "profit.hst.serb", "cosmos.ser", varnames)
 # In[11]:
 
 
-plotjoint(tab, "profit.hst.mgserbpx", "profit.hst.serbpx", varnames)
+plotjoint(tab, "profit.hst.mg8serbpx", "profit.hst.serbpx", varnames)
 
 
-# ### COSMOS-HST: MultiProFit MGA Sersic vs MultiProFit GMM
+# ### COSMOS-HST: MultiProFit Sersic vs MultiProFit MGA Sersic (N=4)
 # 
-# How much different is a free GMM compared to a constrained Sersic MGA? The answer might surprise you. In fact there are non-negligible systematic differences. It may be expected that large-n galaxies tend to smaller fluxes and sizes with a full GMM, whereas the opposite is true for low-n galaxies.
+# How close is the N=4 MGA to a true Sersic fit? Reasonably close, but there's clearly more scatter than with an N=8 fit, particularly at n>2 where more Gaussians are needed to match the shallow outer profile.
 
 # In[12]:
 
 
-plotjoint(tab, "profit.hst.mgserbpx", "profit.hst.mg8bpx", ["flux", "re"])
+plotjoint(tab, "profit.hst.mg4serbpx", "profit.hst.serbpx", varnames)
+
+
+# ### COSMOS-HST: MultiProFit MGA Sersic vs MultiProFit GMM (N=8)
+# 
+# How much different is a free GMM compared to a constrained Sersic MGA? The answer might surprise you. In fact there are non-negligible systematic differences. It may be expected that large-n galaxies tend to smaller fluxes and sizes with a full GMM, whereas the opposite is true for low-n galaxies.
+
+# In[13]:
+
+
+plotjoint(tab, "profit.hst.mg8serbpx", "profit.hst.mg8bpx", ["flux", "re"])
+
+
+# ### COSMOS-HST: MultiProFit MGA Sersic vs MultiProFit GMM (N=4)
+# 
+# As above, but different?
+
+# In[14]:
+
+
+plotjoint(tab, "profit.hst.mg4serbpx", "profit.hst.mg4bpx", ["flux", "re"])
 
 
 # ### MultiProFit MGA Sersic: COSMOS-HST vs COSMOS-HSC
 # 
 # How well does a fit to Subaru-HSC data recover the parameters derived from the HST fits? It should do well modulo noise bias, because I generated an image of the true model but used the observed variance to give it noise.
 
-# In[13]:
+# In[15]:
 
 
-plotjoint(tab, "profit.hst.mgserbpx", "profit.hst2hsc_mgserbpx.mgserbpx", varnames)
+plotjoint(tab, "profit.hst.mg8serbpx", "profit.hst2hsc_mg8serbpx.mg8serbpx", varnames)
 
 
 # ### Model comparison plots
@@ -451,7 +525,7 @@ plotjoint(tab, "profit.hst.mgserbpx", "profit.hst2hsc_mgserbpx.mgserbpx", varnam
 # 
 # Some of the later plots compare equivalent models where the only differences are the initial parameters; an ideal optimizer should reach identical solutions for both.
 
-# In[14]:
+# In[16]:
 
 
 # Which are the best models?
@@ -460,9 +534,9 @@ def getpostfix(model):
     return "0" if model in models['single']['profit'] else "1"
 
 modelslist = [
-    [model for model in models["single"]["profit"] if not model.startswith('serb')] + [model for model in models["double"]["profit"] if model != 'mgserserbpx'],
-    models["single"]["profit"] + [model for model in models["double"]["profit"] if model != 'mgserserbpx'] + models['mg8']['profit'],
-    models["single"]["profit"] + models["double"]["profit"] + models['mg8']['profit'],
+    [model for model in models["single"]["profit"] if not model.startswith('serb')] + [model for model in models["double"]["profit"] if not model.endswith('serserbpx')],
+    models["single"]["profit"] + [model for model in models["double"]["profit"] if not model.endswith('serserbpx')] + models['mg']['profit'],
+    models["single"]["profit"] + models["double"]["profit"] + models['mg']['profit'],
 ]
 chisqredcols = {}
 for modelsprofit in modelslist:
@@ -477,14 +551,16 @@ for modelsprofit in modelslist:
     print(modelbestcounts)
 
 # Plot direct model comparisons
-for colx, coly in [("mgserbpx", "mgdevexppx"), ("mgserbedpx", "mgcmodelpx"), 
-                   ("mgdevexppx", "mgcmodelpx"), ("mgserbedpx", "serb"),
-                   ("mgserbedpx", "mgserbpx"), ("mgserserbpx", "mg8bpx")]:
-    prefixx = ".".join(["profit", "hst", colx])
-    prefixy = ".".join(["profit", "hst", coly])
-    plotjoint(tab, prefixx, prefixy, ['chisqred'], varcolor="profit.hst.mgserbpx.n",
-              cmap = mpl.colors.ListedColormap(sns.color_palette("RdYlBu_r", 100)),
-              hist_kws={'log': True}, postfixx=getpostfix(colx), postfixy=getpostfix(coly))
+for obs in ['hst', 'hst2hsc_mg8serbpx']:
+    for colx, coly in [("mg8serbpx", "mg8devexppx"), ("mg8serbedpx", "mg8cmodelpx"), 
+                       ("mg8devexppx", "mg8cmodelpx"), ("mg8serbedpx", "serb"),
+                       ("mg8serbedpx", "mg8serbpx"), ("mg8serserbpx", "mg8bpx"),
+                       ("mg4x2px", "mg8serserbpx")]:
+        prefixx = ".".join(["profit", obs, colx])
+        prefixy = ".".join(["profit", obs, coly])
+        plotjoint(tab, prefixx, prefixy, ['chisqred'], varcolor="profit.hst.mg8serbpx.n",
+                  cmap = mpl.colors.ListedColormap(sns.color_palette("RdYlBu_r", 100)),
+                  hist_kws={'log': True}, postfixx=getpostfix(colx), postfixy=getpostfix(coly))
 
 
 # ### MG Sersic fixed-n vs free-n fits
@@ -495,11 +571,11 @@ for colx, coly in [("mgserbpx", "mgdevexppx"), ("mgserbedpx", "mgcmodelpx"),
 # 
 # The last plot compares the free Sersic to an exponential, showing that an exponential is 'good enough' for most galaxies except those with best-fit n>4. This suggests that the exponential model would be a reasonable choice if we had to pick just one, which is in line with expectations that most of the galaxies in any given deep field are disky.
 
-# In[15]:
+# In[17]:
 
 
 # Now compare only single-component models: Sersic vs best fixed n
-modelsfixedn = ["gausspx", "mgexppx", 'mgn2px', "mgdev2px"] 
+modelsfixedn = ["gausspx", "mg8exppx", 'mg8n2px', "mg8dev2px"] 
 chisqredcolsfixedn = {
     model: ".".join(["profit", "hst", model, "chisqred", "0"]) 
     for model in modelsfixedn
@@ -509,7 +585,7 @@ print(modelbest.value_counts())
 # I seriously cannot figure out how to slice with modelbest
 # Surely there's a better way to do this?
 modelchisqmin = tab[list(chisqredcolsfixedn.values())].min(axis=1)
-for colxname in ["mgserbpx", 'serb']: 
+for colxname in ["mg8serbpx", 'serb']: 
     labelbest = 'log10(chisqred) ({}/{})'.format(colxname, "best([gauss,exp,n2,dev]px)")
     ratiobest = tab[chisqredcols[colxname]]/modelchisqmin
     # Plots:
@@ -521,7 +597,7 @@ for colxname in ["mgserbpx", 'serb']:
         (tab[chisqredcols[colxname]], ratiobest,
          'log10(chisqred) ({})'.format(colxname), labelbest), 
         (tab[colnser], ratiobest, 'log10(n_ser)', labelbest),
-        (tab[colnser], tab[chisqredcols[colxname]]/tab[chisqredcols["mgexppx"]],
+        (tab[colnser], tab[chisqredcols[colxname]]/tab[chisqredcols["mg8exppx"]],
          'log10(n_ser)', 'log10(chisqred) ({}/exp)'.format(colxname)),
     ]
     for x, y, labelx, labely in cols:

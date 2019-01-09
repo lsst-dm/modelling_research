@@ -1,4 +1,5 @@
 name,model,fixedparams,initparams,inittype,psfmodel,psfpixel
+gausspx,mgsersic8:1,nser,nser=0.5,moments,gaussian:3,T
 mg8exppx,mgsersic8:1,nser,nser=1,gausspx,gaussian:3,T
 mg8n2px,mgsersic8:1,nser,nser=2,mg8exppx,gaussian:3,T
 mg8dev2px,mgsersic8:1,nser,nser=4,mg8n2px,gaussian:3,T
@@ -31,3 +32,4 @@ mg4fwpx,gaussian:4,nser;re,ang=inherit;axrat=inherit,mg4serbpx,gaussian:3,T
 mg4px2,gaussian:4,nser,ang=inherit;axrat=inherit,mg4fwpx,gaussian:3,T
 mg4px,gaussian:4,nser,ang=inherit;axrat=inherit,mg4serbpx,gaussian:3,T
 mg4bpx,gaussian:4,nser,ang=inherit;axrat=inherit,best,gaussian:3,T
+mg4x2px,gaussian:8,nser,ang=inherit;axrat=inherit,mg4serserbpx,gaussian:3,T
