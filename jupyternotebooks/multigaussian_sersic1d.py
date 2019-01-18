@@ -76,6 +76,7 @@ def chisq_sersic(params, x, y, weightsbins, rangefit=None, rdivreslog=None,
         return chisq
 
 
+# Take a parameter vector for fitting and split into sizes and weights
 def paramstoweightres(params, rdivreslog=None):
     if rdivreslog is not None:
         paramsnew = np.concatenate([params, rdivreslog])
@@ -95,6 +96,7 @@ def paramstoweightres(params, rdivreslog=None):
     return weights, res
 
 
+# Take sizes and weights of Gaussians and mash them into a single parameter vector (e.g. for minimization)
 def weightrestoparams(weights, res, rdivreslog=None):
     paramweights = []
     paramres = []
@@ -107,40 +109,50 @@ def weightrestoparams(weights, res, rdivreslog=None):
     return paramweights[:-1] + paramres
 
 
-def fitweights(nvals, radii, areasq, weightssigmas={}, methods=['BFGS'], plot=True, addthreshhold=None,
+# Fit optimals weights for given values of n, given radial bins, the area of each bin, optional sigmas on the bins (i.e. how to weight each bin when fitting)
+# Can specify a fitting method, whether and how many of the values to plot, a threshold to add an extra component, the initial weight of the added component,
+# whether the added component should be bigger than the biggest or smaller than the smallest current component
+# funcrangefit:   A function that takes radii and n and returns a restricted range of radii to fit (that depends on n)
+# funcrdivreslog: A function that returns radii for a given n and fixes them so that only the weights are fit (useful for fitting values of n close to 0.5)
+def fitweights(nvals, radii, areasq, weightssigmas={}, methods=['BFGS'], plot=True, plotnth=1, plotvals=None, addthreshhold=None,
                weightinit=1e-3, refacinit=1.1, addbig = None, funcrangefit=None, funcrdivreslog=None):
     for nvalsi, weightsvars in nvals:
         params = weightrestoparams(weightsvars[0], weightsvars[1], funcrdivreslog) if weightsvars is not None else None
-        for n in nvalsi:
+        for i, n in enumerate(nvalsi):
+            plotn = plot and (((i+1) % plotnth == 0) or (plotvals is not None and n in plotvals))
             y = sersic(radii, n, 1)*areasq
             paramsbytype = {}
             rangefit = funcrangefit(radii, n) if funcrangefit is not None else None
             rdivreslog = funcrdivreslog(n) if funcrdivreslog is not None else None
             if params is not None:
-                paramsbytype['prev.'] = params
+                paramsbytype['Init'] = params
             if n in weightssigmas:
                 weightsvars = weightssigmas[n]
-                paramsbytype['existing'] = weightrestoparams(
+                paramsbytype['Existing'] = weightrestoparams(
                     weightsvars[0][::-1], np.sqrt(weightsvars[1][::-1])*gaussian_sigma_to_re)
-            plotteddata = not plot
+            plotdata = plotn
             chisqmin = np.Inf
             for name, paramsi in paramsbytype.items():
                 chisq = chisq_sersic(paramsi, radii, y, areasq, rangefit, rdivreslog,
-                                     plotdata=not plotteddata, plotmodel=plot)
+                                     plotdata=plotdata, plotmodel=plotn)
                 print(name, ' chisq =', chisq)
                 if chisq < chisqmin:
                     params = paramsi
-                plotteddata = True
+                plotdata = False
             print('ws, re:', paramstoweightres(params, rdivreslog))
             for method in methods:
                 fit = sp.optimize.minimize(chisq_sersic, params, args=(radii, y, areasq, rangefit, rdivreslog),
                                            tol=1e-5, options={'disp': True, }, method=method)
                 params = fit['x']
             print(fit['fun'], fit['x'])
-            chisq = chisq_sersic(params, radii, y, areasq, rangefit, rdivreslog, plotmodel=plot)
-            plt.xlabel('$r/r_{eff}$')
-            plt.ylabel('log10(surface density)')
-            plt.show()
+            chisq = chisq_sersic(params, radii, y, areasq, rangefit, rdivreslog, plotmodel=plotn)
+            if plotn:
+                plt.xlabel('$r/r_{eff}$')
+                plt.ylabel('log10(surface density)')
+                plt.tight_layout()
+                for axis in ['x', 'y']:
+                    plt.autoscale(enable=True, axis=axis, tight=True)
+                plt.legend(['Data'] + list(paramsbytype.keys()) + ['Best'])
             weights, res = paramstoweightres(params, rdivreslog)
             idxsort = np.argsort(res)[::-1]
             weights = np.array(weights)[idxsort]
@@ -158,6 +170,8 @@ def fitweights(nvals, radii, areasq, weightssigmas={}, methods=['BFGS'], plot=Tr
                 res = np.insert(res, 0, refacinit*res[0]) if cond else np.append(res, res[-1]/refacinit)
                 params = weightrestoparams(weights, res)
                 print('new w, r:', weights, res)
+            if plotn:
+                plt.show()
                 
 
 def normalize(array):
@@ -242,7 +256,7 @@ nvals = [
         ),
     )
 ]
-fitweights(nvals, rmid, areasq, methods=['BFGS'])
+fitweights(nvals, rmid, areasq, methods=['BFGS'], plotnth=2)
 nvals = [
     (
         np.array([0.70]),
@@ -272,7 +286,7 @@ nvals = [
         )
     )
 ]
-fitweights(nvals, rmid, areasq, methods=['BFGS'])
+fitweights(nvals, rmid, areasq, methods=['BFGS'], plotnth=2)
 nvals = [
     (
         np.array([0.55, 0.54, 0.535, 0.53]),
@@ -282,7 +296,7 @@ nvals = [
         ),
     )
 ]
-fitweights(nvals, rmid, areasq, methods=['BFGS'])
+fitweights(nvals, rmid, areasq, methods=['BFGS'], plotnth=2)
 nvals = [
     (
         np.array([0.53, 0.525, 0.52, 0.515]),
@@ -292,7 +306,7 @@ nvals = [
         ),
     )
 ]
-fitweights(nvals, rmid, areasq, methods=['BFGS'])
+fitweights(nvals, rmid, areasq, methods=['BFGS'], plotnth=2)
 
 
 # ## Why can't you just fit N components down to n=0.5?
@@ -313,7 +327,7 @@ nvals = [
         ),
     )
 ]
-fitweights(nvals, rmid, areasq)
+fitweights(nvals, rmid, areasq, plotnth=10)
 
 
 # ## Fitting weights with fixed, linearly-extrapolated sizes for n < 1
@@ -369,7 +383,7 @@ nvals = [
         ),
     )
 ]
-fitweights(nvals, rmid, areasq, funcrdivreslog=RadiusExtrapolator.r)
+fitweights(nvals, rmid, areasq, funcrdivreslog=RadiusExtrapolator.r, plotnth=np.Inf, plotvals=[1., 0.85, 0.7, 0.6, 0.55, 0.53, 0.52, 0.51, 0.505, 0.501])
 
 
 # ## Fitting large n profiles
@@ -415,7 +429,7 @@ nvals = [
         ),
     )
 ]
-fitweights(nvals, rmid, areasq, funcrangefit=funcrangefitn)
+fitweights(nvals, rmid, areasq, funcrangefit=funcrangefitn, plotnth=np.Inf, plotvals=[1., 1.2, 1.5, 2., 2.5, 3., 3.5, 4., 4.5, 5., 6., 7., 8.])
 
 
 # ### 4-Component Sersic MGA
@@ -437,7 +451,7 @@ nvals = [
         ),
     )
 ]
-fitweights(nvals, rmid, areasq, methods=['BFGS'])
+fitweights(nvals, rmid, areasq, methods=['BFGS'], plotnth=3)
 nvals = [
     (
         np.array([
@@ -449,7 +463,7 @@ nvals = [
         ),
     )
 ]
-fitweights(nvals, rmid, areasq, methods=['BFGS'])
+fitweights(nvals, rmid, areasq, methods=['BFGS'], plotnth=2)
 nvals = [
     (
         np.array([
@@ -461,7 +475,7 @@ nvals = [
         ),
     )
 ]
-fitweights(nvals, rmid, areasq, methods=['BFGS'])
+fitweights(nvals, rmid, areasq, methods=['BFGS'], plotnth=3)
 
 
 # In[9]:
@@ -480,7 +494,7 @@ nvals = [
         ),
     )
 ]
-fitweights(nvals, rmid, areasq, methods=['BFGS'])
+fitweights(nvals, rmid, areasq, methods=['BFGS'], plotnth=4)
 
 def radiuslogextrapmgfour(n):
     return np.log10(np.array([1.0, 0.868, 0.556, 0.272]) + 10*(n-0.5)*(
@@ -504,7 +518,7 @@ nvals = [
         ),
     )
 ]
-fitweights(nvals, rmid, areasq, methods=['BFGS'], funcrdivreslog=radiuslogextrapmgfour)
+fitweights(nvals, rmid, areasq, methods=['BFGS'], funcrdivreslog=radiuslogextrapmgfour, plotnth=5)
 
 
 # In[10]:
@@ -530,7 +544,7 @@ nvals = [
         ),
     )
 ]
-fitweights(nvals, rmid, areasq, methods=['BFGS'], funcrangefit=funcrangefitn)
+fitweights(nvals, rmid, areasq, methods=['BFGS'], funcrangefit=funcrangefitn, plotnth=np.Inf, plotvals=[1., 1.2, 1.5, 2., 2.5, 3., 3.5, 4., 4.5, 5., 6., 7., 8.])
 
 # To grep only the weights from the fit log:
 # grep -C 2 normalize file.txt | grep [\(\)] | sed "s/n=//g"
@@ -1244,7 +1258,7 @@ weightvarsfour = {
 # 
 # Lastly, it's worth noting that not every control point was used for the final set in MultiProFit; some were excluded to 
 
-# In[5]:
+# In[12]:
 
 
 import multiprofit.objects as mpfobj
