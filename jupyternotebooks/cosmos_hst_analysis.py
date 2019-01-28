@@ -83,7 +83,7 @@ def gauss2dint(xdivsigma):
      return 1 - np.exp(-xdivsigma**2/2.)
 
 
-# Compute the integrated flux to some radius x for a sum of Gaussians
+# Compute the fraction of the integrated flux within x for a sum of Gaussians
 # x is a length in arbitrary units
 # Weightsizes is a list of tuples of the weight (total flux) and size (r_eff in the same units as x) of each gaussian
 # Note that gauss2dint expects x/sigma, but size is re, so we pass x/re*re/sigma = x/sigma
@@ -91,10 +91,12 @@ def gauss2dint(xdivsigma):
 # This is so you can use root finding algorithms to find x for a given quant (see below)
 def multigauss2dint(x, weightsizes, quant=0):
      retosigma = np.sqrt(2.*np.log(2.))
-     weightsum = -quant
+     weightsumtox = 0
+     weightsum = 0
      for weight, size in weightsizes:
-         weightsum += weight*gauss2dint(x/size*retosigma)
-     return weightsum
+         weightsumtox += weight*(gauss2dint(x/size*retosigma) if size > 0 else 1)
+         weightsum += weight
+     return weightsumtox/weightsum - quant
 
 
 import scipy.optimize as spopt
@@ -103,6 +105,16 @@ import scipy.optimize as spopt
 # Weightsizes and quant are as above
 # Choose xmin, xmax so that xmin < x_quant < xmax. Ideally we'd just set xmax=np.inf but brentq doesn't work then
 def multigauss2drquant(weightsizes, quant=0.5, xmin=0, xmax=1e5):
+    if not 0 <= quant <= 1):
+        raise ValueError('Quant {} not >=0 & <=1'.format(quant, quant))
+    weightsumzerosize = 0
+    weightsum = 0
+    for weight, size in weightsizes:
+        if not (size > 0):
+            weightsumzerosize += weight
+        weightsum += weight
+    if weightsumzerosize/weightsum >= quant:
+        return 0
     return spopt.brentq(multigauss2dint, a=xmin, b=xmax, args=(weightsizes, quant))
 
 
@@ -255,8 +267,7 @@ colnames = (["id", "ra", "dec"] +
              for idx in range(1 + (model in models['double']['profit'] or model in models['mg']['profit']))] +
             [".".join([prefix, x]) for prefix, colnames in colnames.items() for x in colnames])
 
-print(colnames)
-print(len(colnames))
+print(len(colnames), 'colnames:', colnames)
 
 
 # ### Read the MultiProFit results
@@ -277,7 +288,9 @@ rows = []
 # Shouldn't have hardcoded this but here we are
 scaleratio = 0.168/0.03
 verbose = False
-printrow = True
+printrow = False
+hasaddedderivedcolnames = False
+idxsubcomponentfluxes = {}
 for datatab in data:
     appended = 0
     for idx in datatab:
@@ -357,12 +370,33 @@ for datatab in data:
                                 # Ensure that the weights sum to unity += machine eps.
                                 weights[-1] = 1.0-np.sum(weights[:-1])
                                 sizes = values[idxs[idxsparams[2]]]
-                                values[idxs[idxsparams[0]]] = multigauss2drquant(list(zip(weights, sizes)))
+                                reff = multigauss2drquant(list(zip(weights, sizes)))
+                                if not (reff > 0):
+                                    print(idxsparams)
+                                    print('Unresolved component for src={}, idx={}, model={}, weightsizes: {}, {}'.format(src, idx, model, weights, sizes))
+                                values[idxs[idxsparams[0]]] = reff
                         row += list(values[idxs])
                         if printrow:
                             print(len(row), model)
                     printrow = False
         if hasfits:
+            # Build a list of derived summed quantities
+            if not hasaddedderivedcolnames:
+                colnamesarr = np.array(colnames)
+                for modeller, srcs in modellers.items():
+                    for src in srcs:
+                        prefix = modeller if src is None else ".".join([modeller, src])
+                        for model in models['double'][modeller]:
+                            colname = '.'.join([prefix, model, 'flux'])
+                            # Indices of all of the columns to add up to get the total flux (basically just *.exp.flux and *.dev.flux)
+                            idxsubcomponentfluxes[colname] = np.array(
+                                [np.where(colnamesarr == param)[0][0] for param in ['.'.join([prefix, model, comp, 'flux'])
+                                                                                 for comp in ['exp', 'dev']]])
+                            colnames.append(colname)
+            hasaddedderivedcolnames = True
+            # Actually compute the derived sums
+            for fluxidxs in idxsubcomponentfluxes.values():
+                row.append(np.sum(np.array([row[idx] for idx in fluxidxs])))
             rows.append(row)
             appended += 1
     listids = datatab.keys()
@@ -370,6 +404,7 @@ for datatab in data:
         appended, len(datatab), min(listids),
         max(listids)))
 
+print(colnames)
     # TODO: Convert mu_re into flux for use_bulgefit=0
     #row += profit["paramsbest"]
 
@@ -416,10 +451,11 @@ def getname(var, prefix, postfix):
     return namevar
 
 
-def plotjoint(tab, prefixx, prefixy, varnames, varcolor="profit.hst.mg8serbpx.n",
+def plotjoint(tab, prefixx, prefixy, varnames, varcolor="profit.hst.serbpx.n",
               cmap = mpl.colors.ListedColormap(sns.color_palette("RdYlBu_r", 100)),
-              plotmarginals=True, hist_kws={'log': False}, postfixx=None, postfixy=None):
-    ratios = {var: tab[getname(var, prefixx, postfixx)]/tab[getname(var, prefixy, postfixy)] for 
+              plotmarginals=True, hist_kws={'log': False}, postfixx=None, postfixy=None,
+              plotratiosjoint=True, bins=20):
+    ratios = {var: tab[getname(var, prefixy, postfixy)]/tab[getname(var, prefixx, postfixx)] for 
               var in varnames}
     colors = (np.log10(tab[varcolor])+1)/np.log10(60)
     colors = cmap(np.rint(100*colors)/100)
@@ -427,27 +463,31 @@ def plotjoint(tab, prefixx, prefixy, varnames, varcolor="profit.hst.mg8serbpx.n"
         xlog = np.log10(ratios[x])
         xlog[xlog > 1] = 1
         xlog[xlog < -1] = -1
-        for y in varnames[(i+1):(len(varnames)+1)]:
-            namey = getname(y, prefixy, postfixy)
-            ylog = np.log10(ratios[y])
-            ylog[ylog > 1] = 1
-            ylog[ylog < -1] = -1
-            fig = sns.JointGrid(x=xlog, y=ylog)
-            fig.plot_joint(plt.scatter, c=colors, marker='.',
-                           edgecolor='k', s=24).set_axis_labels(
-                'log10({}_ratio) ({}/{})'.format(x, prefixx, prefixy),
-                'log10({}_ratio) ({}/{})'.format(y, prefixx, prefixy))
-            if plotmarginals:
-                fig.plot_marginals(sns.distplot, kde=False, hist_kws=hist_kws)
+        if plotratiosjoint:
+            for y in varnames[(i+1):(len(varnames)+1)]:
+                ylog = np.log10(ratios[y])
+                ylog[ylog > 1] = 1
+                ylog[ylog < -1] = -1
+                fig = sns.JointGrid(x=xlog, y=ylog)
+                print('log10({} ratio) ({}/{})'.format(x, prefixy, prefixx))
+                fig.plot_joint(plt.scatter, c=colors, marker='.',
+                               edgecolor='k', s=24).set_axis_labels(
+                    'log10({} ratio) ({}/{})'.format(x, prefixy, prefixx),
+                    'log10({}_ratio) ({}/{})'.format(y, prefixy, prefixx))
+                if plotmarginals:
+                    fig.plot_marginals(sns.distplot, kde=False, hist_kws=hist_kws)
 
         ylog = np.log10(tab[getname(x, prefixx, postfixx)])
+        ylog[ylog > 10] = 10
+        ylog[ylog < -10] = -10
+
         fig = sns.JointGrid(x=ylog, y=xlog)
         fig.plot_joint(plt.scatter, c=colors, marker='.',
                        edgecolor='k', s=24).set_axis_labels(
-            'log10({}) ({})'.format(x, prefixx),
-            'log10({}_ratio) ({}/{})'.format(x, prefixx, prefixy))
+            'log10({}) ({})$'.format(x, prefixx),
+            'log10({} ratio) ({}/{})'.format(x, prefixy, prefixx))
         if plotmarginals:
-            fig.plot_marginals(sns.distplot, kde=False, hist_kws=hist_kws)
+            fig.plot_marginals(sns.distplot, kde=False, hist_kws=hist_kws, bins=bins)
         #cax = fig.add_axes([.94, .25, .02, .6])
 
 varnames = ["flux", "re", "n"]
@@ -462,7 +502,8 @@ varnames = ["flux", "re", "n"]
 # In[10]:
 
 
-plotjoint(tab, "profit.hst.serb", "cosmos.ser", varnames)
+plotjoint(tab, 'profit.hst.serb', 'cosmos.ser', varnames, plotratiosjoint=False)
+plotjoint(tab, 'cosmos.ser', 'profit.hst.serb', varnames)
 
 
 # ### COSMOS-HST: MultiProFit Sersic vs MultiProFit MGA Sersic (N=8)
@@ -474,7 +515,8 @@ plotjoint(tab, "profit.hst.serb", "cosmos.ser", varnames)
 # In[11]:
 
 
-plotjoint(tab, "profit.hst.mg8serbpx", "profit.hst.serbpx", varnames)
+plotjoint(tab, 'profit.hst.mg8serbpx', 'profit.hst.serbpx', varnames, plotratiosjoint=False)
+plotjoint(tab, 'profit.hst.serbpx', 'profit.hst.mg8serbpx', varnames)
 
 
 # ### COSMOS-HST: MultiProFit Sersic vs MultiProFit MGA Sersic (N=4)
@@ -484,37 +526,54 @@ plotjoint(tab, "profit.hst.mg8serbpx", "profit.hst.serbpx", varnames)
 # In[12]:
 
 
-plotjoint(tab, "profit.hst.mg4serbpx", "profit.hst.serbpx", varnames)
+plotjoint(tab, 'profit.hst.mg4serbpx', 'profit.hst.serbpx', varnames, plotratiosjoint=False)
+plotjoint(tab, 'profit.hst.serbpx', 'profit.hst.mg4serbpx', varnames)
+plotjoint(tab, 'profit.hst.mg8serbpx', 'profit.hst.mg4serbpx', varnames)
 
 
-# ### COSMOS-HST: MultiProFit MGA Sersic vs MultiProFit GMM (N=8)
+# ### COSMOS-HST: MultiProFit GMM (N=8) vs MultiProFit MGA Sersic
 # 
-# How much different is a free GMM compared to a constrained Sersic MGA? The answer might surprise you. In fact there are non-negligible systematic differences. It may be expected that large-n galaxies tend to smaller fluxes and sizes with a full GMM, whereas the opposite is true for low-n galaxies.
+# How different is a free GMM compared to a constrained Sersic MGA? As it might be expected, large-n galaxies tend to smaller fluxes and sizes with a full GMM, whereas the opposite is true for low-n galaxies.
 
 # In[13]:
 
 
-plotjoint(tab, "profit.hst.mg8serbpx", "profit.hst.mg8bpx", ["flux", "re"])
+plotjoint(tab, 'profit.hst.mg8bpx', 'profit.hst.mg8serbpx', ["flux", "re"], plotratiosjoint=False)
+plotjoint(tab, 'profit.hst.mg8serbpx', 'profit.hst.mg8bpx', ["flux", "re"])
 
 
-# ### COSMOS-HST: MultiProFit MGA Sersic vs MultiProFit GMM (N=4)
+# ### COSMOS-HST: MultiProFit GMM (N=4) vs MultiProFit MGA Sersic
 # 
-# As above, but different?
+# Two questions: How much worse is the N=4 GMM than the N=8? And, how much better (or worse!) is the N=4 GMM than the N=8 MGA Sersic?
 
 # In[14]:
 
 
-plotjoint(tab, "profit.hst.mg4serbpx", "profit.hst.mg4bpx", ["flux", "re"])
+plotjoint(tab, 'profit.hst.mg4bpx', 'profit.hst.mg8bpx', ["flux", "re", 'chisqred.0'], plotratiosjoint=False)
+plotjoint(tab, 'profit.hst.mg8bpx', 'profit.hst.mg4bpx', ["flux", "re"])
+plotjoint(tab, 'profit.hst.mg8serbpx', 'profit.hst.mg4bpx', ["flux", "re"])
+
+
+# ### COSMOS-HST: MultiProFit GMM vs MultiProFit MGA Sersic (N=4 x 2 Components)
+# 
+# How much better is a 2-component GMM (shared shape, so the radial profile is a Gaussian mixture) than a 2-component MGA Sersic? Also compare to N=8 Sersic MGA, which has fewer parameters but covers a different space from the N=4x2 GMM, since each component has 8 Gaussians.
+
+# In[15]:
+
+
+plotjoint(tab, 'profit.hst.mg4x2px', 'profit.hst.mg4serserbpx', ["flux", "chisqred.1"], plotratiosjoint=False)
+plotjoint(tab, 'profit.hst.mg8serserbpx', 'profit.hst.mg4x2px', ["flux", "chisqred.1"])
 
 
 # ### MultiProFit MGA Sersic: COSMOS-HST vs COSMOS-HSC
 # 
 # How well does a fit to Subaru-HSC data recover the parameters derived from the HST fits? It should do well modulo noise bias, because I generated an image of the true model but used the observed variance to give it noise.
 
-# In[15]:
+# In[16]:
 
 
-plotjoint(tab, "profit.hst.mg8serbpx", "profit.hst2hsc_mg8serbpx.mg8serbpx", varnames)
+plotjoint(tab, 'profit.hst2hsc_mg8serbpx.mg8serbpx', 'profit.hst.mg8serbpx', varnames, plotratiosjoint=False)
+plotjoint(tab, 'profit.hst.mg8serbpx', 'profit.hst2hsc_mg8serbpx.mg8serbpx', varnames)
 
 
 # ### Model comparison plots
@@ -525,7 +584,7 @@ plotjoint(tab, "profit.hst.mg8serbpx", "profit.hst2hsc_mg8serbpx.mg8serbpx", var
 # 
 # Some of the later plots compare equivalent models where the only differences are the initial parameters; an ideal optimizer should reach identical solutions for both.
 
-# In[16]:
+# In[17]:
 
 
 # Which are the best models?
@@ -534,12 +593,18 @@ def getpostfix(model):
     return "0" if model in models['single']['profit'] else "1"
 
 modelslist = [
-    [model for model in models["single"]["profit"] if not model.startswith('serb')] + [model for model in models["double"]["profit"] if not model.endswith('serserbpx')],
-    models["single"]["profit"] + [model for model in models["double"]["profit"] if not model.endswith('serserbpx')] + models['mg']['profit'],
-    models["single"]["profit"] + models["double"]["profit"] + models['mg']['profit'],
+    ('Single-component', [model for model in models["single"]["profit"] if not model.startswith('serb')] + 
+        [model for model in models["double"]["profit"] if not model.endswith('serserbpx')]),
+    ('One- and two-component, no GMM', models["single"]["profit"] + 
+     [model for model in models["double"]["profit"] if not model.endswith('serserbpx')]),
+    ('One- and two-component, no GMMx2', models["single"]["profit"] + 
+     [model for model in models["double"]["profit"] if not model.endswith('serserbpx')] + 
+     [model for model in models['mg']['profit'] if not model.endswith('mg4x2px')]),
+    ('All', models["single"]["profit"] + models["double"]["profit"] + models['mg']['profit']),
 ]
 chisqredcols = {}
-for modelsprofit in modelslist:
+for modelsname, modelsprofit in modelslist:
+    print('Best-fit models, ' + modelsname + ':')
     chisqredcolsprint = {}
     for model in modelsprofit:
         if model not in chisqredcols:
@@ -571,7 +636,7 @@ for obs in ['hst', 'hst2hsc_mg8serbpx']:
 # 
 # The last plot compares the free Sersic to an exponential, showing that an exponential is 'good enough' for most galaxies except those with best-fit n>4. This suggests that the exponential model would be a reasonable choice if we had to pick just one, which is in line with expectations that most of the galaxies in any given deep field are disky.
 
-# In[17]:
+# In[18]:
 
 
 # Now compare only single-component models: Sersic vs best fixed n
@@ -581,7 +646,7 @@ chisqredcolsfixedn = {
     for model in modelsfixedn
 }
 modelbest = tab[list(chisqredcolsfixedn.values())].idxmin(axis=1)
-print(modelbest.value_counts())
+print('Counts of best fixed-n Sersic model:', modelbest.value_counts())
 # I seriously cannot figure out how to slice with modelbest
 # Surely there's a better way to do this?
 modelchisqmin = tab[list(chisqredcolsfixedn.values())].min(axis=1)
