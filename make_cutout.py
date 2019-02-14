@@ -1,4 +1,5 @@
 import numpy as np
+import os
 
 #import lsst.afw.coord as afwCoord
 import lsst.afw.geom as afwGeom
@@ -328,7 +329,9 @@ def make_cutout(filename, RA, DEC, width, nhdu=0, w_units="arcsecs", verbose=Fal
     return hdulist, im_status
 
 
-def cutout_HST(RA, DEC, sigma=0, width=30.0, type="png", return_data=False):
+def cutout_HST(RA, DEC, sigma=0, width=30.0, type="png", return_data=False,
+               path=os.path.join(os.path.sep, 'project', 'sr525', 'hstCosmosImages'),
+               filecorner=None):
 
     """
     Makes cutouts from the HST image of the COSMOS field
@@ -344,15 +347,17 @@ def cutout_HST(RA, DEC, sigma=0, width=30.0, type="png", return_data=False):
     from scipy.ndimage import gaussian_filter
 
     datas = []
-    with open("/scratch/sr525/hstCosmosImages/tiles/corners.txt", "r") as f:
+    if filecorner is None:
+        filecorner = os.path.join(path, 'tiles', 'corners.txt')
+    with open(filecorner, 'r') as f:
         for line in f:
-            l = line.split(",")
-            ra_min = float(l[0])
-            ra_max = float(l[2])
-            dec_min = float(l[1])
-            dec_max = float(l[3])
-            filename = "/scratch/sr525/hstCosmosImages/" + l[4][38:]
-            if RA < ra_min and RA > ra_max and DEC > dec_min and DEC < dec_max:
+            itemsline = line.split(',')
+            ra_min = float(itemsline[2])
+            ra_max = float(itemsline[0])
+            dec_min = float(itemsline[1])
+            dec_max = float(itemsline[3])
+            filename = os.path.join(path, itemsline[4][38:])
+            if ra_min < RA < ra_max and dec_min < DEC < dec_max:
                 print(filename)
                 with fits.open(filename[:-1]) as h:
                     hdulist, im_status = make_cutout(h, RA, DEC, width, nhdu=0)
