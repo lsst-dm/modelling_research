@@ -417,7 +417,7 @@ nvals = [
             2.35, 2.4, 2.45, 2.5, 2.55, 2.6, 2.65, 2.7, 2.75, 2.8, 2.85, 2.9,
             2.95, 3., 3.05, 3.1, 3.15, 3.2, 3.25, 3.3, 3.35, 3.4, 3.45, 3.5,
             3.55, 3.6, 3.65, 3.7, 3.75, 3.8, 3.85, 3.9, 3.95, 4., 4.1, 4.2,
-            4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9, 5., 5.1, 5.2, 5.3, 5.5, 5.5,
+            4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9, 5., 5.1, 5.2, 5.3, 5.4, 5.5,
             5.6, 5.7, 5.8, 5.9, 6., 6.15, 6.3, 6.45, 6.6, 6.75, 7, 7.25, 7.5,
             7.75, 8,
         ]),
@@ -1262,21 +1262,23 @@ weightvarsfour = {
 
 
 import multiprofit.objects as mpfobj
-import multiprofit.util as mpfutil
+import multiprofit.fitutils as mpfutil
+import multiprofit.multigaussianapproxprofile as mpfmga
 
 # Plot the resulting splines, demonstrating the superiority of the final adopted approach
 
-profilesersic = mpfutil.getcomponents('sersic', [''], [], {'nser': [0.5], 're': [1.0], 'ang': [0], 'axrat': [1]})[0]
+profilesersic = mpfutil.getcomponents('sersic', {'': np.array([1])}, {'nser': [0.5], 're': [1.0], 'ang': [0], 'axrat': [1]},
+                                      isfluxesfracs=False)[0]
 paramssersic = profilesersic.getparameters(fixed=False)
 # Plot N=8 first
 order = 8
 for weightvars in weightvarssmrt, weightvarslin, None, weightvarsfour, None:
     print(order)
-    mgsersic = mpfobj.MultiGaussianApproximationProfile(
+    mgsersic = mpfmga.MultiGaussianApproximationProfile(
         [mpfobj.FluxParameter('', '', 1.0, '', None)], parameters=paramssersic, weightvars=weightvars, order=order)
     changeorder = weightvars is None and order == 8
     if weightvars is None:
-        weightvars = mpfobj.MultiGaussianApproximationProfile.weights['sersic'][order]
+        weightvars = mpfmga.MultiGaussianApproximationProfile.weights['sersic'][order]
     nsers = np.linspace(np.log10(0.5), np.log10(6.3), 10000)
     weightsplines = mgsersic.weightsplines
     sigmasplines = mgsersic.sigmasplines
