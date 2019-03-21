@@ -1,7 +1,6 @@
 import numpy as np
 import os
 
-#import lsst.afw.coord as afwCoord
 import lsst.afw.geom as afwGeom
 
 # Mostly shamelessly stolen from Sophie Reed (thanks)
@@ -160,12 +159,8 @@ def make_cutout(filename, RA, DEC, width, nhdu=0, w_units="arcsecs", verbose=Fal
     """
 
     from astropy import wcs
-    # import wcsutil
     import astropy.io.fits as fits
-    import astropy.io.fits.compression
     import numpy as np
-    # import gc
-    # import matplotlib.pyplot as plt
     import warnings
     from astropy.utils.exceptions import AstropyWarning
     import copy
@@ -342,7 +337,6 @@ def cutout_HST(RA, DEC, sigma=0, width=30.0, type="png", return_data=False,
     """
 
     import astropy.io.fits as fits
-    from astropy import wcs
     import matplotlib.pyplot as plt
     from scipy.ndimage import gaussian_filter
 
