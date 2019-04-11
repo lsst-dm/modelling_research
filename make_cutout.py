@@ -86,8 +86,9 @@ def make_cutout_lsst(coords, exp, coord_units=None, size=100, w_units="pixels", 
         # print(ids)
 
         im_blank = np.zeros((int(np.ceil(b_width)), int(np.ceil(b_width))))
+    else:
+        raise ValueError('Unknown units ' + w_units)
     # print(im_blank.shape, id1-id2, id3-id4)
-
 
     if ids[3] < 0:
         c3 = -1*ids[3]
@@ -119,7 +120,7 @@ def make_cutout_lsst(coords, exp, coord_units=None, size=100, w_units="pixels", 
     vmin = med - 2.0*1.4826*im_mad
     vmax = med + 5.0*1.4826*im_mad
 
-    return (im_cutout, vmin, vmax, im_blank, ids, [c3, c2, c1, c0])
+    return im_cutout, vmin, vmax, im_blank, ids, [c3, c2, c1, c0]
 
 
 def MAD(l, med):
@@ -209,13 +210,12 @@ def make_cutout(filename, RA, DEC, width, nhdu=0, w_units="arcsecs", verbose=Fal
         elif w_units == "pixels":
             w_coord = np.array([[RA, DEC]], np.float_)
             pix_coord = w.wcs_world2pix(w_coord, 1)
-            coords = [int(pix_coord[0][0]+width/2.0), int(pix_coord[0][1]-width/2.0), int(pix_coord[0][0]-width/2.0), int(pix_coord[0][1]+width/2.0)]
-            # Create a background of zeros
-            blank = np.zeros((width+1, width+1))
-            [tx1, ty1, tx2, ty2] = coord
-
+            [tx1, ty1, tx2, ty2] = [int(pix_coord[0][0]+width/2.0), int(pix_coord[0][1]-width/2.0),
+                                    int(pix_coord[0][0]-width/2.0), int(pix_coord[0][1]+width/2.0)]
+        else:
+            raise ValueError('Unknown units ' + w_units)
     except (UnboundLocalError, wcs.wcs.InconsistentAxisTypesError) as e:
-        print("Axis type not supported")
+        print("Axis type not supported: {}".format(e))
         return None
     #    try:
     #        wcs = wcsutil.WCS(hdr)
@@ -253,10 +253,10 @@ def make_cutout(filename, RA, DEC, width, nhdu=0, w_units="arcsecs", verbose=Fal
             coords_clean[n] = 0.0
             im_status = "bad"
 
-        elif (p > hdr["NAXIS1"] and n % 2 == 0):
+        elif p > hdr["NAXIS1"] and n % 2 == 0:
             coords_clean[n] = hdr["NAXIS1"]
             im_status = "bad"
-        elif (p > hdr["NAXIS2"] and n % 2 != 0):
+        elif p > hdr["NAXIS2"] and n % 2 != 0:
             coords_clean[n] = hdr["NAXIS2"]
             im_status = "bad"
 
@@ -324,7 +324,7 @@ def make_cutout(filename, RA, DEC, width, nhdu=0, w_units="arcsecs", verbose=Fal
     return hdulist, im_status
 
 
-def cutout_HST(RA, DEC, sigma=0, width=30.0, type="png", return_data=False,
+def cutout_HST(RA, DEC, sigma=0, width=30.0, return_data=False,
                path=os.path.join(os.path.sep, 'project', 'sr525', 'hstCosmosImages'),
                filecorner=None):
 
@@ -373,3 +373,4 @@ def cutout_HST(RA, DEC, sigma=0, width=30.0, type="png", return_data=False,
                         return datas
                     else:
                         return fig
+    return None
