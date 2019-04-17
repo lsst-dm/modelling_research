@@ -77,7 +77,7 @@ rgcfits = ap.io.fits.open(os.path.join(path, file))[1].data
 data = []
  
 files = glob.glob(os.path.expanduser(
-    "~/raid/lsst/cosmos/cosmos_25.2_fits_hst*_[01234579]*99_psfg2_pickle.dat"))
+    "~/raid/lsst/cosmos/cosmos_25.2_fits_hst*_*99_psfg2_pickle.dat"))
 files.sort()
 for file in files:
     with open(file, 'rb') as f:
@@ -378,8 +378,14 @@ print(colnamestable)
 # Write to a plain old CSV, then read it back in to double-check
 import csv
 
-with open(os.path.join(path, "galfits.csv"), "w", newline="") as f:
+with open(os.path.join(path, "galfits.csv"), "w", newline="\n") as f:
     writer = csv.writer(f)
     writer.writerows([colnamestable])
     writer.writerows(rows)
+
+
+# In[ ]:
+
+
+
 

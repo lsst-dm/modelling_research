@@ -32,8 +32,6 @@ import seaborn as sns
 
 # Setup for plotting
 get_ipython().run_line_magic('matplotlib', 'inline')
-
-#plt.style.use('seaborn-notebook')
 sns.set_style('darkgrid')
 mpl.rcParams['figure.dpi'] = 160
 mpl.rcParams['image.origin'] = 'lower'
@@ -50,21 +48,42 @@ filename = '../data/multiprofit-cosmos-fits.csv'
 tab = readtable(filename)
 
 
-# ### Make joint parameter plots
-# 
-# Something something.
+# ### Size-flux relations in HST
 
 # In[4]:
 
 
+from modelling_research.plotting import plotjoint_running_percentiles
+argspj = dict(
+    percentiles = [16, 50, 84],
+    percentilecolours = [(0.2, 0.5, 0.8), (0., 0., 0.), (0.2, 0.5, 0.8)],
+    labelx='log10(flux)',
+    labely='log10(size/arcsec)',
+)
+for src in ['hst', 'hst2hsc']:
+    x = np.log10(tab['profit.' + src + '.serbpx.flux.1'])
+    y = np.log10(tab['profit.' + src + '.serbpx.re.1.1'])
+    isfinite = np.isfinite(x) * np.isfinite(y)
+    print('{} not finite out of {} for src={}'.format(len(x)-np.sum(isfinite), len(x), src))
+    plotjoint_running_percentiles(x[isfinite], y[isfinite], nbins=8, **argspj)
+
+
+# ### Size-flux relations compared between different Sersic models
+# 
+# Are there correlations between the sizes/fluxes of Gaussian/exponential/n=2/de Vaucouleurs profiles? If so, they could be used to improve
+
+# In[7]:
+
+
 from modelling_research.plot_multiprofit_cosmos import plotjointsersic
 varnames = ["flux", "re.1"]
-plotjointsersic(tab, 'profit.hst.gausspx', 'profit.hst.mg8exppx', varnames, plotratiosjoint=True, postfixx='1', postfixy='1')
-plotjointsersic(tab, 'profit.hst.mg8exppx', 'profit.hst.mg8dev2px', varnames, plotratiosjoint=True, postfixx='1', postfixy='1')
-plotjointsersic(tab, 'profit.hst.gausspx', 'profit.hst.mg8dev2px', varnames, plotratiosjoint=True, postfixx='1', postfixy='1')
+for src in ['hst', 'hst2hsc']:
+    plotjointsersic(tab, 'profit.' + src + '.gausspx', 'profit.' + src + '.mg8exppx', varnames, plotratiosjoint=True, postfixx='1', postfixy='1')
+    plotjointsersic(tab, 'profit.' + src + '.mg8exppx', 'profit.' + src + '.mg8dev2px', varnames, plotratiosjoint=True, postfixx='1', postfixy='1')
+    plotjointsersic(tab, 'profit.' + src + '.gausspx', 'profit.' + src + '.mg8dev2px', varnames, plotratiosjoint=True, postfixx='1', postfixy='1')
 
 
-# In[5]:
+# In[6]:
 
 
 varnamesfit = ["flux.1", "time"]

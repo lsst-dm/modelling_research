@@ -1,4 +1,4 @@
-
+#!/usr/bin/env python
 # coding: utf-8
 
 # # Deriving multi-Gaussian approximations to Sersic profiles
@@ -12,7 +12,7 @@
 # 
 # For convenience, after this we'll refer to multi-Gaussian approximations (i.e. Gaussian mixture models) as MGAs for short.
 
-# In[1]:
+# In[4]:
 
 
 # Setup; multiprofit gets imported later for verification plots
@@ -23,9 +23,11 @@ import numpy as np
 import seaborn as sns
 import scipy as sp
 
-get_ipython().magic('matplotlib inline')
-sns.set_style("darkgrid")
-mpl.rcParams['figure.dpi'] = 240
+get_ipython().run_line_magic('matplotlib', 'inline')
+sns.set_style('darkgrid')
+mpl.rcParams['figure.dpi'] = 160
+mpl.rcParams['image.origin'] = 'lower'
+sns.set(rc={'axes.facecolor': '0.85', 'figure.facecolor': 'w'})
 
 
 # ## Define useful functions
@@ -36,7 +38,7 @@ mpl.rcParams['figure.dpi'] = 240
 # 
 # Note that the size unit is always Re, and Re = FWHM/2 ~ 1.17741 sigma; the weight is just a fraction for convenience.
 
-# In[2]:
+# In[32]:
 
 
 # Surface brightness of a unit flux Sersic profile
@@ -115,7 +117,7 @@ def weightrestoparams(weights, res, rdivreslog=None):
 # funcrangefit:   A function that takes radii and n and returns a restricted range of radii to fit (that depends on n)
 # funcrdivreslog: A function that returns radii for a given n and fixes them so that only the weights are fit (useful for fitting values of n close to 0.5)
 def fitweights(nvals, radii, areasq, weightssigmas={}, methods=['BFGS'], plot=True, plotnth=1, plotvals=None, addthreshhold=None,
-               weightinit=1e-3, refacinit=1.1, addbig = None, funcrangefit=None, funcrdivreslog=None):
+               weightinit=1e-3, refacinit=1.1, addbig=None, funcrangefit=None, funcrdivreslog=None, sort=True):
     for nvalsi, weightsvars in nvals:
         params = weightrestoparams(weightsvars[0], weightsvars[1], funcrdivreslog) if weightsvars is not None else None
         for i, n in enumerate(nvalsi):
@@ -154,9 +156,10 @@ def fitweights(nvals, radii, areasq, weightssigmas={}, methods=['BFGS'], plot=Tr
                     plt.autoscale(enable=True, axis=axis, tight=True)
                 plt.legend(['Data'] + list(paramsbytype.keys()) + ['Best'])
             weights, res = paramstoweightres(params, rdivreslog)
-            idxsort = np.argsort(res)[::-1]
-            weights = np.array(weights)[idxsort]
-            res = np.array(res)[idxsort]
+            if sort:
+                idxsort = np.argsort(res)[::-1]
+                weights = np.array(weights)[idxsort]
+                res = np.array(res)[idxsort]
             print('n={}: ('.format(n))
             for arr, prefix, postfix in [(weights, 'normalize(', ')'), (res, '', '')]:
                 print('    ' + prefix + 'np.array([' + ', '.join(
@@ -183,7 +186,7 @@ def normalize(array):
 # 
 # We choose to fit out to R/Re = 12 rather than the more typical limit of R/Re=8 commonly used in SDSS. This allows the fits to better match the n>4 profiles at R/Re > 4. Massive elliptical galaxies often do have very extended outer profiles with large Sersic indices (see papers by Kormendy & co. on Virgo galaxies), so we do want to reproduce the shape at large radii. Eventually, the MGA profile will truncate more quickly than a Sersic profile as only the outer Gaussian contributes to the flux, but that's fine - we don't really trust the extrapolation at such large radii unless there's very deep data to constrain it.
 
-# In[3]:
+# In[7]:
 
 
 order = 8
@@ -198,7 +201,7 @@ areasq = np.pi*(rsq[1:] - rsq[:-1])
 idxsplot = range(8*nbinsperre)
 
 for n in [0.5, 1, 2, 4]:
-    plt.plot(rmid[idxsplot], np.log10(sersic(rmid[idxsplot], n, 1)))
+    sns.lineplot(rmid[idxsplot], np.log10(sersic(rmid[idxsplot], n, 1)))
 plt.tight_layout()
 for axis in ['x', 'y']:
     plt.autoscale(enable=True, axis=axis, tight=True)
@@ -221,7 +224,7 @@ plt.show()
 # 
 # Note that it's impossible to fit n < 0.5 profiles with an MGA without spatially offsetting the components. Note that as n <= 0, the Sersic profile approaches a step function. This isn't a very useful approximation for most 'normal' galaxies, but it can be a useful approximation of parts of barred/ring galaxies, so we will revisit this issue later.
 
-# In[4]:
+# In[8]:
 
 
 # np.round(10**np.linspace(np.log10(0.5005), np.log10(6.3), num=200), 4)
@@ -313,7 +316,7 @@ fitweights(nvals, rmid, areasq, methods=['BFGS'], plotnth=2)
 # 
 # You can try, but it doesn't work well below n=0.6 as the smallest component(s) gradually reduce their weights to near-zero values. Once this happens, it becomes very difficult to ensure smooth changes in the best-fit weight even given small changes in n - the best-fit weights are essentially 'noisy'.
 
-# In[5]:
+# In[ ]:
 
 
 # Now try to work backwards in finely-spaced bins from n=1 with eight components and see where it breaks down
@@ -334,7 +337,7 @@ fitweights(nvals, rmid, areasq, plotnth=10)
 # 
 # In the plots at the end of this notebook, it's clear that the best-fit *sizes* change nearly linearly from about n=1 to n=0.7. With appropriate choices for the slope of r vs n for each Gaussian, it's possible to fit smoothly-varying weights even for N=8.
 
-# In[6]:
+# In[ ]:
 
 
 # Let's try one more approach. From n=0.7 to n=1, log(n) vs log(rdivre) for the sigmaspline is nearly linear, so just fix those and only fit the weights
@@ -390,7 +393,7 @@ fitweights(nvals, rmid, areasq, funcrdivreslog=RadiusExtrapolator.r, plotnth=np.
 # 
 # Up to n=2.5, we continue from the exponential solution. Beyond n=2.5, it becomes very difficult to fit the outer profile because more of the Gaussian components trend to tiny sizes. By masking the inner bins, we can limit this issue and ensure a nearly constant central surface brightness. In the real universe, most massive nearby ellipticals don't have the steep cusp of an n>4 profile - only the outer part is well-approximated by an n>4 profile. Kormendy & co. discuss this at length in a number of papers, hypothesizing that the shallow inner cores are due to massive black holes scattering stars and scouring the inner regions of stars. It could be possible that higher-redshift ellipticals and/or recent merger remnants do have very cuspy centers, but these are probably merger-induced and distinct enough from the rest of the galaxy that they should be considered a separate component.
 
-# In[7]:
+# In[ ]:
 
 
 # Fit for n>1. It works well enough up to n=2
@@ -436,7 +439,7 @@ fitweights(nvals, rmid, areasq, funcrangefit=funcrangefitn, plotnth=np.Inf, plot
 # 
 # Unsurprisingly, 4 Gaussians is not enough to accurately approximate a Sersic profile as you'll see below, but it's useful as a starting point for free MG fits.
 
-# In[8]:
+# In[ ]:
 
 
 # Despite my best efforts, free weights and sizes don't work for N=4 either:
@@ -478,7 +481,7 @@ nvals = [
 fitweights(nvals, rmid, areasq, methods=['BFGS'], plotnth=3)
 
 
-# In[9]:
+# In[ ]:
 
 
 # Fit for n < 1. Use a fixed radius for n<0.6
@@ -521,7 +524,7 @@ nvals = [
 fitweights(nvals, rmid, areasq, methods=['BFGS'], funcrdivreslog=radiuslogextrapmgfour, plotnth=5)
 
 
-# In[10]:
+# In[ ]:
 
 
 # Fit the softened Sersic from n=1 to n=8
@@ -555,7 +558,7 @@ fitweights(nvals, rmid, areasq, methods=['BFGS'], funcrangefit=funcrangefitn, pl
 # 
 # These are best-fit weights from the unsuccesful attempts - keeping both the weights and sizes free and either dropping components manually or keeping N=8 fixed and hoping for the best. We'll plot these up later along with the more successful fixed size below n=1 approach.
 
-# In[11]:
+# In[9]:
 
 
 # Test out various spline weighting methods
@@ -1256,9 +1259,9 @@ weightvarsfour = {
 # 
 # Note that the gradual increase in the masked region for n>2.5 introducess a kink in the curves right at n=2.5; a smoother parameterization of the fit exclusion region could avoid this.
 # 
-# Lastly, it's worth noting that not every control point was used for the final set in MultiProFit; some were excluded to 
+# Lastly, it's worth noting that not every control point was used for the final set in MultiProFit; some were excluded to improve the smoothness of the final splines.
 
-# In[12]:
+# In[49]:
 
 
 import multiprofit.objects as mpfobj
@@ -1316,6 +1319,70 @@ for weightvars in weightvarssmrt, weightvarslin, None, weightvarsfour, None:
     plt.show()
     if changeorder:
         order = 4
+
+
+# In[48]:
+
+
+def radiusfixed(n=1):
+    return np.log10(np.array([1, 0.5, 1.5, 0.25, 2.5, 0.125, 0.0625, 5]))
+
+nvals = [
+    (
+        np.array([
+            1.0
+        ]),
+        (
+            normalize(np.array([
+                0.46, 0.18, 0.27, 1.7e-2, 1e-2, 5e-3, 1e-6, 1e-12
+            ])),
+            radiusfixed(),
+        ),
+    )
+]
+fitweights(nvals, rmid, areasq, methods=['BFGS'], funcrdivreslog=radiusfixed, sort=False)
+
+nvals = [
+    (
+        np.array(list(reversed([
+            0.501, 0.502, 0.503, 0.504, 0.505, 0.506, 0.507, 0.508, 0.509, 0.51, 0.512,
+            0.514, 0.516, 0.518, 0.52, 0.525, 0.53, 0.535, 0.54, 0.545, 0.55, 0.56,
+            0.57, 0.58, 0.59, 0.6, 0.625, 0.65, 0.675, 0.7, 0.725, 0.75, 0.775, 0.8,
+            0.825, 0.85, 0.875, 0.9, 0.925, 0.95, 0.975,
+        ]))),
+        (
+            normalize(np.array([
+                4.6326306880e-01, 1.7780850485e-01, 2.6868971315e-01, 1.6894641090e-02,
+                6.8405081968e-02, 4.9380026986e-03, 9.8745465974e-07, 9.8743235810e-13
+            ])),
+            radiusfixed(),
+        )
+    )
+]
+fitweights(nvals, rmid, areasq, methods=['BFGS'], funcrdivreslog=radiusfixed, plotnth=5)
+
+nvals = [
+    (
+        np.array([
+    1.025, 1.05, 1.075, 1.1,
+    1.135, 1.165, 1.2, 1.225, 1.25, 1.275, 1.3, 1.333, 1.367, 1.4, 1.433, 1.467,
+    1.5, 1.55, 1.6, 1.65, 1.7, 1.75, 1.8, 1.8452, 1.893, 1.942, 2.0, 2.044, 2.1,
+    2.15, 2.2, 2.25, 2.3, 2.35, 2.4, 2.45, 2.5, 2.55, 2.6, 2.65, 2.7, 2.75, 2.8,
+    2.85, 2.9, 2.95, 3.0, 3.05, 3.1, 3.15, 3.2, 3.25, 3.3, 3.35, 3.4, 3.45, 3.5,
+    3.55, 3.6, 3.65, 3.7, 3.75, 3.8, 3.85, 3.9, 3.95, 4.0, 4.1, 4.2, 4.3, 4.4,
+    4.5, 4.6, 4.7, 4.8, 4.9, 5.0, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9,
+    6.0, 6.15, 6.3, 6.45, 6.6, 6.75, 7.0, 7.25, 7.5, 7.75, 8.0
+        ]),
+        (
+            normalize(np.array([
+                4.6326306880e-01, 1.7780850485e-01, 2.6868971315e-01, 1.6894641090e-02,
+                6.8405081968e-02, 4.9380026986e-03, 9.8745465974e-07, 9.8743235810e-13
+            ])),
+            radiusfixed(),
+        ),
+    )
+]
+#fitweights(nvals, rmid, areasq, methods=['BFGS'], funcrdivreslog=radiusfixed, plotnth=5)
 
 
 # ### How well does the interpolation work far away from the spline control points?

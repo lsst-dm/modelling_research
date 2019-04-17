@@ -246,7 +246,7 @@ if plotmodels:
             prefixx = ".".join(["profit", obs, colx])
             prefixy = ".".join(["profit", obs, coly])
             plotjointsersic(
-                tab, prefixx, prefixy, ['chisqred'], varcolor="profit.hst.mg8serbpx.n",
+                tab, prefixx, prefixy, ['chisqred'], columncolor="profit.hst.mg8serbpx.nser.1.1",
                 cmap = mpl.colors.ListedColormap(sns.color_palette("RdYlBu_r", 100)),
                 hist_kws={'log': True}, postfixx=getpostfix(colx), postfixy=getpostfix(coly))
 
@@ -259,7 +259,7 @@ if plotmodels:
 # 
 # The last plot compares the free Sersic to an exponential, showing that an exponential is 'good enough' for most galaxies except those with best-fit n>4. This suggests that the exponential model would be a reasonable choice if we had to pick just one, which is in line with expectations that most of the galaxies in any given deep field are disky.
 
-# In[ ]:
+# In[13]:
 
 
 # Now compare only single-component models: Sersic vs best fixed n

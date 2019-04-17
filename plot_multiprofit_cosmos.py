@@ -5,8 +5,8 @@ import seaborn as sns
 from modelling_research.plotting import plotjoint
 
 plotjoinsersicdefaults = {
-    'limitsx': (-1, 1),
-    'limitsy': (-1, 1),
+    'limitsxratio': (-1, 1),
+    'limitsyratio': (-1, 1),
     'columncolor': "profit.hst.serb.nser.1.1",
     'colorbaropts': {
         'label': r"ProFit HST $n_{Ser}$",
@@ -25,7 +25,7 @@ plotjoinsersicdefaults = {
 def plotjointsersic(tab, prefixx, prefixy, varnames, **kwargs):
     opts = plotjoinsersicdefaults.copy()
     opts.update(kwargs)
-    plotjoint(tab, varnames, prefixx=prefixx, prefixy=prefixy, **opts)
+    return plotjoint(tab, varnames, prefixx=prefixx, prefixy=prefixy, **opts)
 
 
 def readtable(filename):
