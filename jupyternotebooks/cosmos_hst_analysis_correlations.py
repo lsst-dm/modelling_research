@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# # MultiProFit-COSMOS: 
+# # MultiProFit-COSMOS: Cross-model Parameter Correlations
 # 
-# This notebook plots results from fitting galaxies from the COSMOS survey (http://cosmos.astro.caltech.edu/) with MultiProFit (https://github.com/lsst-dm/multiprofit). This investigation is to help determine what kind of galaxy models LSST Data Management should fit for annual Data Releases, where we would like to fit the best possible model(s) but will be constrained in computing time by the overwhelming size of the dataset (billions of objects).
+# This notebook plots results from fitting galaxies from the COSMOS survey (http://cosmos.astro.caltech.edu/) with MultiProFit (https://github.com/lsst-dm/multiprofit). This investigation is to determine whether there are any correlations between parameters in model fits that could be used to set priors and/or improve parameter initialization.
 
 # ## Introduction and motivation
 # 
@@ -49,6 +49,8 @@ tab = readtable(filename)
 
 
 # ### Size-flux relations in HST
+# 
+# Is there a tight enough relation between flux and size that it could be used to set a joint prior? Perhaps.
 
 # In[4]:
 
@@ -59,28 +61,32 @@ argspj = dict(
     percentilecolours = [(0.2, 0.5, 0.8), (0., 0., 0.), (0.2, 0.5, 0.8)],
     labelx='log10(flux)',
     labely='log10(size/arcsec)',
+    scatterleft=True,
+    scatterright=True,
 )
 for src in ['hst', 'hst2hsc']:
     x = np.log10(tab['profit.' + src + '.serbpx.flux.1'])
     y = np.log10(tab['profit.' + src + '.serbpx.re.1.1'])
     isfinite = np.isfinite(x) * np.isfinite(y)
     print('{} not finite out of {} for src={}'.format(len(x)-np.sum(isfinite), len(x), src))
-    plotjoint_running_percentiles(x[isfinite], y[isfinite], nbins=8, **argspj)
+    plotjoint_running_percentiles(x[isfinite], y[isfinite], ndivisions=8, nbinspan=1, **argspj)
 
 
 # ### Size-flux relations compared between different Sersic models
 # 
-# Are there correlations between the sizes/fluxes of Gaussian/exponential/n=2/de Vaucouleurs profiles? If so, they could be used to improve
+# Are there correlations between the sizes/fluxes of Gaussian/exponential/n=2/de Vaucouleurs profiles? If so, they could be used to improve model initialization.
 
-# In[7]:
+# In[5]:
 
 
 from modelling_research.plot_multiprofit_cosmos import plotjointsersic
 varnames = ["flux", "re.1"]
 for src in ['hst', 'hst2hsc']:
-    plotjointsersic(tab, 'profit.' + src + '.gausspx', 'profit.' + src + '.mg8exppx', varnames, plotratiosjoint=True, postfixx='1', postfixy='1')
+    plots = plotjointsersic(tab, 'profit.' + src + '.gausspx', 'profit.' + src + '.mg8exppx', varnames, plotratiosjoint=True, postfixx='1', postfixy='1')
+    
     plotjointsersic(tab, 'profit.' + src + '.mg8exppx', 'profit.' + src + '.mg8dev2px', varnames, plotratiosjoint=True, postfixx='1', postfixy='1')
     plotjointsersic(tab, 'profit.' + src + '.gausspx', 'profit.' + src + '.mg8dev2px', varnames, plotratiosjoint=True, postfixx='1', postfixy='1')
+    plotjointsersic(tab, 'profit.' + src + '.gausspx', 'profit.' + src + '.mg8serbpx', varnames, plotratiosjoint=True, postfixx='1', postfixy='1')
 
 
 # In[6]:
@@ -92,5 +98,25 @@ plotjointsersic(tab, 'profit.hst2hsc.mg8exppx', 'profit.hst2hsc.mg8dev2px', varn
 plotjointsersic(tab, 'profit.hst2hsc.mg8serbpx', 'profit.hst2hsc.mg8serbedpx', varnamesfit, plotratiosjoint=False)
 
 
-# ### Multi-band COSMOS-HSC
-# Todo (DM-17466). It has been tested on a handful of galaxies using gri data, but not yet all five bands or on a substantial sample. It's fairly computationally expensive, especially for GMMs with free weights since they have one flux per band.
+# ### Cross-model initialization
+# 
+# There seems to be enough of a correlation between the sizes/fluxes (or surface brightness) that one could fit a polynomial and sample a few points along it as initial guesses. This should be strictly better than the current behaviour of inheriting the values directly, which is really just starting from (0,0) on this plot.
+# 
+# Also, this version sets explicit axis limits to zoom in better. TODO: Fix this in the plotting code directly.
+
+# In[7]:
+
+
+for src in ['hst', 'hst2hsc']:
+    joints = plotjointsersic(tab, 'profit.' + src + '.gausspx', 'profit.' + src + '.mg8exppx', varnames, plotratiosjoint=True, postfixx='1', postfixy='1')
+    plotratio = joints[1][0]
+    plotratio.ax_joint.set_xlim((-0.02, 0.22))
+    plotratio.ax_joint.set_ylim((-0.1, 0.22))
+    pointsx = plotratio.x
+    pointsy = plotratio.y
+    coeffs = np.polyfit(pointsx, pointsy, 4)
+    x = np.linspace(np.min(pointsx), np.max(pointsx), 1000)
+    y = np.polyval(coeffs, x)
+    plotratio.ax_joint.plot(x, y)
+    print(', '.join(['{:.4e}'.format(x) for x in coeffs]))
+
