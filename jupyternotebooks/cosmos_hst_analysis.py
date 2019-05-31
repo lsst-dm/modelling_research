@@ -53,7 +53,7 @@ sns.set(rc={'axes.facecolor': '0.85', 'figure.facecolor': 'w'})
 
 
 from modelling_research.plot_multiprofit_cosmos import readtable
-filename = '../data/multiprofit-cosmos-fits.csv'
+filename = '../data/multiprofit-cosmos-fits-initguess11.csv'
 tab = readtable(filename)
 
 
@@ -84,8 +84,8 @@ varnames = ["flux", "re.1", "nser.1"]
 # In[5]:
 
 
-plotjointsersic(tab, 'profit.hst.serb', 'cosmos.hst.ser', varnames, plotratiosjoint=False, postfixx='1')
-plotjointsersic(tab, 'cosmos.hst.ser', 'profit.hst.serb', varnames, postfixy='1')
+_ = plotjointsersic(tab, 'profit.hst.serb', 'cosmos.hst.ser', varnames, plotratiosjoint=False, postfixx='1')
+_ = plotjointsersic(tab, 'cosmos.hst.ser', 'profit.hst.serb', varnames, postfixy='1')
 
 
 # ### COSMOS-HST: MultiProFit Sersic vs MultiProFit MGA Sersic (N=8)
@@ -99,8 +99,8 @@ plotjointsersic(tab, 'cosmos.hst.ser', 'profit.hst.serb', varnames, postfixy='1'
 # In[6]:
 
 
-plotjointsersic(tab, 'profit.hst.mg8serbpx', 'profit.hst.serbpx', varnames, plotratiosjoint=False, postfixx='1', postfixy='1')
-plotjointsersic(tab, 'profit.hst.serbpx', 'profit.hst.mg8serbpx', varnames, postfixx='1', postfixy='1')
+_ = plotjointsersic(tab, 'profit.hst.mg8serbpx', 'profit.hst.serbpx', varnames, plotratiosjoint=False, postfixx='1', postfixy='1')
+_ = plotjointsersic(tab, 'profit.hst.serbpx', 'profit.hst.mg8serbpx', varnames, postfixx='1', postfixy='1')
 
 
 # ### COSMOS-HST: MultiProFit Sersic vs MultiProFit MGA Sersic (N=4)
@@ -110,9 +110,9 @@ plotjointsersic(tab, 'profit.hst.serbpx', 'profit.hst.mg8serbpx', varnames, post
 # In[7]:
 
 
-plotjointsersic(tab, 'profit.hst.mg4serbpx', 'profit.hst.serbpx', varnames, plotratiosjoint=False, postfixx='1', postfixy='1')
-plotjointsersic(tab, 'profit.hst.serbpx', 'profit.hst.mg4serbpx', varnames, postfixx='1', postfixy='1')
-plotjointsersic(tab, 'profit.hst.mg8serbpx', 'profit.hst.mg4serbpx', varnames, postfixx='1', postfixy='1')
+_ = plotjointsersic(tab, 'profit.hst.mg4serbpx', 'profit.hst.serbpx', varnames, plotratiosjoint=False, postfixx='1', postfixy='1')
+_ = plotjointsersic(tab, 'profit.hst.serbpx', 'profit.hst.mg4serbpx', varnames, postfixx='1', postfixy='1')
+_ = plotjointsersic(tab, 'profit.hst.mg8serbpx', 'profit.hst.mg4serbpx', varnames, postfixx='1', postfixy='1')
 
 
 # ### COSMOS-HST: MultiProFit GMM (N=8) vs MultiProFit MGA Sersic
@@ -122,8 +122,8 @@ plotjointsersic(tab, 'profit.hst.mg8serbpx', 'profit.hst.mg4serbpx', varnames, p
 # In[8]:
 
 
-plotjointsersic(tab, 'profit.hst.mg8aserbpx', 'profit.hst.mg8serbpx', ["flux", "re.1", "chisqred"], plotratiosjoint=False, postfixx='1', postfixy='1')
-plotjointsersic(tab, 'profit.hst.mg8serbpx', 'profit.hst.mg8aserbpx', ["flux", "re.1"], postfixx='1', postfixy='1')
+_ = plotjointsersic(tab, 'profit.hst.mg8aserbpx', 'profit.hst.mg8serbpx', ["flux", "re.1", "chisqred"], plotratiosjoint=False, postfixx='1', postfixy='1')
+_ = plotjointsersic(tab, 'profit.hst.mg8serbpx', 'profit.hst.mg8aserbpx', ["flux", "re.1"], postfixx='1', postfixy='1')
 
 
 # ### COSMOS-HST: MultiProFit GMM (N=4) vs MultiProFit MGA Sersic and N=8 GMM
@@ -133,11 +133,8 @@ plotjointsersic(tab, 'profit.hst.mg8serbpx', 'profit.hst.mg8aserbpx', ["flux", "
 # In[9]:
 
 
-plotjointsersic(tab, 'profit.hst.mg4aserbpx', 'profit.hst.mg8serbpx', ["flux", "re.1", "chisqred"], plotratiosjoint=False, postfixx='1', postfixy='1')
-plotjointsersic(tab, 'profit.hst.mg8serbpx', 'profit.hst.mg4aserbpx', ["flux", "re.1"], postfixx='1', postfixy='1')
-
-#plotjoint(tab, 'profit.hst.mg8bpx', 'profit.hst.mg4bpx', ["flux", "re", "chisqred.0"], plotratiosjoint=False)
-#plotjoint(tab, 'profit.hst.mg4bpx', 'profit.hst.mg8bpx', ["flux", "re"])
+_ = plotjointsersic(tab, 'profit.hst.mg4aserbpx', 'profit.hst.mg8serbpx', ["flux", "re.1", "chisqred"], plotratiosjoint=False, postfixx='1', postfixy='1')
+_ = plotjointsersic(tab, 'profit.hst.mg8serbpx', 'profit.hst.mg4aserbpx', ["flux", "re.1"], postfixx='1', postfixy='1')
 
 
 # ### COSMOS-HST: MultiProFit GMM vs MultiProFit MGA Sersic (N=4 x 2 Components)
@@ -147,8 +144,8 @@ plotjointsersic(tab, 'profit.hst.mg8serbpx', 'profit.hst.mg4aserbpx', ["flux", "
 # In[10]:
 
 
-plotjointsersic(tab, 'profit.hst.mg4x2px', 'profit.hst.mg4serserbpx', ["flux", "chisqred"], plotratiosjoint=False, postfixx='1', postfixy='1')
-plotjointsersic(tab, 'profit.hst.mg8serserbpx', 'profit.hst.mg4x2px', ["flux", "chisqred"], postfixx='1', postfixy='1')
+_ = plotjointsersic(tab, 'profit.hst.mg4x2px', 'profit.hst.mg4serserbpx', ["flux", "chisqred"], plotratiosjoint=False, postfixx='1', postfixy='1')
+_ = plotjointsersic(tab, 'profit.hst.mg8serserbpx', 'profit.hst.mg4x2px', ["flux", "chisqred"], postfixx='1', postfixy='1')
 
 
 # ### MultiProFit MGA Sersic (N=8): COSMOS-HST vs COSMOS-HSC
@@ -160,8 +157,8 @@ plotjointsersic(tab, 'profit.hst.mg8serserbpx', 'profit.hst.mg4x2px', ["flux", "
 # In[11]:
 
 
-plotjointsersic(tab, 'profit.hst2hsc.mg8serbpx', 'profit.hst.mg8serbpx', varnames, plotratiosjoint=False, postfixx='1', postfixy='1')
-plotjointsersic(tab, 'profit.hst.mg8serbpx', 'profit.hst2hsc.mg8serbpx', varnames, postfixx='1', postfixy='1')
+_ = plotjointsersic(tab, 'profit.hst2hsc.mg8serbpx', 'profit.hst.mg8serbpx', varnames, plotratiosjoint=False, postfixx='1', postfixy='1')
+_ = plotjointsersic(tab, 'profit.hst.mg8serbpx', 'profit.hst2hsc.mg8serbpx', varnames, postfixx='1', postfixy='1')
 
 
 # ### Model comparison plots (COSMOS-HST)
@@ -184,7 +181,7 @@ plotjointsersic(tab, 'profit.hst.mg8serbpx', 'profit.hst2hsc.mg8serbpx', varname
 ordersmg = ['4', '8']
 
 modelsmgser = {
-    order: ['mg' + order + model + 'px' for model in ['exp', 'n2', 'dev2', 'serb', 'serbed']]
+    order: ['mg' + order + model + 'px' for model in ['exp', 'deve', 'devg', 'serb', 'sergg', 'serbed']]
     for order in ordersmg
 }
 modelsmgsertwo = {
@@ -192,11 +189,11 @@ modelsmgsertwo = {
     for order in ordersmg
 }
 modelsmgw = {
-    order: ['mg' + order + 'w' + model + 'px' for model in (['exp', 'n2', 'dev'] if order == '4' else []) + ['ser']]
+    order: ['mg' + order + 'w' + model + 'px' for model in (['exp', 'dev'] if order == '4' else []) + ['ser']]
     for order in ordersmg
 }
 modelsmgwr = {
-    order: ['mg' + order + 'wr' + model + 'px' for model in (['exp', 'n2', 'dev'] if order == '4' else []) + ['ser']]
+    order: ['mg' + order + 'wr' + model + 'px' for model in (['exp', 'dev'] if order == '4' else []) + ['ser']]
     for order in ordersmg
 }
 modelsprofit = {
@@ -241,8 +238,8 @@ if plotmodels:
     for obs in ['hst', 'hst2hsc']:
         for colx, coly in [("mg8serbpx", "mg8devexppx"), ("mg8serbedpx", "mg8cmodelpx"), 
                            ("mg8devexppx", "mg8cmodelpx"), ("mg8serbedpx", "serb"),
-                           ("mg8serbedpx", "mg8serbpx"), ("mg8serserbpx", "mg8aserbpx"),
-                           ("mg4x2px", "mg8serserbpx")]:
+                           ("mg8serbedpx", "mg8serbpx"), ("mg8serggpx", "mg8serbpx"),
+                           ("mg8serserbpx", "mg8aserbpx"), ("mg4x2px", "mg8serserbpx")]:
             prefixx = ".".join(["profit", obs, colx])
             prefixy = ".".join(["profit", obs, coly])
             plotjointsersic(
@@ -263,7 +260,7 @@ if plotmodels:
 
 
 # Now compare only single-component models: Sersic vs best fixed n
-modelsfixedn = ["gausspx", "mg8exppx", 'mg8n2px', "mg8dev2px"] 
+modelsfixedn = ["gausspx", "mg8exppx", "mg8devepx"] 
 chisqredcolsfixedn = {
     model: ".".join(["profit", "hst", model, "chisqred", "1"]) 
     for model in modelsfixedn
@@ -274,7 +271,7 @@ print(modelbest.value_counts())
 # I seriously cannot figure out how to slice with modelbest
 # Surely there's a better way to do this?
 modelchisqmin = tab[list(chisqredcolsfixedn.values())].min(axis=1)
-for colxname in ["mg8serbpx", 'serb']: 
+for colxname in ["mg8serbpx", "serbpx"]: 
     labelbest = 'log10(chisqred) ({}/{})'.format(colxname, "best([gauss,exp,n2,dev]px)")
     ratiobest = tab[chisqredcols[colxname]]/modelchisqmin
     # Plots:

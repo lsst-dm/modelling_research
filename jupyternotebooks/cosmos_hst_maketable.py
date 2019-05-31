@@ -77,11 +77,12 @@ rgcfits = ap.io.fits.open(os.path.join(path, file))[1].data
 data = []
  
 files = glob.glob(os.path.expanduser(
-    "~/raid/lsst/cosmos/cosmos_25.2_fits_hst*_*99_psfg2_pickle.dat"))
+    "~/raid/lsst/cosmos/initguess11/cosmos_25.2_fits_hs[ct]_*-*9_psfg2_pickle.dat"))
 files.sort()
 for file in files:
     with open(file, 'rb') as f:
         data.append(pickle.load(f))
+fileout = os.path.join(path, "galfits.csv")
 
 
 # ### Define the table column names
@@ -110,6 +111,7 @@ for file in files:
 scalesources = {
     'hst': 0.03,
     'hst2hsc': 0.168,
+    'hsc': 0.168,
 }
 paramscosmos = ["IDENT", "mag_auto", "flux_radius", "zphot", "use_bulgefit", "viable_sersic"]
 colnames = ["id", "ra", "dec"] + [".".join(["cosmos", param]) for param in paramscosmos]
@@ -378,14 +380,8 @@ print(colnamestable)
 # Write to a plain old CSV, then read it back in to double-check
 import csv
 
-with open(os.path.join(path, "galfits.csv"), "w", newline="\n") as f:
+with open(fileout, "w", newline="\n") as f:
     writer = csv.writer(f)
     writer.writerows([colnamestable])
     writer.writerows(rows)
-
-
-# In[ ]:
-
-
-
 
