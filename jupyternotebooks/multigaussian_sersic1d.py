@@ -12,7 +12,7 @@
 # 
 # For convenience, after this we'll refer to multi-Gaussian approximations (i.e. Gaussian mixture models) as MGAs for short.
 
-# In[4]:
+# In[1]:
 
 
 # Setup; multiprofit gets imported later for verification plots
@@ -23,9 +23,13 @@ import numpy as np
 import seaborn as sns
 import scipy as sp
 
+
+# In[2]:
+
+
 get_ipython().run_line_magic('matplotlib', 'inline')
 sns.set_style('darkgrid')
-mpl.rcParams['figure.dpi'] = 160
+mpl.rcParams['figure.dpi'] = 180
 mpl.rcParams['image.origin'] = 'lower'
 sns.set(rc={'axes.facecolor': '0.85', 'figure.facecolor': 'w'})
 
@@ -38,7 +42,7 @@ sns.set(rc={'axes.facecolor': '0.85', 'figure.facecolor': 'w'})
 # 
 # Note that the size unit is always Re, and Re = FWHM/2 ~ 1.17741 sigma; the weight is just a fraction for convenience.
 
-# In[32]:
+# In[3]:
 
 
 # Surface brightness of a unit flux Sersic profile
@@ -186,7 +190,7 @@ def normalize(array):
 # 
 # We choose to fit out to R/Re = 12 rather than the more typical limit of R/Re=8 commonly used in SDSS. This allows the fits to better match the n>4 profiles at R/Re > 4. Massive elliptical galaxies often do have very extended outer profiles with large Sersic indices (see papers by Kormendy & co. on Virgo galaxies), so we do want to reproduce the shape at large radii. Eventually, the MGA profile will truncate more quickly than a Sersic profile as only the outer Gaussian contributes to the flux, but that's fine - we don't really trust the extrapolation at such large radii unless there's very deep data to constrain it.
 
-# In[7]:
+# In[4]:
 
 
 order = 8
@@ -202,11 +206,14 @@ idxsplot = range(8*nbinsperre)
 
 for n in [0.5, 1, 2, 4]:
     sns.lineplot(rmid[idxsplot], np.log10(sersic(rmid[idxsplot], n, 1)))
+plt.xlim([0, 8])
+plt.ylim([-8, 2])
 plt.tight_layout()
-for axis in ['x', 'y']:
-    plt.autoscale(enable=True, axis=axis, tight=True)
+#for axis in ['x', 'y']:
+#    plt.autoscale(enable=True, axis=axis, tight=True)
 plt.xlabel('$r/r_{eff}$')
 plt.ylabel('log10(surface density)')
+plt.legend(['n=0.5 (Gaussian)', 'n=1 (Exponential)', 'n=2', 'n=4 (de Vaucouleurs)' ])
 plt.show()
 
 
@@ -224,7 +231,7 @@ plt.show()
 # 
 # Note that it's impossible to fit n < 0.5 profiles with an MGA without spatially offsetting the components. Note that as n <= 0, the Sersic profile approaches a step function. This isn't a very useful approximation for most 'normal' galaxies, but it can be a useful approximation of parts of barred/ring galaxies, so we will revisit this issue later.
 
-# In[8]:
+# In[5]:
 
 
 # np.round(10**np.linspace(np.log10(0.5005), np.log10(6.3), num=200), 4)
@@ -316,7 +323,7 @@ fitweights(nvals, rmid, areasq, methods=['BFGS'], plotnth=2)
 # 
 # You can try, but it doesn't work well below n=0.6 as the smallest component(s) gradually reduce their weights to near-zero values. Once this happens, it becomes very difficult to ensure smooth changes in the best-fit weight even given small changes in n - the best-fit weights are essentially 'noisy'.
 
-# In[ ]:
+# In[6]:
 
 
 # Now try to work backwards in finely-spaced bins from n=1 with eight components and see where it breaks down
@@ -337,7 +344,7 @@ fitweights(nvals, rmid, areasq, plotnth=10)
 # 
 # In the plots at the end of this notebook, it's clear that the best-fit *sizes* change nearly linearly from about n=1 to n=0.7. With appropriate choices for the slope of r vs n for each Gaussian, it's possible to fit smoothly-varying weights even for N=8.
 
-# In[ ]:
+# In[7]:
 
 
 # Let's try one more approach. From n=0.7 to n=1, log(n) vs log(rdivre) for the sigmaspline is nearly linear, so just fix those and only fit the weights
@@ -393,7 +400,7 @@ fitweights(nvals, rmid, areasq, funcrdivreslog=RadiusExtrapolator.r, plotnth=np.
 # 
 # Up to n=2.5, we continue from the exponential solution. Beyond n=2.5, it becomes very difficult to fit the outer profile because more of the Gaussian components trend to tiny sizes. By masking the inner bins, we can limit this issue and ensure a nearly constant central surface brightness. In the real universe, most massive nearby ellipticals don't have the steep cusp of an n>4 profile - only the outer part is well-approximated by an n>4 profile. Kormendy & co. discuss this at length in a number of papers, hypothesizing that the shallow inner cores are due to massive black holes scattering stars and scouring the inner regions of stars. It could be possible that higher-redshift ellipticals and/or recent merger remnants do have very cuspy centers, but these are probably merger-induced and distinct enough from the rest of the galaxy that they should be considered a separate component.
 
-# In[ ]:
+# In[8]:
 
 
 # Fit for n>1. It works well enough up to n=2
@@ -439,7 +446,7 @@ fitweights(nvals, rmid, areasq, funcrangefit=funcrangefitn, plotnth=np.Inf, plot
 # 
 # Unsurprisingly, 4 Gaussians is not enough to accurately approximate a Sersic profile as you'll see below, but it's useful as a starting point for free MG fits.
 
-# In[ ]:
+# In[9]:
 
 
 # Despite my best efforts, free weights and sizes don't work for N=4 either:
@@ -481,7 +488,7 @@ nvals = [
 fitweights(nvals, rmid, areasq, methods=['BFGS'], plotnth=3)
 
 
-# In[ ]:
+# In[10]:
 
 
 # Fit for n < 1. Use a fixed radius for n<0.6
@@ -524,7 +531,7 @@ nvals = [
 fitweights(nvals, rmid, areasq, methods=['BFGS'], funcrdivreslog=radiuslogextrapmgfour, plotnth=5)
 
 
-# In[ ]:
+# In[11]:
 
 
 # Fit the softened Sersic from n=1 to n=8
@@ -558,7 +565,7 @@ fitweights(nvals, rmid, areasq, methods=['BFGS'], funcrangefit=funcrangefitn, pl
 # 
 # These are best-fit weights from the unsuccesful attempts - keeping both the weights and sizes free and either dropping components manually or keeping N=8 fixed and hoping for the best. We'll plot these up later along with the more successful fixed size below n=1 approach.
 
-# In[9]:
+# In[12]:
 
 
 # Test out various spline weighting methods
@@ -1261,7 +1268,7 @@ weightvarsfour = {
 # 
 # Lastly, it's worth noting that not every control point was used for the final set in MultiProFit; some were excluded to improve the smoothness of the final splines.
 
-# In[49]:
+# In[13]:
 
 
 import multiprofit.objects as mpfobj
@@ -1321,7 +1328,7 @@ for weightvars in weightvarssmrt, weightvarslin, None, weightvarsfour, None:
         order = 4
 
 
-# In[48]:
+# In[ ]:
 
 
 def radiusfixed(n=1):
