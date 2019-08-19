@@ -279,7 +279,7 @@ def make_cutout(filename, RA, DEC, width, nhdu=0, w_units="arcsecs", verbose=Fal
         by2 = im.shape[1]
 
     if coords[2] < 0:
-        by1 = np.fabs(coords[2])
+        by1 = np.int(np.fabs(coords[2]))
         im_status = "bad"
         by2 += by1
     else:
@@ -292,7 +292,7 @@ def make_cutout(filename, RA, DEC, width, nhdu=0, w_units="arcsecs", verbose=Fal
         bx2 = im.shape[0]
 
     if coords[1] < 0:
-        bx1 = np.fabs(coords[1])
+        bx1 = np.int(np.fabs(coords[1]))
         im_status = "bad"
         bx2 += bx1
     else:
