@@ -49,7 +49,7 @@ import galsim as gs
 import glob
 import multiprofit.objects as mpfobj
 # Function used to compute percentile radii for Gaussian mixtures
-from multiprofit.gaussutils import multigauss2drquant
+from multiprofit.gaussutils import covar_to_ellipse, multigauss2drquant, sigma_to_reff
 #from mpl_toolkits.axes_grid1 import make_axes_locatable
 import numpy as np
 import os
@@ -77,9 +77,10 @@ rgcfits = ap.io.fits.open(os.path.join(path, file))[1].data
 data = []
  
 files = glob.glob(os.path.expanduser(
-    "~/raid/lsst/cosmos/initguess11/cosmos_25.2_fits_hs[ct]_*-*9_psfg2_pickle.dat"))
+    "~/raid/lsst/cosmos/sersic+mg/cosmos_25.2_fits_hs[ct]_*-*9_psfg2_pickle.dat"))
 files.sort()
 for file in files:
+    print(file)
     with open(file, 'rb') as f:
         data.append(pickle.load(f))
 fileout = os.path.join(path, "galfits.csv")
@@ -120,7 +121,7 @@ paramsser = ["flux", "re", "nser", "q", "phi", "x0", "y0"]
 idxparamscosmos = [[x + offset for x in [1, 2, 3, 7, 5, 6]] for offset in [8, 0]]
 
 
-# In[5]:
+# In[9]:
 
 
 # Some hideous code to get all of the right values in the right order, for which I apologize
@@ -146,30 +147,32 @@ def towritemodel(name):
     return not name.endswith('devexptpx')
 
 
-def getmgcomponentre(paramsflux, paramsre, idxs):
+def getmgcomponentre(params_flux, params_size, idxs):
     fluxes = []
     res = []
     for idx in idxs:
-        fluxes.append(paramsflux[idx].getvalue(transformed=False))
-        res.append(paramsre[idx].getvalue(transformed=False))
+        fluxes.append(params_flux[idx].get_value(transformed=False))
+        res.append(params_size[idx].get_value(transformed=False))
     fluxes = np.array(fluxes)
     fluxes /= np.sum(fluxes)
     return multigauss2drquant(list(zip(fluxes, res)))
 
 
-def readmodel(profit, results, colnamesprofit, idx, src, colnamestoadd=None, engine='galsim', verbose=False):
+def readmodel(profit, results, colnamesprofit, idx, src, colnamestoadd=None, engine='galsim', verbose=False, bandref='HSC-I'):
+    is_hst2hsc = src == "hst2hsc"
+    is_hsc = src == "hsc"
     profitengine = profit['fits'][engine]
     for namemodel, profitmodel in profitengine.items():
         if 'fits' in profitmodel and towritemodel(namemodel):
             profitfits = profitmodel['fits']
             for idxfit, profitfit in enumerate(reversed(profitfits)):
-                fixedall = profitfit['paramsallfixed']
+                fixedall = profitfit['params_allfixed']
                 namesall = [x.name for x in profitfit['params']]
                 paramsall = profitfit['params']
                 # the parameter objects might have different values from paramsbestall
                 # and we want to check their properties, not just their values
-                for param, value in zip(paramsall, profitfit['paramsbestall']):
-                    param.setvalue(value, transformed=False)
+                for param, value in zip(paramsall, profitfit['params_bestall']):
+                    param.set_value(value, transformed=False)
                 lentype = {typeofval: len(vals) for typeofval, vals in [('names', namesall), ('params', paramsall), ('fixed', fixedall)]}
                 if not (lentype['params'] == lentype['names'] and lentype['params'] == lentype['fixed']):
                     print("idx={} model={} src={} value lengths don't all match: {}".format(idx, namemodel, src, lentype))
@@ -178,28 +181,54 @@ def readmodel(profit, results, colnamesprofit, idx, src, colnamestoadd=None, eng
                 counts = {}
                 allgauss = True
                 componentsmg = []
-                fluxscale = 1.0
                 # Always store the total flux and skip the component flux for one-component models
-                if src == 'hst2hsc' and 'fluxscalehst2hsc' in profit['metadata']:
-                    fluxscale = profit['metadata']['fluxscalehst2hsc']
-                paramsflux = [param for param in paramsall if isflux(param)]
+                paramsflux = [param for param in paramsall if isflux(param) and ((not is_hsc) or param.band == bandref)]
                 colnames.append('flux')
                 skipflux = len(paramsflux) == 1
                 if namemodel == 'mg8devexptpx':
                     print(skipflux, namesall, fixedall)
-                value = np.sum([param.getvalue(transformed=False) for param in paramsflux])
-                values.append(value*fluxscale)
-                paramsre = [param for param in paramsall if param.name == 're']
-                for param in paramsre:
-                    param.setvalue(param.getvalue(transformed=False)*scalesources[src], transformed=False)
-                for nameparam, param, fixed in zip(namesall, paramsall, fixedall):
-                    value = param.getvalue(transformed=False)
+                value = np.sum([param.get_value(transformed=False) for param in paramsflux])
+                values.append(value)
+                colnames.append("flux_scale_hst2hsc")
+                scale = profit['metadata'][bandref].get('fluxscale_hst2hsc', 1) if bandref in profit['metadata'] else 1
+                if is_hst2hsc and scale == 1:
+                    raise RuntimeError(f"got scale=1 from metadata={profit['metadata']}")
+                values.append(scale)
+                params_covar = dict(sigma_x=[], sigma_y=[], rho=[])
+                params_all_new = []
+                for param, fixed in zip(paramsall, fixedall):
+                    param.fixed = fixed
+                    is_sigma = param.name == 'sigma_x' or param.name == "sigma_y"
+                    if is_sigma or param.name == "rho":
+                        if is_sigma:
+                            param.set_value(param.get_value(transformed=False)*scalesources[src], transformed=False)
+                        params_covar[param.name].append(param)
+                    if not (is_hsc and isflux(param) and param.band != bandref):
+                        params_all_new.append(param)
+                params_ell = dict()
+                paramsre = []
+                # Transform fit params (covariance) into more useful r/axrat/ang params
+                for sigma_x, sigma_y, rho in zip(params_covar["sigma_x"], params_covar["sigma_y"], params_covar["rho"]):
+                    if sigma_x.fixed != sigma_y.fixed:
+                        raise RuntimeError("sigma_x/y fixed not identical")
+                    sigma_x, sigma_y, rho = [x.get_value(transformed=False) for x in [sigma_x, sigma_y, rho]]
+                    reff, params_ell["axrat"], params_ell["ang"] = covar_to_ellipse(np.array([
+                        sigma_x**2, sigma_y**2, sigma_x*sigma_y*rho
+                    ]))
+                    params_ell["re"] = sigma_to_reff(reff)
+                    for name, value in params_ell.items():
+                        params_ell[name] = mpfobj.Parameter(name=name, value=value)
+                        params_all_new.append(params_ell[name])
+                    paramsre.append(params_ell["re"])
+                for param in params_all_new:
+                    nameparam = param.name
+                    value = param.get_value(transformed=False)
                     if nameparam == 'nser':
                         allgauss = allgauss and value == 0.5
                     isfluxparam = isflux(param)
-                    if not (skipflux and isfluxparam) and towriteparam(nameparam, value, fixed):
+                    if not (skipflux and isfluxparam) and towriteparam(nameparam, value, param.fixed):
                         # Check if this angle (ellipse) value is shared, indicating that it ought to be a multi-Gaussian component
-                        if nameparam == 'ang':
+                        if nameparam == 'rho':
                             # TODO: This check may need to be much smarter in the future.
                             componentsmg.append(1 + 0 if not param.inheritors else len(param.inheritors))
                         if nameparam in counts:
@@ -209,7 +238,7 @@ def readmodel(profit, results, colnamesprofit, idx, src, colnamestoadd=None, eng
                         # TODO: Revisit the choice to apply modifiers in getprofiles(), which necessitates this
                         for modifier in param.modifiers:
                             if modifier.name == "rscale":
-                                value *= modifier.getvalue(transformed=False)
+                                value *= modifier.get_value(transformed=False)
                         values.append(value)
                         colnames.append(('rs' if nameparam == 'rscale' else nameparam) + '.' + str(counts[nameparam]))
                 if any(np.array(componentsmg) > 1):
@@ -221,7 +250,7 @@ def readmodel(profit, results, colnamesprofit, idx, src, colnamestoadd=None, eng
                     else:
                         raise RuntimeError(
                             'Got componentsmg={} but not allgauss because nsers={}; shared ellipse models expected to be multi-Gauss'.format(
-                                componentsmg, [param.getvalue(transformed=False) for param in paramsall if param.name == 'nser']
+                                componentsmg, [param.get_value(transformed=False) for param in paramsall if param.name == 'nser']
                         ))
                     idxcomp = 0
                     # Rename the effective radii of gaussian (sub)components to 'regc' and compute re from subcomponents
@@ -256,7 +285,7 @@ def readfits(profit, results, colnamesprofit, idx, src, engine='galsim', verbose
     if hasfits:
         readmodel(profit, results, colnamesprofit, idx, src, engine=engine, verbose=verbose)
     if verbose:
-        print('readfits src={} idx={} model={} profit.keys()={} hasfits={}'.format(src, idx, model, profit.keys(), hasfits))
+        print('readfits src={} idx={} profit.keys()={} hasfits={}'.format(src, idx, profit.keys(), hasfits))
     return hasfits
 
 
@@ -267,8 +296,9 @@ def readsrc(dataidx, results, colnamesprofit, idx, src, engine='galsim', verbose
     if hasfits:
         hasfits = readfits(dataidx[src], results[src], colnamesprofit, idx, src, engine=engine, verbose=verbose)
     if verbose:
-        print('readsrc src={} idx={} datatab[idx].keys={} profit.keys()={} hasfits={}'.format(src, idx, model, profit.keys(), hasfits))
-        print(src, idx, datatab[idx].keys(), model, hasfits, stage)
+        to_print = dataidx[src].keys() if hasfits else None
+        print('readsrc src={} idx={} datatab[idx].keys={} src.keys()={} hasfits={}'.format(
+            src, idx, datatab[idx].keys(), to_print, hasfits))
     return hasfits
 
 
@@ -289,6 +319,7 @@ results = {}
 for datatab in data:
     printrowdata = printrow
     appended = 0
+    print(np.min(list(datatab.keys())), np.max(list(datatab.keys())))
     for idx in datatab:
         if isinstance(datatab[idx], dict) and idx in indexmap:
             if idx not in results:
@@ -299,7 +330,7 @@ for datatab in data:
                     printrowdata = False
 
 
-# In[7]:
+# In[10]:
 
 
 # TODO: Actually search for it
@@ -374,7 +405,7 @@ print(colnamestable)
 # 
 # The table of results is a bit too large to be human-readable, but you can analyze it any which way you like with the column names saved.
 
-# In[8]:
+# In[11]:
 
 
 # Write to a plain old CSV, then read it back in to double-check
@@ -384,4 +415,10 @@ with open(fileout, "w", newline="\n") as f:
     writer = csv.writer(f)
     writer.writerows([colnamestable])
     writer.writerows(rows)
+
+
+# In[ ]:
+
+
+
 
