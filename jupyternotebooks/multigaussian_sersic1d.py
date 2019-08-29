@@ -59,27 +59,55 @@ def sersic(r, n, re):
 # Rangefit allows re-normalizing the model to match data normalization within the specified range
 # Otherwise, the model and data are normalized from r=0 to infinity
 def chisq_sersic(params, x, y, weightsbins, rangefit=None, rdivreslog=None,
-                 plotdata=False, plotmodel=False, returnall=False):
-    ymodel = np.zeros(len(x))
+                 plotdata=False, plotmodel=False, returnall=False, plot_gauss=False):
+    doweightsbins = weightsbins is not None
+    if not doweightsbins:
+        weightsbins = 1
+    model = np.zeros(len(x))
     weights, res = paramstoweightres(params, rdivreslog)
+    plot_gauss = plotmodel and plot_gauss
+    if plot_gauss:
+        gaussians = list()
     for weight, re in zip(weights, res):
-        ymodel += weight*sersic(x, 0.5, re)
+        gauss = weight*sersic(x, 0.5, re)
+        if plot_gauss:
+            gaussians.append(np.log10(gauss))
+        model += gauss
     if plotdata:
-        plt.plot(x, np.log10(y/(weightsbins if weightsbins is not None else 1.)))
+        ydata = np.log10(y/weightsbins)
+        plt.plot(x, ydata)
     if plotmodel:
-        plt.plot(x, np.log10(ymodel))
-    if weightsbins is not None:
-        ymodel *= weightsbins
+        ymodel = np.log10(model)
+        plt.plot(x, ymodel)
+        if plot_gauss:
+            for y in gaussians:
+                plt.plot(x, y, 'k--')
+    if doweightsbins:
+        model *= weightsbins
+    if plotmodel:
+        print(np.sum(y), np.sum(ymodel))
+    if rangefit is not None:
+        model = model[rangefit]
+        model *= np.sum(y[rangefit])/np.sum(model)
+    if plotmodel or plotdata:
+        xmin = np.min(x)
+        xmax = np.max(x)
+        buffer = 0.02*(xmax-xmin)
+        plt.xlim([xmin-buffer, xmax+buffer])
+        ymin, ymax = np.Inf, -np.Inf
+        if plotdata:
+            ymin = np.min((ymin, np.min(ydata)))
+            ymax = np.max((ymax, np.max(ydata)))
         if plotmodel:
-            print(np.sum(y), np.sum(ymodel))
-    if weightsbins is not None:
-        if rangefit is not None:
-            ymodel = ymodel[rangefit]
-            ymodel *= np.sum(y[rangefit])/np.sum(ymodel)
-        chisq = np.log10(np.sum(((y if rangefit is None else y[rangefit])-ymodel)**2))
-        if returnall:
-            return chisq, ymodel
-        return chisq
+            ymin = np.min((ymin, np.min(ymodel)))
+            ymax = np.max((ymax, np.max(ymodel)))
+        print("ylim: ", (ymin, ymax))
+        plt.ylim([ymin, ymax])
+        plt.tight_layout()
+    chisq = np.log10(np.sum(((y if rangefit is None else y[rangefit])-model)**2))
+    if returnall:
+        return chisq, ymodel
+    return chisq
 
 
 # Take a parameter vector for fitting and split into sizes and weights
@@ -151,13 +179,10 @@ def fitweights(nvals, radii, areasq, weightssigmas={}, methods=['BFGS'], plot=Tr
                                            tol=1e-5, options={'disp': True, }, method=method)
                 params = fit['x']
             print(fit['fun'], fit['x'])
-            chisq = chisq_sersic(params, radii, y, areasq, rangefit, rdivreslog, plotmodel=plotn)
+            chisq = chisq_sersic(params, radii, y, areasq, rangefit, rdivreslog, plotmodel=plotn, plot_gauss=True)
             if plotn:
                 plt.xlabel('$r/r_{eff}$')
                 plt.ylabel('log10(surface density)')
-                plt.tight_layout()
-                for axis in ['x', 'y']:
-                    plt.autoscale(enable=True, axis=axis, tight=True)
                 plt.legend(['Data'] + list(paramsbytype.keys()) + ['Best'])
             weights, res = paramstoweightres(params, rdivreslog)
             if sort:
@@ -204,16 +229,16 @@ areasq = np.pi*(rsq[1:] - rsq[:-1])
 
 idxsplot = range(8*nbinsperre)
 
-for n in [0.5, 1, 2, 4]:
+for n in [0.1, 0.5, 1, 4, 20]:
     sns.lineplot(rmid[idxsplot], np.log10(sersic(rmid[idxsplot], n, 1)))
-plt.xlim([0, 8])
-plt.ylim([-8, 2])
+plt.xlim([-0.05, 8])
+plt.ylim([-6, 4])
 plt.tight_layout()
 #for axis in ['x', 'y']:
 #    plt.autoscale(enable=True, axis=axis, tight=True)
-plt.xlabel('$r/r_{eff}$')
+plt.xlabel('$R/R_{eff}$')
 plt.ylabel('log10(surface density)')
-plt.legend(['n=0.5 (Gaussian)', 'n=1 (Exponential)', 'n=2', 'n=4 (de Vaucouleurs)' ])
+plt.legend(['n=0.1', 'n=0.5 (Gaussian)', 'n=1 (Exponential)', 'n=4 (de Vaucouleurs)', 'n=20'])
 plt.show()
 
 
@@ -1268,7 +1293,7 @@ weightvarsfour = {
 # 
 # Lastly, it's worth noting that not every control point was used for the final set in MultiProFit; some were excluded to improve the smoothness of the final splines.
 
-# In[13]:
+# In[17]:
 
 
 import multiprofit.objects as mpfobj
@@ -1277,28 +1302,31 @@ import multiprofit.multigaussianapproxprofile as mpfmga
 
 # Plot the resulting splines, demonstrating the superiority of the final adopted approach
 
-profilesersic = mpfutil.getcomponents('sersic', {'': np.array([1])}, {'nser': [0.5], 're': [1.0], 'ang': [0], 'axrat': [1]},
-                                      isfluxesfracs=False)[0]
-paramssersic = profilesersic.getparameters(fixed=False)
+sigma_x, sigma_y, rho = 1., 1., 0.
+paramnser = mpfobj.Parameter("nser", 0.5)
 # Plot N=8 first
 order = 8
 for weightvars in weightvarssmrt, weightvarslin, None, weightvarsfour, None:
     print(order)
-    mgsersic = mpfmga.MultiGaussianApproximationProfile(
-        [mpfobj.FluxParameter('', '', 1.0, '', None)], parameters=paramssersic, weightvars=weightvars, order=order)
+    mgsersic = mpfmga.MultiGaussianApproximationComponent(
+        [mpfobj.FluxParameter('', '', 1.0, '', None)],
+        mpfobj.EllipseParameters(mpfobj.Parameter("sigma_x", sigma_x), mpfobj.Parameter("sigma_y", sigma_y), mpfobj.Parameter("rho", rho)),
+        parameters=[paramnser], weightvars=weightvars, order=order)
     changeorder = weightvars is None and order == 8
     if weightvars is None:
-        weightvars = mpfmga.MultiGaussianApproximationProfile.weights['sersic'][order]
+        to_flip = [False, True]
+        weightvars = mpfmga.MultiGaussianApproximationComponent.weights['sersic'][order]
+    else:
+        to_flip = [False]
     nsers = np.linspace(np.log10(0.5), np.log10(6.3), 10000)
-    weightsplines = mgsersic.weightsplines
-    sigmasplines = mgsersic.sigmasplines
+    weightsplines = [x[0] for x in mgsersic.weight_splines]
+    sigmasplines = [x[0] for x in mgsersic.sigma_splines]
     weightsums = [np.sum(np.array([weightsplines[i](nserlog) for i in range(order)])) for nserlog in nsers]
     plt.plot(nsers, np.log10(weightsums), 'k-', linewidth=3)
     for i in range(order):
         plt.plot(nsers, np.log10(weightsplines[i](nsers)), linewidth=2)
         plt.plot(weightsplines[i]._data[0], np.log10(weightsplines[i]._data[1]), 'kx', markersize=0.8)
     plt.ylim(-7.5, 0)
-
     plt.xlabel('log10(n)')
     plt.ylabel('log10(weight)')
     plt.show()
@@ -1307,28 +1335,38 @@ for weightvars in weightvarssmrt, weightvarslin, None, weightvarsfour, None:
         plt.plot(nsers, np.log10(sigmasplines[i](nsers)), linewidth=2)
         plt.plot(sigmasplines[i]._data[0], np.log10(sigmasplines[i]._data[1]), 'kx', markersize=0.8)
     plt.xlabel('log10(n)')
-    plt.ylabel('log10(r)')
+    plt.ylabel('log10(R)')
     plt.show()
 
     weightvalues = np.array(list(weightvars.values()))
-    for idxn, nser in enumerate(list(weightvars.keys())):
-        if idxn % 10 == 1:
-            nser = np.log10(nser)
-            x = np.array([weightsplines[i](nser) for i in range(order) if weightvalues[idxn][0][i] > 0])
-            y = np.array([sigmasplines[i](nser) for i in range(order) if weightvalues[idxn][0][i] > 0])
+    for flip in to_flip:
+        splines = [weightsplines, sigmasplines]
+        labels = ["weight", "R"]
+        if flip:
+            splines.reverse()
+            labels.reverse()
+        for nser in np.log10([1, 2, 3, 4, 5]):
+            x = np.array([splines[0][i](nser) for i in range(order)])
+            y = np.array([splines[1][i](nser) for i in range(order)])
             plt.plot(np.log10(x), np.log10(y), 'k-', linewidth=1)
-    
-    for i in range(order):
-        plt.plot(np.log10(weightsplines[i](nsers)), np.log10(sigmasplines[i](nsers)), linewidth=2)
-        plt.plot(np.log10(weightsplines[i]._data[1]), np.log10(sigmasplines[i]._data[1]), 'kx', markersize=0.8)
 
-    plt.xlim([-5.2, 0])
-    plt.show()
+        for i in range(order):
+            plt.plot(np.log10(splines[0][i](nsers)), np.log10(splines[1][i](nsers)), linewidth=2)
+            plt.plot(np.log10(splines[0][i]._data[1]), np.log10(splines[1][i]._data[1]), 'kx', markersize=0.8)
+
+        wlims = [-5.2, 0]
+        if flip:
+            plt.ylim(wlims)
+        else:
+            plt.xlim(wlims)
+        plt.xlabel(f"log10({labels[0]})")
+        plt.ylabel(f"log10({labels[1]})")
+        plt.show()
     if changeorder:
         order = 4
 
 
-# In[ ]:
+# In[14]:
 
 
 def radiusfixed(n=1):
