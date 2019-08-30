@@ -1,4 +1,5 @@
 from collections import defaultdict
+import logging
 #from lsst.afw.image.exposure import MultibandExposure
 import lsst.afw.table as afwTable
 from lsst.meas.base.measurementInvestigationLib import rebuildNoiseReplacer
@@ -7,19 +8,10 @@ from lsst.meas.modelfit.cmodel.cmodelContinued import CModelConfig
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
 import multiprofit.fitutils as mpfFit
-from multiprofit.logger import Logger
 import multiprofit.objects as mpfObj
 import numpy as np
 import time
 import traceback
-
-
-class LoggerNull(Logger):
-    def print(self, *args, **kwargs):
-        pass
-
-    def __call__(self, *args, **kwargs):
-        self.print(*args, **kwargs)
 
 
 class MultiProFitConfig(pexConfig.Config):
@@ -287,7 +279,7 @@ class MultiProFitTask(pipeBase.Task):
         Fit every source with MultiProFit using the provided exposures/coadds
         :param exposures: Dict[band]; exposures/coadds to fit (one per filter)
         :param sources: Catalog; A catalog containing deblended sources with footprints
-        :param logger: multiprofit.logger.Logger; A Logger object to (re-)direct MultiProFit output
+        :param logger: logging.Logger; A Logger object to (re-)direct MultiProFit output
         :param plot: bool; Whether to plot fit results for each source
         :param idx_begin: int; Row index to start fitting for
         :param idx_end: int; Row index
@@ -298,7 +290,7 @@ class MultiProFitTask(pipeBase.Task):
         """
         # Set up a logger to suppress output for now
         if logger is None:
-            logger = LoggerNull()
+            logger = logging.getLogger(__name__)
         if self.config.computeMeasModelfitLikelihood:
             configMeasModelfit = CModelConfig()
             cmodels = {key: {} for key in ["dev", "exp", "cmodel"]}

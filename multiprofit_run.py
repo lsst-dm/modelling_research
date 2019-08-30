@@ -1,5 +1,7 @@
 import argparse
+import logging
 import numpy as np
+import sys
 
 import lsst.afw.table as afwTable
 from lsst.daf.persistence import Butler
@@ -47,6 +49,7 @@ def main():
         'idx_begin': dict(type=int, nargs='?', default=0, help="Initial row index to fit"),
         'idx_end': dict(type=int, nargs='?', default=np.Inf, help="Final row index to fit"),
         'printTrace': dict(type=bool, nargs='?', default=False, help="Print traceback for errors"),
+        'loglevel': {'type': int, 'nargs': '?', 'default': 30, 'help': 'logging.Logger default level'},
         'computeMeasModelfitLikelihood': dict(type=bool, nargs='?', default=False, kwarg=True,
                                               help="Set config computeMeasModelfitLikelihood flag", ),
         'fitCModelExp': dict(type=bool, nargs='?', default=False, kwarg=True,
@@ -63,6 +66,7 @@ def main():
             del value['kwarg']
         parser.add_argument('--' + key, **value)
     args = parser.parse_args()
+    logging.basicConfig(stream=sys.stdout, level=args.loglevel)
     butler = Butler(args.repo)
     catalog = afwTable.SimpleCatalog.readFits(args.inputFilename) if args.inputFilename is not None else None
     if args.patchName is not None:
