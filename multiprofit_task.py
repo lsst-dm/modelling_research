@@ -74,14 +74,12 @@ class MultiProFitConfig(pexConfig.Config):
                 dict(name="gausspx", model=nameSersicModel, fixedparams='nser', initparams="nser=0.5",
                      inittype="moments", psfmodel=namePsfModel, psfpixel="T"),
                 dict(name=f"{nameMG}expgpx", model=nameSersicModel, fixedparams='nser', initparams="nser=1",
-                     inittype="guessgauss2exp:gausspx", psfmodel=namePsfModel, psfpixel="T", measmodel="exp"),
+                     inittype="guessgauss2exp:gausspx", psfmodel=namePsfModel, psfpixel="T"),
                 dict(name=f"{nameMG}devepx", model=nameSersicModel, fixedparams='nser', initparams="nser=4",
-                     inittype=f"guessexp2dev:{nameMG}expgpx", psfmodel=namePsfModel, psfpixel="T",
-                     measmodel="dev"),
+                     inittype=f"guessexp2dev:{nameMG}expgpx", psfmodel=namePsfModel, psfpixel="T"),
                 dict(name=f"{nameMG}cmodelpx", model=f"{nameSersicPrefix}:2",
                      fixedparams="cenx;ceny;nser;sigma_x;sigma_y;rho", initparams="nser=4,1",
-                     inittype=f"{nameMG}devepx;{nameMG}expgpx", psfmodel=namePsfModel, psfpixel="T",
-                     measmodel="cmodel"),
+                     inittype=f"{nameMG}devepx;{nameMG}expgpx", psfmodel=namePsfModel, psfpixel="T"),
             ])
             if self.fitSersicFromCModel:
                 modelSpecs.extend([
@@ -126,6 +124,7 @@ class MultiProFitTask(pipeBase.Task):
     """
     ConfigClass = MultiProFitConfig
     _DefaultName = "multiProFit"
+    meas_modelfit_models = ("dev", "exp", "cmodel")
 
     def __init__(self, modelSpecs=None, **kwargs):
         pipeBase.Task.__init__(self, **kwargs)
@@ -179,26 +178,25 @@ class MultiProFitTask(pipeBase.Task):
         self.__addExtraField(extra, schema, prefix, 'nEvalFunc', 'number of objective function evaluations')
         self.__addExtraField(extra, schema, prefix, 'nEvalGrad', 'number of Jacobian evaluations')
 
-    def __getCatalog(self, filters, schema, results, fields, fieldsExtra, fieldsPsf, fieldsPsfExtra,
-                     sources, mapper, cmodels, cmodelFields):
+    def __getCatalog(self, filters, results, sources):
         """
-        Get a new SimpleCatalog with added extra fields
+        Get a new SimpleCatalog with added extra fields. Extra field keys are added to field, f
         :param filters: iterable[str]; Names of bandpass filters
-        :param schema: lsst.afw.table.Schema; Schema with existing keys to retain
         :param results: dict; Results structure as returned by mpfFit.fit_galaxy_exposures()
-        :param fields: dict[fitName]; Store for lists of keys corresponding to model free params
-        :param fieldsExtra: dict[band][fitName]: Store for keys for extra fields beyond model free params
-        :param fieldsPsf: dict[fitName]; As fields but for PSF fit
-        :param fieldsPsfExtra: dict[band][fitName]; As fieldsExtra but for PSF fit
         :param sources: iterable[record]; Iterable of recods to pass to catalog.extend()
-        :param mapper: lsst.afw.table.schemaMapper.SchemaMapper; Mapper to pass to catalog.extend()
-        :param cmodels: iterable[str]; Name of meas_modelfit models to add extra fields for
-        :param cmodelFields: dict[cmodelName]; As fields but for meas_modelfit extra fields
-        :return: catalog: afwTable.SimpleCatalog; Catalog with added fields
+        :return: tuple of:
+            catalog: afwTable.SimpleCatalog; Catalog with added fields
+            fields: dict[str]; Dict of field keys by type
         """
+        mapper = self._getMapper(sources.getSchema())
+        schema = mapper.getOutputSchema()
+        fields = {key: {} for key in ["base", "extra", "psf", "psf_extra", "measmodel"]}
         for idxBand, band in enumerate(filters):
             prefix = f'multiprofit_psf_{band}'
             resultsPsf = results['psfs'][idxBand]['galsim']
+            fields["psf"][band] = {}
+            fields["psf_extra"][band] = _defaultdictNested()
+            fields["extra"][band] = _defaultdictNested()
             for name, fit in resultsPsf.items():
                 fit = fit['fit']
                 namesAdded = defaultdict(int)
@@ -208,8 +206,8 @@ class MultiProFitTask(pipeBase.Task):
                     fullname = f'{prefix}_{nameParam}_{namesAdded[nameParam]}'
                     key = schema.addField(fullname, type=np.float32)
                     keyList.append(key)
-                fieldsPsf[band][name] = keyList
-                self.__addExtraFields(fieldsPsfExtra[band][name], schema, prefix)
+                fields["psf"][band][name] = _defaultdictNested()
+                self.__addExtraFields(fields["psf_extra"][band][name], schema, prefix)
         for name, result in results['fits']['galsim'].items():
             prefix = f'multiprofit_{name}'
             fit = result['fits'][0]
@@ -223,15 +221,17 @@ class MultiProFitTask(pipeBase.Task):
                 fullname = f'{prefix}_{nameParam}_{namesAdded[nameParam]}'
                 key = schema.addField(fullname, type=np.float32)
                 keyList.append(key)
-            fields[name] = keyList
-            self.__addExtraFields(fieldsExtra[band][name], schema, prefix)
+            fields["base"][name] = keyList
+            for band in filters:
+                fields["extra"][band][name] = _defaultdictNested()
+                self.__addExtraFields(fields["extra"][band][name], schema, prefix)
         if self.config.computeMeasModelfitLikelihood:
-            for name in cmodels:
-                self.__addExtraField(cmodelFields, schema, "multiprofit_measmodel_like", name,
+            for name in self.meas_modelfit_models:
+                self.__addExtraField(fields["measmodel"], schema, "multiprofit_measmodel_like", name,
                                      'MultiProFit log-likelihood for meas_modelfit {name} model')
         catalog = afwTable.SimpleCatalog(schema)
         catalog.extend(sources, mapper=mapper)
-        return catalog
+        return catalog, fields
 
     @staticmethod
     def __setExtraField(extra, row, fit, name, nameFit=None, index=None):
@@ -274,6 +274,46 @@ class MultiProFitTask(pipeBase.Task):
         self.__setExtraField(extra, row, fit, 'nEvalFunc', nameFit='n_eval_func')
         self.__setExtraField(extra, row, fit, 'nEvalGrad', nameFit='n_eval_grad')
 
+    def __setFieldsSource(self, filters, results, fieldsBase, fieldsExtra, row):
+        for idxfit, (name, result) in enumerate(results['fits']['galsim'].items()):
+            fit = result['fits'][0]
+            values = [x for x, fixed in zip(fit['params_bestall'], fit['params_allfixed'])
+                      if not fixed]
+            for value, key in zip(values, fieldsBase[name]):
+                row[key] = value
+            for band in filters:
+                self.__setExtraFields(fieldsExtra[band][name], row, fit)
+
+    def __setFieldsPsf(self, filters, results, fieldsBase, fieldsExtra, row):
+        for idxBand, band in enumerate(filters):
+            resultsPsf = results['psfs'][idxBand]['galsim']
+            for name, fit in resultsPsf.items():
+                fit = fit['fit']
+                values = [x for x, fixed in zip(fit['params_bestall'], fit['params_allfixed'])
+                          if not fixed]
+                for value, key in zip(values, fieldsBase[band][name]):
+                    row[key] = value
+                self.__setExtraFields(fieldsExtra[band][name], row, fit)
+
+    def __setFieldsMeasmodel(self, exposures, model, source, measmodelFields, row):
+        """
+        :measmodel_type: str; The type of corresponding meas_modelfit model (dev/exp/cmodel), if any
+        :return: No return
+        """
+        configMeasModelfit = CModelConfig()
+        measmodels = {key: {} for key in self.meas_modelfit_models}
+        for band, exposure in exposures.items():
+            _, measmodels['dev'][band], measmodels['exp'][band], measmodels['cmodel'][band] = \
+                buildCModelImages(exposure, source, configMeasModelfit)
+        # Set the values of meas_modelfit model likelihood fields
+        for measmodel_type, measmodel_images in measmodels.items():
+            likelihood = 0
+            for band, exposure in exposures.items():
+                likelihood += model.get_exposure_likelihood(
+                    model.data.exposures[band][0], measmodel_images[band].array)[0]
+            likelihood = {measmodel_type: likelihood}
+            self.__setExtraField(measmodelFields, row, likelihood, measmodel_type)
+
     def fit(self, exposures, sources, logger=None, plot=False, idx_begin=0, idx_end=np.Inf, printTrace=False):
         """
         Fit every source with MultiProFit using the provided exposures/coadds
@@ -291,24 +331,13 @@ class MultiProFitTask(pipeBase.Task):
         # Set up a logger to suppress output for now
         if logger is None:
             logger = logging.getLogger(__name__)
-        if self.config.computeMeasModelfitLikelihood:
-            configMeasModelfit = CModelConfig()
-            cmodels = {key: {} for key in ["dev", "exp", "cmodel"]}
-            cmodelFields = {}
         numSources = len(sources)
         filters = exposures.keys()
         noiseReplacers = {
             band: rebuildNoiseReplacer(exposure, sources) for band, exposure in exposures.items()
         }
-        mapper = self._getMapper(sources.getSchema())
-        schema = mapper.getOutputSchema()
         tInit = time.time()
         addedFields = False
-        fieldsPsf = defaultdict(dict)
-        fieldsPsfExtra = _defaultdictNested()
-        fields = dict()
-        fieldsExtra = _defaultdictNested()
-        catalog = None
         for idx, src in enumerate(sources):
             if idx_begin <= idx <= idx_end:
                 row = catalog[idx] if addedFields else None
@@ -341,45 +370,16 @@ class MultiProFitTask(pipeBase.Task):
                     # TODO: Do this prior to run time by e.g. setting up some extremely simple data that
                     # should never fail, thereby also validating the modelSpecs.
                     if not addedFields:
-                        catalog = self.__getCatalog(filters, schema, results, fields, fieldsExtra, fieldsPsf,
-                                                    fieldsPsfExtra, sources, mapper, cmodels, cmodelFields)
+                        catalog, fields = self.__getCatalog(filters, results, sources)
                         row = catalog[idx]
                         addedFields = True
                     # Set PSF fit fields
-                    for idxBand, band in enumerate(filters):
-                        resultsPsf = results['psfs'][idxBand]['galsim']
-                        for name, fit in resultsPsf.items():
-                            fit = fit['fit']
-                            values = [x for x, fixed in zip(fit['params_bestall'], fit['params_allfixed'])
-                                      if not fixed]
-                            for value, key in zip(values, fieldsPsf[band][name]):
-                                row[key] = value
-                            self.__setExtraFields(fieldsPsfExtra[band][name], row, fit)
-                    # Compute MultiProFit's likelihoods for meas_modelfit's models
-                    if self.config.computeMeasModelfitLikelihood:
-                        for band, exposure in exposures.items():
-                            _, cmodels['dev'][band], cmodels['exp'][band], cmodels['cmodel'][band] = \
-                                buildCModelImages(exposure, src, configMeasModelfit)
+                    self.__setFieldsPsf(filters, results, fields["psf"], fields["psf_extra"], row)
                     # Set the values of all extra fields - MultiProFit first
-                    for idxfit, (name, result) in enumerate(results['fits']['galsim'].items()):
-                        fit = result['fits'][0]
-                        values = [x for x, fixed in zip(fit['params_bestall'], fit['params_allfixed'])
-                                  if not fixed]
-                        for value, key in zip(values, fields[name]):
-                            row[key] = value
-                        self.__setExtraFields(fieldsExtra[band][name], row, fit)
-                        # Set the values of meas_modelfit model likelihood fields
-                        if self.config.computeMeasModelfitLikelihood:
-                            measmodel_type = self.modelSpecs[idxfit].get("measmodel")
-                            if measmodel_type is not None:
-                                model = results['models'][result['modeltype']]
-                                measmodels = cmodels[measmodel_type]
-                                likelihood = 0
-                                for band, exposure in exposures.items():
-                                    likelihood += model.get_exposure_likelihood(
-                                        model.data.exposures[band][0], measmodels[band].array)[0]
-                                likelihood = {measmodel_type: likelihood}
-                                self.__setExtraField(cmodelFields, row, likelihood, measmodel_type)
+                    self.__setFieldsSource(filters, results, fields["base"], fields["extra"], row)
+                    if self.config.computeMeasModelfitLikelihood:
+                        model = results['models'][self.modelSpecs[0]["model"]]
+                        self.__setFieldsMeasmodel(exposures, model, src, fields["measmodel"], row)
                     if self.config.outputRuntime:
                         tNoise = time.time()
                     for noiseReplacer in noiseReplacers.values():
@@ -392,19 +392,20 @@ class MultiProFitTask(pipeBase.Task):
                           f"{tNow - tInit:.2f}s)")
                     row[self.runtimeKey] = runtime
                     if plot:
-                        results['models']['mgsersic8:1'].evaluate(plot=True)
+                        for model in results['models'].values():
+                            model.evaluate(plot=True)
                 except Exception as e:
                     if plot:
                         import matplotlib.pyplot as plt
                         fig, axes = plt.subplots(1, 3)
-                        for idx in range(3):
-                            axes[idx].imshow(exposurePsfs[idx][0].image)
+                        for idx_axis in range(3):
+                            axes[idx_axis].imshow(exposurePsfs[idx][0].image)
                     tNow = time.time()
                     runtime = (time.time() - t0)
                     if addedFields:
                         row[self.runtimeKey] = runtime
                         row[self.failFlagKey] = True
-                    print(f"Fit src {idx}/{numSources} id={src['id']} in {runtime:.2f} s (total "
+                    print(f"Fit src {idx}/{numSources} id={src['id']} in {runtime:.2f}s (total "
                           f"{tNow - tInit:.2f}s) but got exception {e}")
                     if printTrace:
                         traceback.print_exc()
