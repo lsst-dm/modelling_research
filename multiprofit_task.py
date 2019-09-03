@@ -141,9 +141,6 @@ class MultiProFitTask(pipeBase.Task):
                                                              doc='runtime in ms')
         self.failFlagKey = mapper.editOutputSchema().addField('multiprofit_fail_flag', type="Flag",
                                                               doc='generic MultiProFit failure flag')
-        if self.config.outputRuntime:
-            self.runtimeNoiseReplacerKey = mapper.editOutputSchema().addField(
-                'multiprofit_time_noiseReplacer', type=np.float32, doc='runtime for noiseReplacer in ms')
         return mapper
 
     @staticmethod
@@ -177,6 +174,46 @@ class MultiProFitTask(pipeBase.Task):
             self.__addExtraField(extra, schema, prefix, 'time', 'model runtime excluding setup')
         self.__addExtraField(extra, schema, prefix, 'nEvalFunc', 'number of objective function evaluations')
         self.__addExtraField(extra, schema, prefix, 'nEvalGrad', 'number of Jacobian evaluations')
+
+    @pipeBase.timeMethod
+    def __fitSource(self, src, noiseReplacers, exposures, filters, logger, printTrace=False, plot=False):
+        results = None
+        try:
+            foot = src.getFootprint()
+            bbox = foot.getBBox()
+            center = bbox.getCenter()
+            # TODO: Implement multi-object fitting/deblending
+            # peaks = foot.getPeaks()
+            # nPeaks = len(peaks)
+            # isSingle = nPeaks == 1
+            for noiseReplacer in noiseReplacers.values():
+                noiseReplacer.insertSource(src.getId())
+            exposurePsfs = []
+            for band, exposure in exposures.items():
+                # Check total flux first
+                mpfExposure = mpfObj.Exposure(
+                    band=band, image=np.float64(exposure.image.subset(bbox).array),
+                    error_inverse=1 / np.float64(exposure.variance.subset(bbox).array),
+                    is_error_sigma=False)
+                mpfPsf = mpfObj.PSF(band, image=exposure.getPsf().computeKernelImage(center),
+                                    engine="galsim")
+                exposurePsfs.append((mpfExposure, mpfPsf))
+            results = mpfFit.fit_galaxy_exposures(
+                exposurePsfs, filters, self.modelSpecs, results=results, loggerPsf=logger,
+                logger=logger)
+            if plot:
+                for model in results['models'].values():
+                    model.evaluate(plot=True)
+            return results, None
+        except Exception as e:
+            if plot:
+                import matplotlib.pyplot as plt
+                fig, axes = plt.subplots(1, len(exposures))
+                for idx, exposure in enumerate(exposures):
+                    axes[idx].imshow(exposure.image)
+            if printTrace:
+                traceback.print_exc()
+            return results, e
 
     def __getCatalog(self, filters, results, sources):
         """
@@ -314,6 +351,19 @@ class MultiProFitTask(pipeBase.Task):
             likelihood = {measmodel_type: likelihood}
             self.__setExtraField(measmodelFields, row, likelihood, measmodel_type)
 
+    def __setRow(self, filters, results, fields, row, exposures, src, runtime=0):
+        # Set up all of the appropriate fields in the schema
+        # TODO: Do this prior to run time by e.g. setting up some extremely simple data that
+        # should never fail, thereby also validating the modelSpecs.
+        # Set PSF fit fields
+        self.__setFieldsPsf(filters, results, fields["psf"], fields["psf_extra"], row)
+        # Set the values of all extra fields - MultiProFit first
+        self.__setFieldsSource(filters, results, fields["base"], fields["extra"], row)
+        if self.config.computeMeasModelfitLikelihood:
+            model = results['models'][self.modelSpecs[0]["model"]]
+            self.__setFieldsMeasmodel(exposures, model, src, fields["measmodel"], row)
+        row[self.runtimeKey] = runtime
+
     def fit(self, exposures, sources, logger=None, plot=False, idx_begin=0, idx_end=np.Inf, printTrace=False):
         """
         Fit every source with MultiProFit using the provided exposures/coadds
@@ -326,7 +376,8 @@ class MultiProFitTask(pipeBase.Task):
         :param printTrace: bool; Whether to print tracebacks when catching errors
         :return: catalog, results tuple containing:
             catalog: lsst.afw.table.SimpleCatalog; Catalog with fit results for each source
-            results: dict; Results structure as returned by mpfFit.fit_galaxy_exposures() for the final source
+            results: dict; Results structure as returned by mpfFit.fit_galaxy_exposures() for the first
+                successfully fit source
         """
         # Set up a logger to suppress output for now
         if logger is None:
@@ -336,85 +387,50 @@ class MultiProFitTask(pipeBase.Task):
         noiseReplacers = {
             band: rebuildNoiseReplacer(exposure, sources) for band, exposure in exposures.items()
         }
-        tInit = time.time()
+        timeInit = time.time()
+        processTimeInit = time.process_time()
         addedFields = False
+        resultsReturn = None
+        indicesFailed = {}
         for idx, src in enumerate(sources):
             if idx_begin <= idx <= idx_end:
-                row = catalog[idx] if addedFields else None
-                try:
-                    results = None
-                    t0 = time.time()
-                    foot = src.getFootprint()
-                    bbox = foot.getBBox()
-                    center = bbox.getCenter()
-                    # TODO: Implement multi-object fitting/deblending
-                    # peaks = foot.getPeaks()
-                    # nPeaks = len(peaks)
-                    # isSingle = nPeaks == 1
-                    for noiseReplacer in noiseReplacers.values():
-                        noiseReplacer.insertSource(src.getId())
-                    exposurePsfs = []
-                    for band, exposure in exposures.items():
-                        # Check total flux first
-                        mpfExposure = mpfObj.Exposure(
-                            band=band, image=np.float64(exposure.image.subset(bbox).array),
-                            error_inverse=1/np.float64(exposure.variance.subset(bbox).array),
-                            is_error_sigma=False)
-                        mpfPsf = mpfObj.PSF(band, image=exposure.getPsf().computeKernelImage(center),
-                                            engine="galsim")
-                        exposurePsfs.append((mpfExposure, mpfPsf))
-                    results = mpfFit.fit_galaxy_exposures(
-                        exposurePsfs, filters, self.modelSpecs, results=results, loggerPsf=logger,
-                        logger=logger)
-                    # Set up all of the appropriate fields in the schema
-                    # TODO: Do this prior to run time by e.g. setting up some extremely simple data that
-                    # should never fail, thereby also validating the modelSpecs.
-                    if not addedFields:
+                results, error = self.__fitSource(src, noiseReplacers, exposures, filters, logger,
+                                                  printTrace=printTrace, plot=plot)
+                runtime = self.metadata["__fitSourceEndCpuTime"] - self.metadata["__fitSourceStartCpuTime"]
+                failed = error is not None
+                if resultsReturn is None and not failed:
+                    resultsReturn = results
+                if not addedFields:
+                    if failed:
+                        indicesFailed.add(idx)
+                    else:
                         catalog, fields = self.__getCatalog(filters, results, sources)
-                        row = catalog[idx]
+                        for idxFailed, runtime in indicesFailed.items():
+                            catalog[idxFailed][self.failFlagKey] = True
+                            catalog[idxFailed][self.runtimeKey] = runtime
                         addedFields = True
-                    # Set PSF fit fields
-                    self.__setFieldsPsf(filters, results, fields["psf"], fields["psf_extra"], row)
-                    # Set the values of all extra fields - MultiProFit first
-                    self.__setFieldsSource(filters, results, fields["base"], fields["extra"], row)
-                    if self.config.computeMeasModelfitLikelihood:
-                        model = results['models'][self.modelSpecs[0]["model"]]
-                        self.__setFieldsMeasmodel(exposures, model, src, fields["measmodel"], row)
-                    if self.config.outputRuntime:
-                        tNoise = time.time()
-                    for noiseReplacer in noiseReplacers.values():
-                        noiseReplacer.removeSource(src.getId())
-                    tNow = time.time()
-                    if self.config.outputRuntime:
-                        row[self.runtimeNoiseReplacerKey] = tNow - tNoise
-                    runtime = (time.time() - t0)
-                    print(f"Fit src {idx}/{numSources} id={src['id']} in {runtime:.2f}s (total "
-                          f"{tNow - tInit:.2f}s)")
-                    row[self.runtimeKey] = runtime
-                    if plot:
-                        for model in results['models'].values():
-                            model.evaluate(plot=True)
-                except Exception as e:
-                    if plot:
-                        import matplotlib.pyplot as plt
-                        fig, axes = plt.subplots(1, 3)
-                        for idx_axis in range(3):
-                            axes[idx_axis].imshow(exposurePsfs[idx][0].image)
-                    tNow = time.time()
-                    runtime = (time.time() - t0)
-                    if addedFields:
-                        row[self.runtimeKey] = runtime
-                        row[self.failFlagKey] = True
-                    print(f"Fit src {idx}/{numSources} id={src['id']} in {runtime:.2f}s (total "
-                          f"{tNow - tInit:.2f}s) but got exception {e}")
-                    if printTrace:
-                        traceback.print_exc()
+                if addedFields:
+                    row = catalog[idx]
+                    if not failed:
+                        self.__setRow(filters, results, fields, row, exposures, src, runtime=runtime)
+                    row[self.failFlagKey] = failed
+                elif failed:
+                    indicesFailed[idx] = runtime
+                id_src = src.getId()
+                for noiseReplacer in noiseReplacers.values():
+                    noiseReplacer.removeSource(id_src)
+                errorMsg = '' if not failed else f" but got exception {error}"
+                logger.log(
+                    21, f"Fit src {idx}/{numSources} id={src['id']} in {runtime:.3f}s "
+                        f"(total time {time.time() - timeInit:.2f}s "
+                        f"process_time {time.process_time() - processTimeInit:.2f}s)"
+                        f"{errorMsg}")
         # Return the exposures to their original state
         for noiseReplacer in noiseReplacers.values():
             noiseReplacer.end()
-        # TODO: Make sure results is a successful fit, if possible
-        return catalog, results
+        return catalog, resultsReturn
 
+    @pipeBase.timeMethod
     def run(self, coaddsByBand, sources, **kwargs):
         """
         Run MultiProFit on a catalog containing sources on a set of (multiband) exposures
