@@ -32,7 +32,7 @@ def getPatch(ra, dec, butler):
     return skymap[tract].findPatch(spherePoint)
 
 
-def multiProFit(butler, tract, patchname, filters=None, exposureType=None, catalog=None,
+def multiProFit(butler, tract, patchName, filters=None, exposureType=None, catalog=None,
                 idx_begin=0, idx_end=np.Inf, printTrace=False, **kwargs):
     """Run the MultiProFit task on a range of sources in a region.
 
@@ -42,7 +42,7 @@ def multiProFit(butler, tract, patchname, filters=None, exposureType=None, catal
         A Generation 2 butler.
     tract : `int`
         A tract number.
-    patchname : `str`
+    patchName : `str`
         The name of the patch in the tract to process.
     filters : iterable of `str`
         Names of bandpass filters for filter-dependent fields. Default ["HSC-I", "HSC-R", "HSC-G"].
@@ -72,7 +72,8 @@ def multiProFit(butler, tract, patchname, filters=None, exposureType=None, catal
         filters = ["HSC-I", "HSC-R", "HSC-G"]
     if exposureType is None:
         exposureType = "deepCoadd_calexp"
-    dataId = {"tract": tract, "patch": patchname, "filter": filters[0]}
+
+    dataId = {"tract": tract, "patch": patchName, "filter": filters[0]}
     measCat = butler.get("deepCoadd_meas", dataId) if catalog is None else catalog
     #frame = 60
     #wcs = skymap[tract].getWcs()
@@ -86,12 +87,15 @@ def multiProFit(butler, tract, patchname, filters=None, exposureType=None, catal
 
 
 def main():
-    parser = argparse.ArgumentParser(description='MultiProFit Butler Task running test')
+    parser = argparse.ArgumentParser(description='MultiProFit Butler Task running test',
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     flags = {
         'repo': dict(type=str, nargs='?', default="/datasets/hsc/repo/rerun/RC/w_2019_26/DM-19560/",
                      help="Path to Butler repository to read from"),
-        'inputFilename': dict(type=str, nargs='?', default=None, help="Output catalog filename"),
-        'outputFilename': dict(type=str, nargs='?', default=None, help="Input catalog filename"),
+        'filenameIn': dict(type=str, nargs='?', default=None, help="Input catalog filename"),
+        'filenameOut': dict(type=str, nargs='?', default=None, help="Output catalog filename", kwarg=True),
+        'intervalOutput': dict(type=int, nargs='?', default=100, help="Interval between writing output",
+                               kwarg=True),
         'radec': dict(type=float, nargs=2, default=None, help="RA/dec coordinate of source"),
         'patchName': dict(type=str, nargs='?', default="4,4", help="Butler patch string"),
         'tract': dict(type=int, nargs='?', default=9813, help="Butler tract ID"),
@@ -109,30 +113,34 @@ def main():
                                     help="Set config fitSersicFromCModel flag"),
     }
     kwargs = {}
+
     for key, value in flags.items():
-        if 'help' in value:
-            value['help'] = f"{value['help']} (default: {str(value['default'])})"
         if 'kwarg' in value:
             kwargs[key] = None
             del value['kwarg']
         parser.add_argument('--' + key, **value)
-    args = parser.parse_args()
+    try:
+        args = parser.parse_args()
+    except Exception as e:
+        print(e)
+        parser.print_help()
+        sys.exit(status=1)
     logging.basicConfig(stream=sys.stdout, level=args.loglevel)
     butler = Butler(args.repo)
-    catalog = afwTable.SimpleCatalog.readFits(args.inputFilename) if args.inputFilename is not None else None
+    catalog = afwTable.SimpleCatalog.readFits(args.filenameIn) if args.filenameIn is not None else None
+
     if args.patchName is not None:
-        patchname = args.patchName
+        patchName = args.patchName
     else:
         ra, dec = args.radec
         patch = getPatch(ra, dec, butler)
-        patchname = ','.join([str(x) for x in patch.getIndex()])
+        patchName = ','.join([str(x) for x in patch.getIndex()])
+
     argsvars = vars(args)
     kwargs = {key: argsvars[key] for key in kwargs}
-    catalog, results = multiProFit(
-        butler, args.tract, patchname=patchname, catalog=catalog, filters=args.filters,
+    multiProFit(
+        butler, args.tract, patchName=patchName, catalog=catalog, filters=args.filters,
         idx_begin=args.idx_begin, idx_end=args.idx_end, **kwargs)
-    if args.outputFilename is not None:
-        catalog.writeFits(args.outputFilename)
 
 
 if __name__ == '__main__':

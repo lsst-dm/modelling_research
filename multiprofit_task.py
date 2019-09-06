@@ -25,6 +25,7 @@ class MultiProFitConfig(pexConfig.Config):
     computeMeasModelfitLikelihood = pexConfig.Field(dtype=bool, default=False,
                                                     doc="Whether to compute the log-likelihood of best-fit "
                                                         "meas_modelfit parameters for each model")
+    filenameOut = pexConfig.Field(dtype=str, default=None, doc="Filename for output of FITS table")
     fitCModel = pexConfig.Field(dtype=bool, default=True,
                                 doc="Whether to perform a CModel (linear combo of exponential and "
                                     "deVaucouleurs) fit for each source; necessitates doing exp. + deV. fits")
@@ -43,6 +44,8 @@ class MultiProFitConfig(pexConfig.Config):
     gaussianOrderPsf = pexConfig.Field(dtype=int, default=2, doc="Number of Gaussians components for the PSF")
     gaussianOrderSersic = pexConfig.Field(dtype=int, default=8, doc="Number of Gaussians components for the "
                                                                     "MG Sersic approximation galaxy profile")
+    intervalOutput = pexConfig.Field(dtype=int, default=100, doc="Number of sources to fit before writing "
+                                                                 "output")
     outputChisqred = pexConfig.Field(dtype=bool, default=True, doc="Whether to save the reduced chi^2 of "
                                                                    "each model's best fit")
     outputLogLikelihood = pexConfig.Field(dtype=bool, default=True, doc="Whether to save the log likelihood "
@@ -282,7 +285,7 @@ class MultiProFitTask(pipeBase.Task):
         self.__addExtraField(extra, schema, prefix, 'nEvalGrad', 'number of Jacobian evaluations')
 
     @pipeBase.timeMethod
-    def __fitSource(self, source, noiseReplacers, exposures, logger, printTrace=False, plot=False):
+    def __fitSource(self, source, noiseReplacers, exposures, printTrace=False, plot=False):
         """
         Fit a single deblended source with MultiProFit.
 
@@ -294,8 +297,6 @@ class MultiProFitTask(pipeBase.Task):
             An iterable NoiseReplacers that will insert the source into every exposure
         exposures : `dict` [`str`, `lsst.afw.image.Exposure`]
             A dict of Exposures to fit, keyed by filter name.
-        logger : `logging.Logger`
-            A Logger to log output.
         printTrace : `bool`, optional
             Whether to print the traceback in case of an error; default False.
         plot : `bool`, optional
@@ -329,8 +330,7 @@ class MultiProFitTask(pipeBase.Task):
                                     engine="galsim")
                 exposurePsfs.append((mpfExposure, mpfPsf))
             results = mpfFit.fit_galaxy_exposures(
-                exposurePsfs, exposures.keys(), self.modelSpecs, results=results, loggerPsf=logger,
-                logger=logger)
+                exposurePsfs, exposures.keys(), self.modelSpecs, results=results)
             if plot:
                 for model in results['models'].values():
                     model.evaluate(plot=True)
@@ -639,43 +639,50 @@ class MultiProFitTask(pipeBase.Task):
         addedFields = False
         resultsReturn = None
         indicesFailed = {}
+        toWrite = self.config.filenameOut is not None
+        nFit = 0
+        if idx_end > numSources:
+            idx_end = numSources
 
-        for idx, src in enumerate(sources):
-            if idx_begin <= idx <= idx_end:
-                results, error = self.__fitSource(src, noiseReplacers.values(), exposures, logger,
-                                                  printTrace=printTrace, plot=plot)
-                runtime = self.metadata["__fitSourceEndCpuTime"] - self.metadata["__fitSourceStartCpuTime"]
-                failed = error is not None
-                # Preserve the first successful result to return at the end
-                if resultsReturn is None and not failed:
-                    resultsReturn = results
-                # Setup field names if necessary
-                if not addedFields and not failed:
-                    catalog, fields = self.__getCatalog(filters, results, sources)
-                    for idxFailed, runtime in indicesFailed.items():
-                        catalog[idxFailed][self.failFlagKey] = True
-                        catalog[idxFailed][self.runtimeKey] = runtime
-                    addedFields = True
-                # Fill in field values if successful, or save just the runtime to enter later otherwise
-                if addedFields:
-                    row = catalog[idx]
-                    if not failed:
-                        self.__setRow(filters, results, fields, row, exposures, src, runtime=runtime)
-                    row[self.failFlagKey] = failed
-                elif failed:
-                    indicesFailed[idx] = runtime
-                id_src = src.getId()
-                # Returns the image to pure noise
-                for noiseReplacer in noiseReplacers.values():
-                    noiseReplacer.removeSource(id_src)
-                errorMsg = '' if not failed else f" but got exception {error}"
-                # Log with a priority just above info, since MultiProFit itself will generate a lot of info
-                #  logs per source.
-                logger.log(
-                    21, f"Fit src {idx}/{numSources} id={src['id']} in {runtime:.3f}s "
-                        f"(total time {time.time() - timeInit:.2f}s "
-                        f"process_time {time.process_time() - processTimeInit:.2f}s)"
-                        f"{errorMsg}")
+        for idx in range(np.max([idx_begin, 0]), idx_end):
+            src = sources[idx]
+            results, error = self.__fitSource(src, noiseReplacers.values(), exposures, printTrace=printTrace,
+                                              plot=plot)
+            runtime = self.metadata["__fitSourceEndCpuTime"] - self.metadata["__fitSourceStartCpuTime"]
+            failed = error is not None
+            # Preserve the first successful result to return at the end
+            if resultsReturn is None and not failed:
+                resultsReturn = results
+            # Setup field names if necessary
+            if not addedFields and not failed:
+                catalog, fields = self.__getCatalog(filters, results, sources)
+                for idxFailed, runtime in indicesFailed.items():
+                    catalog[idxFailed][self.failFlagKey] = True
+                    catalog[idxFailed][self.runtimeKey] = runtime
+                addedFields = True
+            # Fill in field values if successful, or save just the runtime to enter later otherwise
+            if addedFields:
+                row = catalog[idx]
+                if not failed:
+                    self.__setRow(filters, results, fields, row, exposures, src, runtime=runtime)
+                row[self.failFlagKey] = failed
+            elif failed:
+                indicesFailed[idx] = runtime
+            id_src = src.getId()
+            # Returns the image to pure noise
+            for noiseReplacer in noiseReplacers.values():
+                noiseReplacer.removeSource(id_src)
+            errorMsg = '' if not failed else f" but got exception {error}"
+            # Log with a priority just above info, since MultiProFit itself will generate a lot of info
+            #  logs per source.
+            logger.log(
+                21, f"Fit src {idx} ({nFit}/{numSources}) id={src['id']} in {runtime:.3f}s "
+                    f"(total time {time.time() - timeInit:.2f}s "
+                    f"process_time {time.process_time() - processTimeInit:.2f}s)"
+                    f"{errorMsg}")
+            nFit += 1
+            if toWrite and addedFields and (nFit % self.config.intervalOutput) == 0:
+                catalog.writeFits(self.config.filenameOut)
         # Return the exposures to their original state
         for noiseReplacer in noiseReplacers.values():
             noiseReplacer.end()
