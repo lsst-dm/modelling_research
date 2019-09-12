@@ -6,7 +6,7 @@ import sys
 import lsst.afw.table as afwTable
 from lsst.daf.persistence import Butler
 from lsst.geom import SpherePoint, degrees
-from multiprofit_task import MultiProFitTask
+from modelling_research.multiprofit_task import MultiProFitTask
 
 
 def getPatch(ra, dec, butler):
@@ -33,7 +33,7 @@ def getPatch(ra, dec, butler):
 
 
 def multiProFit(butler, tract, patchName, filters=None, exposureType=None, catalog=None,
-                idx_begin=0, idx_end=np.Inf, printTrace=False, **kwargs):
+                idx_begin=0, idx_end=np.Inf, plot=False, printTrace=False, **kwargs):
     """Run the MultiProFit task on a range of sources in a region.
 
     Parameters
@@ -54,10 +54,12 @@ def multiProFit(butler, tract, patchName, filters=None, exposureType=None, catal
         The first index (row number) of the catalog to process.
     idx_end : `int`
         The last index (row number) of the catalog to process.
+    plot : `bool`
+        Whether to generate interactive plots for each source.
     printTrace : `bool`
         Whether to print the traceback in case of an error.
     **kwargs
-        Additional keyword arguments to pass to MultiProFitTask.run.
+        Additional keyword arguments to pass to MultiProFitTask.ConfigClass.
 
     Returns
     -------
@@ -82,7 +84,8 @@ def multiProFit(butler, tract, patchName, filters=None, exposureType=None, catal
     coadds = {band: butler.get(exposureType, dataId, filter=band) for band in filters}
     config = MultiProFitTask.ConfigClass(**kwargs)
     task = MultiProFitTask(config=config)
-    catalog, results = task.fit(coadds, measCat, idx_begin=idx_begin, idx_end=idx_end, printTrace=printTrace)
+    catalog, results = task.fit(coadds, measCat, idx_begin=idx_begin, idx_end=idx_end,
+                                printTrace=printTrace, plot=plot)
     return catalog, results
 
 
@@ -102,6 +105,7 @@ def main():
         'filters': dict(type=str, nargs='*', default=['HSC-I'], help="List of bandpass filters"),
         'idx_begin': dict(type=int, nargs='?', default=0, help="Initial row index to fit"),
         'idx_end': dict(type=int, nargs='?', default=np.Inf, help="Final row index to fit"),
+        'plot': dict(type=bool, nargs='?', default=False, help="Plot each source fit"),
         'printTrace': dict(type=bool, nargs='?', default=False, help="Print traceback for errors",
                            kwarg=True),
         'loglevel': {'type': int, 'nargs': '?', 'default': 21, 'help': 'logging.Logger default level'},
@@ -140,7 +144,7 @@ def main():
     kwargs = {key: argsvars[key] for key in kwargs}
     multiProFit(
         butler, args.tract, patchName=patchName, catalog=catalog, filters=args.filters,
-        idx_begin=args.idx_begin, idx_end=args.idx_end, **kwargs)
+        idx_begin=args.idx_begin, idx_end=args.idx_end, plot=args.plot, **kwargs)
 
 
 if __name__ == '__main__':

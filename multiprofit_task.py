@@ -330,10 +330,9 @@ class MultiProFitTask(pipeBase.Task):
                                     engine="galsim")
                 exposurePsfs.append((mpfExposure, mpfPsf))
             results = mpfFit.fit_galaxy_exposures(
-                exposurePsfs, exposures.keys(), self.modelSpecs, results=results)
+                exposurePsfs, exposures.keys(), self.modelSpecs, results=results, plot=plot)
             if plot:
-                for model in results['models'].values():
-                    model.evaluate(plot=True)
+                plt.show()
             return results, None
         except Exception as e:
             if plot:
