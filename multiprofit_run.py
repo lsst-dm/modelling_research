@@ -95,7 +95,7 @@ def main():
     parser = argparse.ArgumentParser(description='MultiProFit Butler Task running test',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     flags = {
-        'repo': dict(type=str, nargs='?', default="/datasets/hsc/repo/rerun/RC/w_2019_26/DM-19560/",
+        'repo': dict(type=str, nargs='?', default="/datasets/hsc/repo/rerun/RC/w_2019_38/DM-21386/",
                      help="Path to Butler repository to read from"),
         'filenameIn': dict(type=str, nargs='?', default=None, help="Input catalog filename"),
         'filenameOut': dict(type=str, nargs='?', default=None, help="Output catalog filename", kwarg=True),
