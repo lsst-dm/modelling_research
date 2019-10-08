@@ -1,4 +1,4 @@
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 import logging
 import lsst.afw.table as afwTable
 from lsst.meas.base.measurementInvestigationLib import rebuildNoiseReplacer
@@ -195,6 +195,17 @@ class MultiProFitTask(pipeBase.Task):
     ConfigClass = MultiProFitConfig
     _DefaultName = "multiProFit"
     meas_modelfit_models = ("dev", "exp", "cmodel")
+    ParamDesc = namedtuple('ParamInfo', ['doc', 'unit'])
+    params_multiprofit = {
+        'cenx': ParamDesc('Centroid x coordinate', 'pixel'),
+        'ceny': ParamDesc('Centroid y coordinate', 'pixel'),
+        'flux': ParamDesc('Total flux', 'Jy'),
+        'nser': ParamDesc('Sersic index', ''),
+        'rho': ParamDesc('Ellipse correlation coefficient', ''),
+        'sigma_x': ParamDesc('Ellipse x half-light distance', 'pixel'),
+        'sigma_y': ParamDesc('Ellipse y half-light distance', 'pixel'),
+        'fluxFrac': ParamDesc('Flux fraction', ''),
+    }
 
     def __init__(self, modelSpecs=None, **kwargs):
         """Initialize the task with model specifications.
@@ -229,14 +240,14 @@ class MultiProFitTask(pipeBase.Task):
         mapper = afwTable.SchemaMapper(schema, True)
         mapper.addMinimalSchema(schema, True)
         mapper.editOutputSchema().disconnectAliases()
-        self.runtimeKey = mapper.editOutputSchema().addField('multiprofit_time_total', type=np.float32,
+        self.runtimeKey = mapper.editOutputSchema().addField('multiprofit_time_total', type=np.float64,
                                                              doc='runtime in ms')
         self.failFlagKey = mapper.editOutputSchema().addField('multiprofit_fail_flag', type="Flag",
                                                               doc='generic MultiProFit failure flag')
         return mapper
 
     @staticmethod
-    def __addExtraField(extra, schema, prefix, name, doc):
+    def __addExtraField(extra, schema, prefix, name, doc, unit=None):
         """Add an extra field to a schema and store a reference to it by its short name.
 
         Parameters
@@ -251,13 +262,17 @@ class MultiProFitTask(pipeBase.Task):
             A short name for the field, which serves as the key for `extra`.
         doc : `str`
             A brief documentation string for the field.
+        unit : `str`
+            A string convertible to an astropy unit.
         Returns
         -------
         No return. The new field is added to `schema` and a reference to it is stored in `extra`.
         """
         if doc is None:
             doc = ''
-        extra[name] = schema.addField(joinFilter('_', [prefix, name]), type=np.float32, doc=doc)
+        if unit is None:
+            unit = ''
+        extra[name] = schema.addField(joinFilter('_', [prefix, name]), type=np.float64, doc=doc, units=unit)
 
     def __addExtraFields(self, extra, schema, prefix=None):
         """Add all extra fields for a given model based on `self.config` settings.
@@ -280,7 +295,7 @@ class MultiProFitTask(pipeBase.Task):
         if self.config.outputLogLikelihood:
             self.__addExtraField(extra, schema, prefix, 'loglike', 'log-likelihood of the best fit')
         if self.config.outputRuntime:
-            self.__addExtraField(extra, schema, prefix, 'time', 'model runtime excluding setup')
+            self.__addExtraField(extra, schema, prefix, 'time', 'model runtime excluding setup', 's')
         self.__addExtraField(extra, schema, prefix, 'nEvalFunc', 'number of objective function evaluations')
         self.__addExtraField(extra, schema, prefix, 'nEvalGrad', 'number of Jacobian evaluations')
 
@@ -377,8 +392,10 @@ class MultiProFitTask(pipeBase.Task):
                 keyList = []
                 for nameParam in fit['name_params']:
                     namesAdded[nameParam] += 1
-                    fullname = f'{prefix}_{nameParam}_{namesAdded[nameParam]}'
-                    key = schema.addField(fullname, type=np.float32)
+                    fullname, doc, unit = self.__getParamFieldInfo(
+                        f'{nameParam}{"Frac" if nameParam is "flux" else ""}',
+                        f'{prefix}_c{namesAdded[nameParam]}_')
+                    key = schema.addField(fullname, doc=doc, units=unit, type=np.float64)
                     keyList.append(key)
                 fields["psf"][band][name] = defaultdictNested()
                 self.__addExtraFields(fields["psf_extra"][band][name], schema, prefix)
@@ -389,13 +406,14 @@ class MultiProFitTask(pipeBase.Task):
             fit = result['fits'][0]
             namesAdded = defaultdict(int)
             keyList = []
-            bands = [x.band if hasattr(x, 'band') else '' for x, fixed in zip(
+            bands = [f'{x.band}_' if hasattr(x, 'band') else '' for x, fixed in zip(
                 fit['params'], fit['params_allfixed']) if not fixed]
             for nameParam, postfix in zip(fit['name_params'], bands):
-                nameParam += postfix
-                namesAdded[nameParam] += 1
-                fullname = f'{prefix}_{nameParam}_{namesAdded[nameParam]}'
-                key = schema.addField(fullname, type=np.float32)
+                nameParamFull = f'{nameParam}{postfix}'
+                namesAdded[nameParamFull] += 1
+                fullname, doc, unit = self.__getParamFieldInfo(
+                    nameParam, f'{prefix}_c{namesAdded[nameParamFull]}_{postfix}')
+                key = schema.addField(fullname, doc=doc, units=unit, type=np.float64)
                 keyList.append(key)
             fields["base"][name] = keyList
             fields["extra"][name] = defaultdictNested()
@@ -408,6 +426,12 @@ class MultiProFitTask(pipeBase.Task):
         catalog = afwTable.SourceCatalog(schema)
         catalog.extend(sources, mapper=mapper)
         return catalog, fields
+
+    @staticmethod
+    def __getParamFieldInfo(nameParam, prefix=None):
+        name = f'{prefix if prefix else ""}{"instFlux" if nameParam is "flux" else nameParam}'
+        doc, unit = MultiProFitTask.params_multiprofit.get(nameParam, ('', ''))
+        return name, doc, unit
 
     @staticmethod
     def __setExtraField(extra, row, fit, name, nameFit=None, index=None):
