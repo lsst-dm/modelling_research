@@ -8,22 +8,22 @@ def writeslurm(filename, cmds, sbatches, header='#!/bin/bash'):
         f.writelines(cmd + os.linesep for cmd in cmds)
 
 
-def _getmultiprofit(namefile, catalogpath, catalogfile, idx, idxend, src, hst2hscmodel, modelspecfile,
-                    hscbands='HSC-I', namelog=None):
+def _getmultiprofit(namefile, catalogpath, catalogfile, idx, idxend, src, model_name_hst2hsc, modelspecfile,
+                    bands_hsc='HSC-I', namelog=None):
     if namelog is None:
         namelog = namefile
     return 'python ${MULTIPROFIT_PATH}/examples/fitcosmos.py --catalogpath ' + catalogpath + \
-           ' --catalogfile ' + catalogfile + ' --indices {},{} --fit{} 1 --hst2hscmodel {} '.format(
-                idx, idxend, src, hst2hscmodel) + \
+           ' --catalogfile ' + catalogfile + ' --indices {},{} --fit{} 1 --model_name_hst2hsc {} '.format(
+                idx, idxend, src, model_name_hst2hsc) + \
            '--modelspecfile {} --file {}_pickle.dat '.format(modelspecfile, namefile) + \
-           '--hscbands {} --redo 0 >> {}.log 2>>{}.err'.format(hscbands, namelog, namelog)
+           '--bands_hsc {} --redo 0 >> {}.log 2>>{}.err'.format(bands_hsc, namelog, namelog)
 
 
-def writeslurmcosmos(path, src='hst', filenamesrc=None, start=0, end=2000, num=50,
+def writeslurmcosmos(path, src='hst', filenamesrc=None, start=0, end=2400, num=50,
                      catalogpath='/project/dtaranu/cosmos/hst/COSMOS_25.2_training_sample/',
-                     catalogfile='real_galaxy_catalog_25.2.fits', hst2hscmodel='mg8serbpx',
+                     catalogfile='real_galaxy_catalog_25.2.fits', model_name_hst2hsc='mg8sermpx',
                      modelspecfile='${MULTIPROFIT_PATH}/examples/modelspecs-all-psfg2.csv',
-                     prefix='cosmos_25.2_fits_', postfix='_psfg2', hscbands='HSC-I',
+                     prefix='cosmos_25.2_fits_', postfix='_psfg2', bands_hsc='HSC-I',
                      time='48:00:00', queue='normal', multiprogcpus=None):
     if filenamesrc is None:
         filenamesrc = src
@@ -39,10 +39,9 @@ def writeslurmcosmos(path, src='hst', filenamesrc=None, start=0, end=2000, num=5
         multiprogname = prefix + src + '_' + str(start) + '-' + str(end-1) + postfix + '.bash'
         with open(os.path.join(path, multiprogname), 'w') as f:
             f.write(_getmultiprofit(
-                prefix + filenamesrc + '_${1}-${2}' + postfix, catalogpath, catalogfile, '${1}', '${2}', src,
-                hst2hscmodel, modelspecfile, hscbands=hscbands,
-                namelog=prefix + src + '_${1}-${2}' + postfix) +
-                    os.linesep
+                prefix + filenamesrc + '_${1}-${2}' + postfix, catalogpath, catalogfile, '${1}', '${2}',
+                src, model_name_hst2hsc, modelspecfile, bands_hsc=bands_hsc,
+                namelog=prefix + src + '_${1}-${2}' + postfix) + os.linesep
             )
     else:
         tasks = 1
@@ -71,7 +70,7 @@ def writeslurmcosmos(path, src='hst', filenamesrc=None, start=0, end=2000, num=5
 
         else:
             cmds[-1] = _getmultiprofit(
-                namefile, catalogpath, catalogfile, idx, idxend, src, hst2hscmodel, modelspecfile,
-                hscbands=hscbands, namelog=namefull)
+                namefile, catalogpath, catalogfile, idx, idxend, src, model_name_hst2hsc, modelspecfile,
+                bands_hsc=bands_hsc, namelog=namefull)
         writeslurm(file, cmds, sbatches)
         idx = idxend + 1
