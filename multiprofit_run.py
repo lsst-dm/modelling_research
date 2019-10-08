@@ -9,8 +9,8 @@ from lsst.geom import SpherePoint, degrees
 from modelling_research.multiprofit_task import MultiProFitTask
 
 
-def getPatch(ra, dec, butler):
-    """Get the patch that contains a given sky coordinate.
+def get_patch_tract(ra, dec, butler):
+    """Get the patch and tract that contains a given sky coordinate.
 
     Parameters
     ----------
@@ -23,13 +23,15 @@ def getPatch(ra, dec, butler):
 
     Returns
     -------
+    tract : `int`
+        The tract ID.
     patch : `tuple` [`int`, `int`]
         The patch IDs containing the coordinates.
     """
-    skymap = butler.get("deepCoadd_skyMap", dataId={"tract": tract})
+    skymap = butler.get("deepCoadd_skyMap")
     spherePoint = SpherePoint(ra, dec, degrees)
     tract = skymap.findTract(spherePoint).getId()
-    return skymap[tract].findPatch(spherePoint)
+    return tract, skymap[tract].findPatch(spherePoint)
 
 
 def multiProFit(butler, tract, patchName, filters=None, exposureType=None, catalog=None,
@@ -133,11 +135,11 @@ def main():
     butler = Butler(args.repo)
     catalog = SourceCatalog.readFits(args.filenameIn) if args.filenameIn is not None else None
 
-    if args.patchName is not None:
+    if args.patchName is not None and args.tract is not None:
         patchName = args.patchName
     else:
         ra, dec = args.radec
-        patch = getPatch(ra, dec, butler)
+        tract, patch = get_patch_tract(ra, dec, butler)
         patchName = ','.join([str(x) for x in patch.getIndex()])
 
     argsvars = vars(args)
