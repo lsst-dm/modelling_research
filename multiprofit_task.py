@@ -32,6 +32,8 @@ class MultiProFitConfig(pexConfig.Config):
     fitCModelExp = pexConfig.Field(dtype=bool, default=False,
                                    doc="Whether to perform an exponential fit with a fixed center (as "
                                        "CModel does in meas_modelfit) for each source")
+    fitGaussian = pexConfig.Field(dtype=bool, default=False,
+                                  doc="Whether to perform a single Gaussian fit without PSF convolution")
     fitSersic = pexConfig.Field(dtype=bool, default=True, doc="Whether to perform a MG Sersic approximation "
                                                               "profile fit for each source")
     fitSersicFromCModel = pexConfig.Field(dtype=bool, default=False,
@@ -223,6 +225,8 @@ class MultiProFitTask(pipeBase.Task):
             modelSpecs = self.config.getModelSpecs()
         self.modelSpecs = modelSpecs
         self.schema = None
+        self.modeller = mpfObj.Modeller(None, 'scipy')
+        self.models = {}
 
     def _getMapper(self, schema):
         """Return a suitably configured schema mapper.
@@ -299,10 +303,54 @@ class MultiProFitTask(pipeBase.Task):
         self.__addExtraField(extra, schema, prefix, 'nEvalFunc', 'number of objective function evaluations')
         self.__addExtraField(extra, schema, prefix, 'nEvalGrad', 'number of Jacobian evaluations')
 
+    @staticmethod
+    def __fitModel(model, exposurePsfs, modeller=None, cenx=None, ceny=None, resetPsfs=False):
+        """Fit a single model of a source to a number of exposures, initializing from the estimated moments.
+
+        Parameters
+        ----------
+        model : `multiprofit.objects.Model`
+            A MultiProFit model to fit.
+        exposurePsfs : `iterable` [(`multiprofit.objects.Exposure`, `multiprofit.objects.PSF`)]
+            An iterable of exposure-PSF pairs to fit.
+        modeller : `multiprofit.objects.Modeller`, optional
+            A MultiProFit modeller to use to fit the model; default creates a new modeller.
+        cenx : `float`, optional
+            The x coordinate of the source within the exposures.
+        ceny : `float`, optional
+            The y coordinate of the source within the exposures.
+        resetPsfs : `bool`, optional
+            Whether to set the PSFs to None and thus fit a model with no PSF convolution.
+
+        Returns
+        -------
+        results : `dict`
+            The results returned by multiprofit.fitutils.fit_model, if no error occurs.
+        """
+        # Set the PSFs to None in each exposure to skip convolution
+        exposures_no_psf = {}
+        for exposure, _ in exposurePsfs:
+            if resetPsfs:
+                exposure.psf = None
+            exposures_no_psf[exposure.band] = [exposure]
+        model.data.exposures = exposures_no_psf
+        params_free = model.get_parameters(fixed=False)
+        fluxes, moments_by_name, values_min, values_max, num_pix_img = mpfFit.get_init_from_moments(
+            (exposure for exposure, _ in exposurePsfs), cenx=cenx, ceny=ceny
+        )
+        for param in params_free:
+            value = fluxes.get(param.band) if isinstance(param, mpfObj.FluxParameter) else \
+                moments_by_name.get(param.name)
+            if param.name.startswith('cen'):
+                param.limits.upper = exposurePsfs[0][0].image.shape[param.name[-1] == 'y']
+            if value is not None:
+                param.set_value(value, transformed=False)
+        result, _ = mpfFit.fit_model(model=model, modeller=modeller)
+        return result
+
     @pipeBase.timeMethod
     def __fitSource(self, source, noiseReplacers, exposures, printTrace=False, plot=False):
-        """
-        Fit a single deblended source with MultiProFit.
+        """Fit a single deblended source with MultiProFit.
 
         Parameters
         ----------
@@ -339,13 +387,22 @@ class MultiProFitTask(pipeBase.Task):
                 # TODO: Check total flux first
                 mpfExposure = mpfObj.Exposure(
                     band=band, image=np.float64(exposure.image.subset(bbox).array),
-                    error_inverse=1 / np.float64(exposure.variance.subset(bbox).array),
+                    error_inverse=1. / np.float64(exposure.variance.subset(bbox).array),
                     is_error_sigma=False)
                 mpfPsf = mpfObj.PSF(band, image=exposure.getPsf().computeKernelImage(center),
                                     engine="galsim")
                 exposurePsfs.append((mpfExposure, mpfPsf))
             results = mpfFit.fit_galaxy_exposures(
                 exposurePsfs, exposures.keys(), self.modelSpecs, results=results, plot=plot)
+            if self.config.fitGaussian:
+                name_model = 'gausspx_no_psf'
+                model = self.models[name_model]
+                self.modeller.model = model
+                cenx, ceny = source.getCentroid() - bbox.getBegin()
+                result = self.__fitModel(model, exposurePsfs, cenx=cenx, ceny=ceny, modeller=self.modeller,
+                                         resetPsfs=True)
+                results['fits']['galsim'][name_model] = {'fits': [result], 'modeltype': 'gaussian:1'}
+                results['models']['gaussian:1'] = model
             if plot:
                 plt.show()
             return results, None
@@ -666,6 +723,13 @@ class MultiProFitTask(pipeBase.Task):
         nFit = 0
         if idx_end > numSources:
             idx_end = numSources
+
+        if self.config.fitGaussian:
+            self.models['gausspx_no_psf'] = mpfFit.get_model(
+                {band: 1 for band in filters}, "gaussian:1", (1, 1), slopes=[0.5], engine='galsim',
+                engineopts={'use_fast_gauss': True, 'drawmethod': mpfObj.draw_method_pixel['galsim']},
+                name_model='gausspx_no_psf'
+            )
 
         for idx in range(np.max([idx_begin, 0]), idx_end):
             src = sources[idx]
