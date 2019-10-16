@@ -6,7 +6,8 @@ import sys
 from lsst.afw.table import SourceCatalog
 from lsst.daf.persistence import Butler
 from lsst.geom import SpherePoint, degrees
-from modelling_research.multiprofit_task import MultiProFitTask
+from modelling_research.multiprofit_task import MultiProFitConfig, MultiProFitTask
+from multiprofit.utils import str2bool
 
 
 def get_patch_tract(ra, dec, butler):
@@ -99,32 +100,28 @@ def main():
                      help="Path to Butler repository to read from"),
         'filenameIn': dict(type=str, nargs='?', default=None, help="Input catalog filename"),
         'filenameOut': dict(type=str, nargs='?', default=None, help="Output catalog filename", kwarg=True),
-        'intervalOutput': dict(type=int, nargs='?', default=100, help="Interval between writing output",
-                               kwarg=True),
         'radec': dict(type=float, nargs=2, default=None, help="RA/dec coordinate of source"),
         'patchName': dict(type=str, nargs='?', default="4,4", help="Butler patch string"),
         'tract': dict(type=int, nargs='?', default=9813, help="Butler tract ID"),
         'filters': dict(type=str, nargs='*', default=['HSC-I'], help="List of bandpass filters"),
         'idx_begin': dict(type=int, nargs='?', default=0, help="Initial row index to fit"),
         'idx_end': dict(type=int, nargs='?', default=np.Inf, help="Final row index to fit"),
-        'plot': dict(type=bool, nargs='?', default=False, help="Plot each source fit"),
-        'printTrace': dict(type=bool, nargs='?', default=False, help="Print traceback for errors",
-                           kwarg=True),
+        'plot': dict(action='store_true', default=False, help="Plot each source fit"),
+        'printTrace': dict(action='store_true', default=False, help="Print traceback for errors", kwarg=True),
         'loglevel': {'type': int, 'nargs': '?', 'default': 21, 'help': 'logging.Logger default level'},
-        'computeMeasModelfitLikelihood': dict(type=bool, nargs='?', default=False, kwarg=True,
-                                              help="Set config computeMeasModelfitLikelihood flag", ),
-        'fitCModelExp': dict(type=bool, nargs='?', default=False, kwarg=True,
-                             help="Set config fitCModelExp flag"),
-        'fitSersicFromCModel': dict(type=bool, nargs='?', default=False, kwarg=True,
-                                    help="Set config fitSersicFromCModel flag"),
     }
-    kwargs = {}
+    for param, field in MultiProFitConfig._fields.items():
+        type_default = field.dtype
+        flag = dict(type=type_default if type_default is not bool else str2bool, nargs='?',
+                    default=field.default, help=f'Value for MultiProFitConfig.{param}', kwarg=True)
+        flags[param] = flag
+    kwargs = set()
 
     for key, value in flags.items():
         if 'kwarg' in value:
-            kwargs[key] = None
+            kwargs.add(key)
             del value['kwarg']
-        parser.add_argument('--' + key, **value)
+        parser.add_argument(f'--{key}', **value)
     try:
         args = parser.parse_args()
     except Exception as e:
