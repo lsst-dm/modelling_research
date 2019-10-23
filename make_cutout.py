@@ -1,7 +1,9 @@
+import astropy.io.fits as fits
+import lsst.afw.geom as afwGeom
+import matplotlib.pyplot as plt
 import numpy as np
 import os
-
-import lsst.afw.geom as afwGeom
+from scipy.ndimage import gaussian_filter
 
 # Mostly shamelessly stolen from Sophie Reed (thanks)
 
@@ -324,10 +326,19 @@ def make_cutout(filename, RA, DEC, width, nhdu=0, w_units="arcsecs", verbose=Fal
     return hdulist, im_status
 
 
-def cutout_HST(RA, DEC, sigma=0, width=30.0, return_data=False,
-               path=os.path.join(os.path.sep, 'project', 'sr525', 'hstCosmosImages'),
-               filecorner=None):
+def find_boxes_containing(xys, corners, first=True):
+    found = set()
+    for idx, corner in enumerate(corners):
+        for x, y in xys:
+            if corner[0] < x < corner[1] and corner[2] < y < corner[3]:
+                if first:
+                    return idx
+                found.add(idx)
+                break
+    return None if first else found
 
+
+def cutout_HST(RA, DEC, sigma=0, width=30.0, return_data=False, path=None, path_corners=None):
     """
     Makes cutouts from the HST image of the COSMOS field
     Width is the full width and needs to be given in arcsecs
@@ -336,41 +347,44 @@ def cutout_HST(RA, DEC, sigma=0, width=30.0, return_data=False,
     sigma applies a gaussian filter
     """
 
-    import astropy.io.fits as fits
-    import matplotlib.pyplot as plt
-    from scipy.ndimage import gaussian_filter
-
-    datas = []
-    if filecorner is None:
-        filecorner = os.path.join(path, 'tiles', 'corners.txt')
-    with open(filecorner, 'r') as f:
+    if path is None:
+        path = os.path.join(os.path.sep, 'project', 'sr525', 'hstCosmosImages')
+    if path_corners is None:
+        path_corners = os.path.join(path, 'tiles', 'corners.txt')
+    corners = []
+    filenames_image = []
+    filenames_weight = []
+    idx_corners = [2, 0, 1, 3]
+    with open(path_corners, 'r') as f:
         for line in f:
-            itemsline = line.split(',')
-            ra_min = float(itemsline[2])
-            ra_max = float(itemsline[0])
-            dec_min = float(itemsline[1])
-            dec_max = float(itemsline[3])
-            filename = os.path.join(path, itemsline[4][38:])
-            if ra_min < RA < ra_max and dec_min < DEC < dec_max:
-                print(filename)
-                with fits.open(filename[:-1]) as h:
-                    hdulist, im_status = make_cutout(h, RA, DEC, width, nhdu=0)
-                    im = hdulist[1].data
-                    vmin, vmax = cutout_scale(im)
-                    if sigma > 0:
-                        im = gaussian_filter(im, sigma)
-                    if not return_data:
-                        fig = plt.figure()
-                        ax = fig.add_subplot(111)
-                        ax.axes.get_xaxis().set_visible(False)
-                        ax.axes.get_yaxis().set_visible(False)
-                        ax.imshow(im, vmax=vmax, vmin=vmin)
-                        fig = plt.gcf()
-                        fig.set_size_inches(2.5, 2.5)
+            items_line = line.split(',')
+            corners.append([float(items_line[idx]) for idx in idx_corners])
+            filename = os.path.join(path, items_line[4][38:])[:-1]
+            filenames_image.append(filename)
+            filenames_weight.append(f'{filename[:-8]}wht.fits')
+    ra_decs = [(RA, DEC)] if np.isscalar(RA) and np.isscalar(DEC) else [(x, y) for x, y in zip(RA, DEC)]
+    return_headers = width is None and return_data
+    boxes = find_boxes_containing(ra_decs, corners, first=not return_headers)
+    if return_headers:
+        return [[fits.open(f[box])[0] for f in (filenames_image, filenames_weight)] for box in boxes]
+    if not boxes:
+        return None
+    with fits.open(filenames_image[boxes][:-1]) as h:
+        hdulist, im_status = make_cutout(h, RA, DEC, width, nhdu=0)
+        im = hdulist[1].data
+        vmin, vmax = cutout_scale(im)
+        if sigma > 0:
+            im = gaussian_filter(im, sigma)
+        if not return_data:
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+            ax.axes.get_xaxis().set_visible(False)
+            ax.axes.get_yaxis().set_visible(False)
+            ax.imshow(im, vmax=vmax, vmin=vmin)
+            fig = plt.gcf()
+            fig.set_size_inches(2.5, 2.5)
 
-                    if return_data:
-                        datas.append((hdulist, vmin, vmax))
-                        return datas
-                    else:
-                        return fig
-    return None
+        if return_data:
+            return [(hdulist, vmin, vmax)]
+        else:
+            return fig

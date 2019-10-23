@@ -1,11 +1,14 @@
+from astropy.wcs import WCS
 from collections import defaultdict, namedtuple
 import logging
 import lsst.afw.table as afwTable
+from lsst.geom import Point2D
 from lsst.meas.base.measurementInvestigationLib import rebuildNoiseReplacer
 from lsst.meas.modelfit.display import buildCModelImages
 from lsst.meas.modelfit.cmodel.cmodelContinued import CModelConfig
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
+from .make_cutout import cutout_HST
 import matplotlib.pyplot as plt
 import multiprofit.fitutils as mpfFit
 import multiprofit.objects as mpfObj
@@ -34,6 +37,8 @@ class MultiProFitConfig(pexConfig.Config):
                                        "CModel does in meas_modelfit) for each source")
     fitGaussian = pexConfig.Field(dtype=bool, default=False,
                                   doc="Whether to perform a single Gaussian fit without PSF convolution")
+    fitHstCosmos = pexConfig.Field(dtype=bool, default=False,
+                                   doc="Whether to fit COSMOS HST F814W images instead of repo images")
     fitSersic = pexConfig.Field(dtype=bool, default=True, doc="Whether to perform a MG Sersic approximation "
                                                               "profile fit for each source")
     fitSersicFromCModel = pexConfig.Field(dtype=bool, default=False,
@@ -349,17 +354,18 @@ class MultiProFitTask(pipeBase.Task):
         return result
 
     @pipeBase.timeMethod
-    def __fitSource(self, source, noiseReplacers, exposures, printTrace=False, plot=False):
+    def __fitSource(self, source, exposures, extras, printTrace=False, plot=False):
         """Fit a single deblended source with MultiProFit.
 
         Parameters
         ----------
         source : `lsst.afw.table.SourceRecord`
             A deblended source to fit.
-        noiseReplacers : iterable of `lsst.meas.base.NoiseReplacer`
-            An iterable NoiseReplacers that will insert the source into every exposure
         exposures : `dict` [`str`, `lsst.afw.image.Exposure`]
             A dict of Exposures to fit, keyed by filter name.
+        extras : iterable of `lsst.meas.base.NoiseReplacer` or `multiprofit.object.Exposure`
+            An iterable of NoiseReplacers that will insert the source into every exposure, or a tuple of
+            HST exposures if fitting HST data.
         printTrace : `bool`, optional
             Whether to print the traceback in case of an error; default False.
         plot : `bool`, optional
@@ -380,25 +386,30 @@ class MultiProFitTask(pipeBase.Task):
             # peaks = foot.getPeaks()
             # nPeaks = len(peaks)
             # isSingle = nPeaks == 1
-            for noiseReplacer in noiseReplacers:
-                noiseReplacer.insertSource(source.getId())
             exposurePsfs = []
-            for band, exposure in exposures.items():
-                # TODO: Check total flux first
-                mpfExposure = mpfObj.Exposure(
-                    band=band, image=np.float64(exposure.image.subset(bbox).array),
-                    error_inverse=1. / np.float64(exposure.variance.subset(bbox).array),
-                    is_error_sigma=False)
-                mpfPsf = mpfObj.PSF(band, image=exposure.getPsf().computeKernelImage(center),
-                                    engine="galsim")
-                exposurePsfs.append((mpfExposure, mpfPsf))
+            # TODO: Check total flux first
+            if self.config.fitHstCosmos:
+                wcs_src = next(iter(exposures.values())).getWcs()
+                exposure, cen_hst = self._getCutoutHst(source, wcs_src, extras)
+                exposurePsfs.append((exposure, None))
+            else:
+                for noiseReplacer, (band, exposure) in zip(extras, exposures.items()):
+                    noiseReplacer.insertSource(source.getId())
+                    exposurePsfs.append((
+                        mpfObj.Exposure(
+                            band=band, image=np.float64(exposure.image.subset(bbox).array),
+                            error_inverse=1. / np.float64(exposure.variance.subset(bbox).array),
+                            is_error_sigma=False),
+                        mpfObj.PSF(band, image=exposure.getPsf().computeKernelImage(center), engine="galsim")
+                    ))
+            bands = [item[0].band for item in exposurePsfs]
             results = mpfFit.fit_galaxy_exposures(
-                exposurePsfs, exposures.keys(), self.modelSpecs, results=results, plot=plot)
+                exposurePsfs, bands, self.modelSpecs, results=results, plot=plot)
             if self.config.fitGaussian:
                 name_model = 'gausspx_no_psf'
                 model = self.models[name_model]
                 self.modeller.model = model
-                cenx, ceny = source.getCentroid() - bbox.getBegin()
+                cenx, ceny = cen_hst if self.config.fitHstCosmos else source.getCentroid() - bbox.getBegin()
                 result = self.__fitModel(model, exposurePsfs, cenx=cenx, ceny=ceny, modeller=self.modeller,
                                          resetPsfs=True)
                 results['fits']['galsim'][name_model] = {'fits': [result], 'modeltype': 'gaussian:1'}
@@ -483,6 +494,65 @@ class MultiProFitTask(pipeBase.Task):
         catalog = afwTable.SourceCatalog(schema)
         catalog.extend(sources, mapper=mapper)
         return catalog, fields
+
+    @staticmethod
+    def __getCutoutCornersHst(exposure):
+        wcs_exp = exposure.getWcs()
+        ra_corner = []
+        dec_corner = []
+        for corner in exposure.getBBox().getCorners():
+            ra, dec = wcs_exp.pixelToSky(Point2D(corner))
+            ra_corner.append(ra.asDegrees())
+            dec_corner.append(dec.asDegrees())
+        return ra_corner, dec_corner
+
+    @staticmethod
+    def _getCutoutHst(src, wcs_src, exposures_hst):
+        pixel_src = Point2D([src[f'slot_Centroid_{ax}'] for ax in ['x', 'y']])
+        cen_src = [x.asDegrees() for x in wcs_src.pixelToSky(pixel_src)]
+        bbox = src.getFootprint().getBBox()
+        corners_src = wcs_src.pixelToSky([Point2D(x) for x in (bbox.getMin(), bbox.getMax())])
+        corners_src = [[x.asDegrees() for x in y] for y in corners_src]
+        for exposure in exposures_hst:
+            wcs_hst = exposure.meta['wcs']
+            array_shape = wcs_hst.array_shape
+            bbox_hst = []
+            for corner in corners_src:
+                pixel_hst = wcs_hst.world_to_array_index_values([corner])[0]
+                # TODO: Verify that axes are in the correct order
+                if 0 < pixel_hst[0] < array_shape[0] and 0 < pixel_hst[1] < array_shape[1]:
+                    bbox_hst.append(pixel_hst)
+                else:
+                    break
+            if len(bbox_hst) == 2:
+                break
+        if len(bbox_hst) != 2:
+            raise RuntimeError(f"Couldn't get cutout for source {src}")
+        cutout_hst, cutout_hst_weight = [
+            np.float64(img[bbox_hst[0][1]:bbox_hst[1][1], bbox_hst[0][0]:bbox_hst[1][0]])
+            for img in [exposure.image, exposure.get_var_inverse()]
+        ]
+        cen_hst = wcs_hst.world_to_array_index_values([cen_src])[0] - bbox_hst[0]
+        bg_hst = cutout_hst < 0
+        var_hst = np.mean(cutout_hst[bg_hst]**2)
+        error_inverse = cutout_hst_weight / (var_hst * np.median(cutout_hst_weight[bg_hst]))
+        exposure_cutout = mpfObj.Exposure(
+            band=exposure.band, image=cutout_hst, error_inverse=error_inverse, is_error_sigma=False)
+        exposure_cutout.meta['wcs'] = wcs_hst
+        return exposure_cutout, cen_hst
+
+    @staticmethod
+    def _getExposuresHst(exposure):
+        ra_corner, dec_corner = __class__.__getCutoutCornersHst(exposure)
+        exposures_hst = cutout_HST(ra_corner, dec_corner, width=None, return_data=True)
+        exposures = []
+        for image, error_inverse in exposures_hst:
+            exposure = mpfObj.Exposure(
+                image=image.data, error_inverse=error_inverse.data, is_error_sigma=False, psf=None,
+                band='F814W')
+            exposure.meta['wcs'] = WCS(image)
+            exposures.append(exposure)
+        return exposures
 
     @staticmethod
     def __getParamFieldInfo(nameParam, prefix=None):
@@ -595,15 +665,17 @@ class MultiProFitTask(pipeBase.Task):
         -------
         None
         """
-        for idxBand, band in enumerate(filters):
-            resultsPsf = results['psfs'][idxBand]['galsim']
-            for name, fit in resultsPsf.items():
-                fit = fit['fit']
-                values = [x for x, fixed in zip(fit['params_bestall'], fit['params_allfixed'])
-                          if not fixed]
-                for value, key in zip(values, fieldsBase[band][name]):
-                    row[key] = value
-                self.__setExtraFields(fieldsExtra[band][name], row, fit)
+        results_psfs = results.get('psfs', None)
+        if results_psfs:
+            for idxBand, band in enumerate(filters):
+                resultsPsf = results_psfs[idxBand]['galsim']
+                for name, fit in resultsPsf.items():
+                    fit = fit['fit']
+                    values = [x for x, fixed in zip(fit['params_bestall'], fit['params_allfixed'])
+                              if not fixed]
+                    for value, key in zip(values, fieldsBase[band][name]):
+                        row[key] = value
+                    self.__setExtraFields(fieldsExtra[band][name], row, fit)
 
     def __setFieldsMeasmodel(self, exposures, model, source, fieldsMeasmodel, row):
         """Set fields for a source's meas_modelfit-derived fields, including likelihoods for the
@@ -710,10 +782,15 @@ class MultiProFitTask(pipeBase.Task):
         if logger is None:
             logger = logging.getLogger(__name__)
         numSources = len(sources)
-        filters = exposures.keys()
-        noiseReplacers = {
-            band: rebuildNoiseReplacer(exposure, sources) for band, exposure in exposures.items()
-        }
+        if self.config.fitHstCosmos:
+            if self.modelSpecs or not self.config.fitGaussian:
+                raise ValueError('Can only fit Gaussian model to HST COSMOS images')
+            extras = self._getExposuresHst(next(iter(exposures.values())))
+            # TODO: Generalize this for e.g. CANDELS
+            filters = [extras[0].band]
+        else:
+            extras = [rebuildNoiseReplacer(exposure, sources) for exposure in exposures.values()]
+            filters = exposures.keys()
         timeInit = time.time()
         processTimeInit = time.process_time()
         addedFields = False
@@ -725,6 +802,8 @@ class MultiProFitTask(pipeBase.Task):
             idx_end = numSources
 
         if self.config.fitGaussian:
+            if len(filters) > 1:
+                raise ValueError(f'Cannot fit Gaussian (no PSF) model with multiple filters ({filters})')
             self.models['gausspx_no_psf'] = mpfFit.get_model(
                 {band: 1 for band in filters}, "gaussian:1", (1, 1), slopes=[0.5], engine='galsim',
                 engineopts={'use_fast_gauss': True, 'drawmethod': mpfObj.draw_method_pixel['galsim']},
@@ -733,8 +812,7 @@ class MultiProFitTask(pipeBase.Task):
 
         for idx in range(np.max([idx_begin, 0]), idx_end):
             src = sources[idx]
-            results, error = self.__fitSource(src, noiseReplacers.values(), exposures, printTrace=printTrace,
-                                              plot=plot)
+            results, error = self.__fitSource(src, exposures, extras, printTrace=printTrace, plot=plot)
             runtime = self.metadata["__fitSourceEndCpuTime"] - self.metadata["__fitSourceStartCpuTime"]
             failed = error is not None
             # Preserve the first successful result to return at the end
@@ -757,8 +835,9 @@ class MultiProFitTask(pipeBase.Task):
                 indicesFailed[idx] = runtime
             id_src = src.getId()
             # Returns the image to pure noise
-            for noiseReplacer in noiseReplacers.values():
-                noiseReplacer.removeSource(id_src)
+            if not self.config.fitHstCosmos:
+                for noiseReplacer in extras:
+                    noiseReplacer.removeSource(id_src)
             errorMsg = '' if not failed else f" but got exception {error}"
             # Log with a priority just above info, since MultiProFit itself will generate a lot of info
             #  logs per source.
@@ -771,8 +850,9 @@ class MultiProFitTask(pipeBase.Task):
             if toWrite and addedFields and (nFit % self.config.intervalOutput) == 0:
                 catalog.writeFits(self.config.filenameOut)
         # Return the exposures to their original state
-        for noiseReplacer in noiseReplacers.values():
-            noiseReplacer.end()
+        if not self.config.fitHstCosmos:
+            for noiseReplacer in extras:
+                noiseReplacer.end()
         return catalog, resultsReturn
 
     @pipeBase.timeMethod
