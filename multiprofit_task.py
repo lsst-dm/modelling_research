@@ -1,3 +1,4 @@
+from astropy.io import fits
 from astropy.wcs import WCS
 from collections import defaultdict, namedtuple
 import logging
@@ -13,6 +14,7 @@ import matplotlib.pyplot as plt
 import multiprofit.fitutils as mpfFit
 import multiprofit.objects as mpfObj
 import numpy as np
+import os
 import time
 import traceback
 
@@ -53,6 +55,7 @@ class MultiProFitConfig(pexConfig.Config):
                                                                     "MG Sersic approximation galaxy profile")
     intervalOutput = pexConfig.Field(dtype=int, default=100, doc="Number of sources to fit before writing "
                                                                  "output")
+    isolatedOnly = pexConfig.Field(dtype=bool, default=False, doc="Whether to fit only isolated sources")
     outputChisqred = pexConfig.Field(dtype=bool, default=True, doc="Whether to save the reduced chi^2 of "
                                                                    "each model's best fit")
     outputLogLikelihood = pexConfig.Field(dtype=bool, default=True, doc="Whether to save the log likelihood "
@@ -376,8 +379,11 @@ class MultiProFitTask(pipeBase.Task):
             The results returned by multiprofit.fitutils.fit_galaxy_exposures, if no error occurs.
         error : `Exception`
             The first exception encountered while fitting, if any.
+        noiseReplaced : `bool`
+            Whether the method inserted the source using the provided noiseReplacers.
         """
         results = None
+        noiseReplaced = False
         try:
             foot = source.getFootprint()
             bbox = foot.getBBox()
@@ -390,8 +396,8 @@ class MultiProFitTask(pipeBase.Task):
             # TODO: Check total flux first
             if self.config.fitHstCosmos:
                 wcs_src = next(iter(exposures.values())).getWcs()
-                exposure, cen_hst = self._getCutoutHst(source, wcs_src, extras)
-                exposurePsfs.append((exposure, None))
+                exposure, psf, cen_hst = self._getCutoutHst(source, wcs_src, extras)
+                exposurePsfs.append((exposure, psf))
             else:
                 for noiseReplacer, (band, exposure) in zip(extras, exposures.items()):
                     noiseReplacer.insertSource(source.getId())
@@ -402,6 +408,7 @@ class MultiProFitTask(pipeBase.Task):
                             is_error_sigma=False),
                         mpfObj.PSF(band, image=exposure.getPsf().computeKernelImage(center), engine="galsim")
                     ))
+                noiseReplaced = True
             bands = [item[0].band for item in exposurePsfs]
             results = mpfFit.fit_galaxy_exposures(
                 exposurePsfs, bands, self.modelSpecs, results=results, plot=plot)
@@ -416,7 +423,7 @@ class MultiProFitTask(pipeBase.Task):
                 results['models']['gaussian:1'] = model
             if plot:
                 plt.show()
-            return results, None
+            return results, None, noiseReplaced
         except Exception as e:
             if plot:
                 fig, axes = plt.subplots(1, len(exposures))
@@ -424,7 +431,7 @@ class MultiProFitTask(pipeBase.Task):
                     axes[idx].imshow(exposure.image)
             if printTrace:
                 traceback.print_exc()
-            return results, e
+            return results, e, noiseReplaced
 
     def __getCatalog(self, filters, results, sources):
         """Get a new catalog and a dict containing the keys of extra fields to enter for each row.
@@ -543,12 +550,17 @@ class MultiProFitTask(pipeBase.Task):
         bg_hst = cutout_hst < 0
         var_hst = np.mean(cutout_hst[bg_hst]**2)
         error_inverse = cutout_hst_weight / (var_hst * np.median(cutout_hst_weight[bg_hst]))
+        cat_rg_within = exposure.meta['cosmos_cat_rg_within']
+        closest = cat_rg_within[
+            np.argmin((cat_rg_within['RA']-cen_src[0])**2 + (cat_rg_within['DEC']-cen_src[1])**2)]
+        psf = exposure.meta['cosmos_cat_rg_psf_files'][closest['PSF_FILENAME']][closest['PSF_HDU']].data
         exposure_cutout = mpfObj.Exposure(
             band=exposure.band, image=cutout_hst, error_inverse=error_inverse, is_error_sigma=False)
         exposure_cutout.meta['wcs'] = wcs_hst
-        return exposure_cutout, cen_hst
+        return exposure_cutout, np.float64(psf), cen_hst
 
     @staticmethod
+<<<<<<< HEAD
     def _getExposureCorners(exposure):
         """Get the corners of an exposure in degrees.
 
@@ -574,13 +586,15 @@ class MultiProFitTask(pipeBase.Task):
         return ra_corner, dec_corner
 
     @staticmethod
-    def _getExposuresHst(exposure):
+    def _getExposuresHst(exposure, path_cosmos_galsim):
         """Get the COSMOS HST-F814W data overlapping the exposure, if any.
 
         Parameters
         ----------
         exposure : `lsst.afw.image.Exposure`
             An exposure with WCS.
+        path_cosmos_galsim: `str`
+            A path to the COSMOS GalSim catalog; see `fit` for details.
 
         Returns
         -------
@@ -592,12 +606,26 @@ class MultiProFitTask(pipeBase.Task):
             [np.min(ra_corner), np.max(ra_corner)], [np.min(dec_corner), np.max(dec_corner)],
             width=None, return_data=True)
         exposures = []
+        cat_rg = fits.open(os.path.join(path_cosmos_galsim, "real_galaxy_catalog_25.2.fits"))[1].data
+        ra, dec = cat_rg['RA'], cat_rg['DEC']
+        cosmos_cat_rg_psf_files = {}
+        cosmos_cat_rg_psf_filenames = set()
         for image, error_inverse in exposures_hst:
             exposure = mpfObj.Exposure(
                 image=image.data, error_inverse=error_inverse.data, is_error_sigma=False, psf=None,
                 band='F814W')
-            exposure.meta['wcs'] = WCS(image)
+            wcs = WCS(image)
+            corners = wcs.calc_footprint()
+            within = (ra < np.min(corners[0:2, 0])) * (ra > np.max(corners[2:4, 0])) * (
+                    dec > np.max(corners[(0, 3), 1])) * (dec < np.min(corners[1:3, 1]))
+            cat_rg_within = cat_rg[within]
+            cosmos_cat_rg_psf_filenames.update(cat_rg_within['PSF_FILENAME'])
+            exposure.meta['cosmos_cat_rg_within'] = cat_rg_within
+            exposure.meta['cosmos_cat_rg_psf_files'] = cosmos_cat_rg_psf_files
+            exposure.meta['wcs'] = wcs
             exposures.append(exposure)
+        for filename in cosmos_cat_rg_psf_filenames:
+            cosmos_cat_rg_psf_files[filename] = fits.open(os.path.join(path_cosmos_galsim, filename))
         return exposures
 
     @staticmethod
@@ -807,7 +835,8 @@ class MultiProFitTask(pipeBase.Task):
             self.__setFieldsMeasmodel(exposures, model, source, fields["measmodel"], row)
         row[self.runtimeKey] = runtime
 
-    def fit(self, exposures, sources, idx_begin=0, idx_end=np.Inf, logger=None, printTrace=False, plot=False):
+    def fit(self, exposures, sources, idx_begin=0, idx_end=np.Inf, logger=None, printTrace=False,
+            plot=False, path_cosmos_galsim=None):
         """Fit a catalog of sources with MultiProFit.
 
         Each source has its PSF fit with a configureable Gaussian mixture PSF model and then fits a
@@ -822,7 +851,7 @@ class MultiProFitTask(pipeBase.Task):
         exposures : `dict` [`str`, `lsst.afw.image.Exposure`]
             A dict of Exposures to fit, keyed by filter name.
         sources: `lsst.afw.table`
-            A catalog containing deblended sources with footprints
+            A catalog containing deblended sources with footprints.
         idx_begin : `int`
             The first index (row number) of the catalog to process.
         idx_end : `int`
@@ -833,6 +862,10 @@ class MultiProFitTask(pipeBase.Task):
             Whether to print the traceback in case of an error; default False.
         plot : `bool`, optional
             Whether to generate a plot window with the final output for each source; default False.
+        path_cosmos_galsim : `str`, optional
+            A file path to a directory containing real_galaxy_catalog_25.2.fits and
+            real_galaxy_PSF_images_25.2_n[1-88].fits; required if config.fitHstCosmos is True.
+            See https://zenodo.org/record/3242143.
 
         Returns
         -------
@@ -847,9 +880,9 @@ class MultiProFitTask(pipeBase.Task):
             logger = logging.getLogger(__name__)
         numSources = len(sources)
         if self.config.fitHstCosmos:
-            if self.modelSpecs or not self.config.fitGaussian:
-                raise ValueError('Can only fit Gaussian model to HST COSMOS images')
-            extras = self._getExposuresHst(next(iter(exposures.values())))
+            if path_cosmos_galsim is None:
+                raise ValueError("Must specify path to COSMOS GalSim catalog if fitting HST images")
+            extras = self._getExposuresHst(next(iter(exposures.values())), path_cosmos_galsim)
             # TODO: Generalize this for e.g. CANDELS
             filters = [extras[0].band]
         else:
@@ -876,9 +909,24 @@ class MultiProFitTask(pipeBase.Task):
 
         for idx in range(np.max([idx_begin, 0]), idx_end):
             src = sources[idx]
-            results, error = self.__fitSource(src, exposures, extras, printTrace=printTrace, plot=plot)
-            runtime = self.metadata["__fitSourceEndCpuTime"] - self.metadata["__fitSourceStartCpuTime"]
-            failed = error is not None
+            results = None
+            failed = src['base_PixelFlags_flag_saturatedCenter']
+            runtime = 0
+            noiseReplaced = False
+            if failed:
+                error = 'Skipping because base_PixelFlags_flag_saturated set'
+            else:
+                isolated = src['parent'] == 0 and src['deblend_nChild'] == 0
+                if self.config.isolatedOnly:
+                    failed = not isolated
+                    if failed:
+                        error = 'Skipping because not isolated'
+                if not failed:
+                    results, error, noiseReplaced = self.__fitSource(
+                        src, exposures, extras, printTrace=printTrace, plot=plot)
+                    failed = error is not None
+                    runtime = (self.metadata["__fitSourceEndCpuTime"] -
+                               self.metadata["__fitSourceStartCpuTime"])
             # Preserve the first successful result to return at the end
             if resultsReturn is None and not failed:
                 resultsReturn = results
@@ -899,10 +947,10 @@ class MultiProFitTask(pipeBase.Task):
                 indicesFailed[idx] = runtime
             id_src = src.getId()
             # Returns the image to pure noise
-            if not self.config.fitHstCosmos:
+            if noiseReplaced:
                 for noiseReplacer in extras:
                     noiseReplacer.removeSource(id_src)
-            errorMsg = '' if not failed else f" but got exception {error}"
+            errorMsg = '' if not failed else f" failed: {error}"
             # Log with a priority just above info, since MultiProFit itself will generate a lot of info
             #  logs per source.
             logger.log(
