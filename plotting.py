@@ -256,9 +256,8 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
                     condy2 = isylo[condbin]
                     marker = '^'
                 colourpc = percentilecolours[-1 if upper else 0]
-                for condplot, markercond, sizecond in [
-                    (condoutlier*condy2, marker, 4),
-                    (condoutlier*(~condy2), '.', 2)]:
+                for condplot, markercond, sizecond in [(condoutlier*condy2, marker, 4),
+                                                       (condoutlier*(~condy2), '.', 2)]:
                     if np.sum(condplot) > 0:
                         plt.scatter(xcond[condplot], ycond[condplot], s=sizecond, marker=markercond,
                                     color=colourpc)
@@ -283,5 +282,5 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
     if histtickspacingymaj is not None:
         p.ax_marg_y.xaxis.set_major_locator(mpl.ticker.MultipleLocator(histtickspacingymaj))
     if title is not None:
-        p.fig.suptitle(title)
+        p.fig.suptitle(title, y=1., verticalalignment='bottom')
     return p
