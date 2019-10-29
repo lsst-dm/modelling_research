@@ -195,9 +195,9 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
     nedgesover = ndivisions*nbinspan + 2
     nbinsover = (ndivisions - 1)*nbinspan
     if limx is None:
-        limx = (np.min(x), np.max(x))
+        limx = (np.nanmin(x), np.nanmax(x))
     if limy is None:
-        limy = (np.min(y), np.max(y))
+        limy = (np.nanmin(y), np.nanmax(y))
     isylo = y < limy[0]
     isyhi = y > limy[1]
     y[isylo] = limy[0]
