@@ -496,17 +496,6 @@ class MultiProFitTask(pipeBase.Task):
         return catalog, fields
 
     @staticmethod
-    def __getCutoutCornersHst(exposure):
-        wcs_exp = exposure.getWcs()
-        ra_corner = []
-        dec_corner = []
-        for corner in exposure.getBBox().getCorners():
-            ra, dec = wcs_exp.pixelToSky(Point2D(corner))
-            ra_corner.append(ra.asDegrees())
-            dec_corner.append(dec.asDegrees())
-        return ra_corner, dec_corner
-
-    @staticmethod
     def _getCutoutHst(src, wcs_src, exposures_hst):
         pixel_src = Point2D([src[f'slot_Centroid_{ax}'] for ax in ['x', 'y']])
         cen_src = [x.asDegrees() for x in wcs_src.pixelToSky(pixel_src)]
@@ -542,8 +531,45 @@ class MultiProFitTask(pipeBase.Task):
         return exposure_cutout, cen_hst
 
     @staticmethod
+    def _getExposureCorners(exposure):
+        """Get the corners of an exposure in degrees.
+
+        Parameters
+        ----------
+        exposure : `lsst.afw.image.Exposure`
+            An exposure with WCS.
+
+        Returns
+        -------
+        ra_corner : `list` [`float`]
+            Right ascension of each corner in degrees.
+        dec_corner : `list` [`float`]
+            Declination of each corner in degrees.
+        """
+        wcs_exp = exposure.getWcs()
+        ra_corner = []
+        dec_corner = []
+        for corner in exposure.getBBox().getCorners():
+            ra, dec = wcs_exp.pixelToSky(Point2D(corner))
+            ra_corner.append(ra.asDegrees())
+            dec_corner.append(dec.asDegrees())
+        return ra_corner, dec_corner
+
+    @staticmethod
     def _getExposuresHst(exposure):
-        ra_corner, dec_corner = __class__.__getCutoutCornersHst(exposure)
+        """Get the COSMOS HST-F814W data overlapping the exposure, if any.
+
+        Parameters
+        ----------
+        exposure : `lsst.afw.image.Exposure`
+            An exposure with WCS.
+
+        Returns
+        -------
+        exposures : `list` [`multiprofit.objects.Exposure`]
+            MultiProFit exposures with the image data, inverse variance and WCS of overlapping data.
+        """
+        ra_corner, dec_corner = MultiProFitTask._getExposureCorners(exposure)
         exposures_hst = cutout_HST(ra_corner, dec_corner, width=None, return_data=True)
         exposures = []
         for image, error_inverse in exposures_hst:
