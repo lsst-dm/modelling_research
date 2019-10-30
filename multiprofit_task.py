@@ -497,6 +497,24 @@ class MultiProFitTask(pipeBase.Task):
 
     @staticmethod
     def _getCutoutHst(src, wcs_src, exposures_hst):
+        """Get a cutout of the COSMOS HST data overlapping the bounding box of a source, if any.
+
+        Parameters
+        ----------
+        src : `lsst.afw.table.BaseRecord`
+            A source to extract a cutout for.
+        wcs_src : `lsst.afw.geom.skyWcs`
+            The WCS for the source record.
+        exposures_hst : `list` [`multiprofit.objects.Exposure`]
+            A list of HST exposures, as returned by `_getExposuresHst`.
+
+        Returns
+        -------
+        exposure_cutout : `multiprofit.objects.Exposure`
+            A MultiProFit exposure objectc of the cutout region, including image and inverse variance.
+        cen_hst : `list` [`float`]
+            The centroid of the source in cutout pixel coordinates.
+        """
         pixel_src = Point2D([src[f'slot_Centroid_{ax}'] for ax in ['x', 'y']])
         cen_src = [x.asDegrees() for x in wcs_src.pixelToSky(pixel_src)]
         bbox = src.getFootprint().getBBox()
@@ -582,9 +600,27 @@ class MultiProFitTask(pipeBase.Task):
 
     @staticmethod
     def __getParamFieldInfo(nameParam, prefix=None):
-        name = f'{prefix if prefix else ""}{"instFlux" if nameParam is "flux" else nameParam}'
+        """Return standard information about a MultiProFit parameter by name.
+
+        Parameters
+        ----------
+        nameParam : `str`
+            The name of the parameter.
+        prefix : `str`
+            A prefix for the full name of the parameter; default None ('').
+
+        Returns
+        -------
+        name_full : `str`
+            The full name of the parameter including prefix, remapping 'flux' to 'instFlux'.
+        doc : `str`
+            The default docstring for the parameter, if any; '' otherwise.
+        unit : `str`
+            The default unit of the parameter, if any; '' otherwise.
+        """
+        name_full = f'{prefix if prefix else ""}{"instFlux" if nameParam is "flux" else nameParam}'
         doc, unit = MultiProFitTask.params_multiprofit.get(nameParam, ('', ''))
-        return name, doc, unit
+        return name_full, doc, unit
 
     @staticmethod
     def __setExtraField(extra, row, fit, name, nameFit=None, index=None):
