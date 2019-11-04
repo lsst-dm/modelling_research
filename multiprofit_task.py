@@ -587,8 +587,10 @@ class MultiProFitTask(pipeBase.Task):
         exposures : `list` [`multiprofit.objects.Exposure`]
             MultiProFit exposures with the image data, inverse variance and WCS of overlapping data.
         """
-        ra_corner, dec_corner = MultiProFitTask._getExposureCorners(exposure)
-        exposures_hst = cutout_HST(ra_corner, dec_corner, width=None, return_data=True)
+        ra_corner, dec_corner = __class__._getExposureCorners(exposure)
+        exposures_hst = cutout_HST(
+            [np.min(ra_corner), np.max(ra_corner)], [np.min(dec_corner), np.max(dec_corner)],
+            width=None, return_data=True)
         exposures = []
         for image, error_inverse in exposures_hst:
             exposure = mpfObj.Exposure(

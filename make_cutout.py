@@ -153,7 +153,6 @@ def cutout_scale(im, num_min=2.0, num_max=5.0):
 
 
 def make_cutout(filename, RA, DEC, width, nhdu=0, w_units="arcsecs", verbose=False):
-
     """
     Makes cutouts from a file passed as either a filename or hdulist
     Returns a new hdulist with updated WCS and the cutout as the data
@@ -326,27 +325,68 @@ def make_cutout(filename, RA, DEC, width, nhdu=0, w_units="arcsecs", verbose=Fal
     return hdulist, im_status
 
 
-def find_boxes_containing(xys, corners, first=True):
+def find_boxes_overlapping(left, right, bottom, top, corners_boxes, first=True):
+    """Find the set of overlapping boxes given a single box and a list of other boxes to compare.
+
+    Parameters
+    ----------
+    left, right, bottom, top : `float`
+        Coordinates of the edges of the box to test for overlap.
+    corners_boxes : iterable of array-like
+        An iterable of box edge/corner coordinates as above (left, right, bottom, top).
+    first : `bool`
+        Whether to return the first match only.
+
+    Returns
+    -------
+    idx : `int` or set [`int`]
+        The index of the first matching box if first is True, or the set of all matching box indices if not.
+    """
     found = set()
-    for idx, corner in enumerate(corners):
-        for x, y in xys:
-            if corner[0] < x < corner[1] and corner[2] < y < corner[3]:
-                if first:
-                    return idx
-                found.add(idx)
-                break
+    for idx, (box_left, box_right, box_bottom, box_top) in enumerate(corners_boxes):
+        if not (right < box_left or left > box_right or top < box_top or bottom > box_top):
+            if first:
+                return idx
+            found.add(idx)
     return None if first else found
 
 
-def cutout_HST(RA, DEC, sigma=0, width=30.0, return_data=False, path=None, path_corners=None):
-    """
-    Makes cutouts from the HST image of the COSMOS field
-    Width is the full width and needs to be given in arcsecs
-    Can return a fits file or a png
-    Can also return just the array used to make the image and the scaling parameters
-    sigma applies a gaussian filter
-    """
+def cutout_HST(ra, dec, sigma=0, width=30.0, return_data=False, path=None, path_corners=None):
+    """Get a cutout of the image and variance map for a COSMOS HST field, or a plot thereof.
 
+    Parameters
+    ----------
+    ra, dec : `float` or array-like of `float`
+        Coordinates of a point or edges of a box to obtain a cutout for.
+    sigma : `float`
+        Radius of the Gaussian filter to apply. Default 0.
+    width : `float`
+        The full width and height of the cutout in arcseconds. Default 30.
+    return_data : `bool`
+        Whether to return data rather than make a plot.
+    path : `str`
+        A path to a directory containing the COSMOS FITS images.
+    path_corners : `str`
+        A path to a file containing ra_max, dec_min, ra_min, dec_max, filename for each FITS image.
+        The filename's full path will be stripped and replaced with the input path.
+
+    Returns
+    -------
+    rval : `list` or `matplotlib.figure.Figure`
+        None if no cutout can be generated.
+        If return_data is False, the handle of the generated figure.
+        If return_data is True:
+            If return_headers is True, a list of tuples of `astropy.io.fits.hdu.image.PrimaryHDU` for the
+            image and weights (inverse variances), respectively.
+            If return_headers is False, then a list with a single tuple containing an HDU list, and image
+            scaling parameter vmin and vmax.
+
+    Notes
+    -----
+    The COSMOS data can be downloaded from https://irsa.ipac.caltech.edu/data/COSMOS/images/.
+    You will likely want to use acs_mosaic_2.0 because these are aligned N-S W-E; but if you care to deal
+    with the ~11 degree rotation of the fields yourself, the unrotated versions are in acs_2.0.
+    """
     if path is None:
         path = os.path.join(os.path.sep, 'project', 'sr525', 'hstCosmosImages')
     if path_corners is None:
@@ -362,15 +402,24 @@ def cutout_HST(RA, DEC, sigma=0, width=30.0, return_data=False, path=None, path_
             filename = os.path.join(path, items_line[4][38:])[:-1]
             filenames_image.append(filename)
             filenames_weight.append(f'{filename[:-8]}wht.fits')
-    ra_decs = [(RA, DEC)] if np.isscalar(RA) and np.isscalar(DEC) else [(x, y) for x, y in zip(RA, DEC)]
+    is_scalar = np.isscalar(ra), np.isscalar(dec)
+    if is_scalar[0] != is_scalar[1]:
+        raise RuntimeError(f'Inconsistent inputs: is_scalar(RA, DEC) = ({is_scalar[0]}, {is_scalar[1]})')
+    if is_scalar[0]:
+        hw = width/2
+        ra_box = ra - hw, ra + hw
+        dec_box = dec - hw, dec + hw
+    else:
+        ra_box, dec_box = ra, dec
     return_headers = width is None and return_data
-    boxes = find_boxes_containing(ra_decs, corners, first=not return_headers)
+    boxes = find_boxes_overlapping(ra_box[0], ra_box[1], dec_box[0], dec_box[1], corners,
+                                   first=not return_headers)
     if return_headers:
         return [[fits.open(f[box])[0] for f in (filenames_image, filenames_weight)] for box in boxes]
     if not boxes:
         return None
     with fits.open(filenames_image[boxes][:-1]) as h:
-        hdulist, im_status = make_cutout(h, RA, DEC, width, nhdu=0)
+        hdulist, im_status = make_cutout(h, ra, dec, width, nhdu=0)
         im = hdulist[1].data
         vmin, vmax = cutout_scale(im)
         if sigma > 0:
