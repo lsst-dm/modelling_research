@@ -582,7 +582,7 @@ class MultiProFitTask(pipeBase.Task):
             if len(bbox_hst) == 2:
                 break
         if len(bbox_hst) != 2:
-            raise RuntimeError(f"Couldn't get cutout for source {src}")
+            raise RuntimeError(f"Couldn't get COSMOS HST F814W cutout")
         cutout_hst, cutout_hst_weight = [
             np.float64(img[bbox_hst[0][1]:bbox_hst[1][1], bbox_hst[0][0]:bbox_hst[1][0]])
             for img in [exposure.image, exposure.get_var_inverse()]
@@ -916,7 +916,6 @@ class MultiProFitTask(pipeBase.Task):
         # Set up a logger to suppress output for now
         if logger is None:
             logger = logging.getLogger(__name__)
-        numSources = len(sources)
         if self.config.fitHstCosmos:
             if path_cosmos_galsim is None:
                 raise ValueError("Must specify path to COSMOS GalSim catalog if fitting HST images")
@@ -933,8 +932,10 @@ class MultiProFitTask(pipeBase.Task):
         indicesFailed = {}
         toWrite = self.config.filenameOut is not None
         nFit = 0
+        numSources = len(sources)
         if idx_end > numSources:
             idx_end = numSources
+        numSources = idx_end - idx_begin
 
         if self.config.fitGaussian:
             if len(filters) > 1:
