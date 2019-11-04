@@ -1,20 +1,16 @@
-from astropy.io import fits
-from astropy.wcs import WCS
 from collections import defaultdict, namedtuple
 import logging
 import lsst.afw.table as afwTable
-from lsst.geom import Point2D, degrees
 from lsst.meas.base.measurementInvestigationLib import rebuildNoiseReplacer
 from lsst.meas.modelfit.display import buildCModelImages
 from lsst.meas.modelfit.cmodel.cmodelContinued import CModelConfig
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
-from .make_cutout import cutout_HST
+from . import make_cutout as cutout
 import matplotlib.pyplot as plt
 import multiprofit.fitutils as mpfFit
 import multiprofit.objects as mpfObj
 import numpy as np
-import os
 import time
 import traceback
 
@@ -351,9 +347,8 @@ class MultiProFitTask(pipeBase.Task):
             catalog = photoCalib.calibrateCatalog(catalog, fluxes_filter[band])
         return catalog
 
-
     @staticmethod
-    def __fitModel(model, exposurePsfs, modeller=None, cenx=None, ceny=None, resetPsfs=False):
+    def __fitModel(model, exposurePsfs, modeller=None, cenx=None, ceny=None, resetPsfs=False, **kwargs):
         """Fit a single model of a source to a number of exposures, initializing from the estimated moments.
 
         Parameters
@@ -370,6 +365,8 @@ class MultiProFitTask(pipeBase.Task):
             The y coordinate of the source within the exposures.
         resetPsfs : `bool`, optional
             Whether to set the PSFs to None and thus fit a model with no PSF convolution.
+        kwargs
+            Additional keyword arguments to pass to multiprofit.fitutils.fit_model.
 
         Returns
         -------
@@ -394,7 +391,7 @@ class MultiProFitTask(pipeBase.Task):
                 param.limits.upper = exposurePsfs[0][0].image.shape[param.name[-1] == 'y']
             if value is not None:
                 param.set_value(value, transformed=False)
-        result, _ = mpfFit.fit_model(model=model, modeller=modeller)
+        result, _ = mpfFit.fit_model(model=model, modeller=modeller, **kwargs)
         return result
 
     @pipeBase.timeMethod
@@ -437,7 +434,9 @@ class MultiProFitTask(pipeBase.Task):
             # TODO: Check total flux first
             if self.config.fitHstCosmos:
                 wcs_src = next(iter(exposures.values())).getWcs()
-                exposure, psf, cen_hst = self._getCutoutHst(source, wcs_src, extras)
+                corners, cens = cutout.get_corners_src(source, wcs_src)
+                exposure, cen_hst, psf = cutout.get_exposure_cutout_HST(
+                    corners, cens, extras, get_inv_var=True, get_psf=True)
                 exposurePsfs.append((exposure, psf))
             else:
                 for noiseReplacer, (band, exposure) in zip(extras, exposures.items()):
@@ -542,132 +541,6 @@ class MultiProFitTask(pipeBase.Task):
         catalog = afwTable.SourceCatalog(schema)
         catalog.extend(sources, mapper=mapper)
         return catalog, fields
-
-    @staticmethod
-    def _getCutoutHst(src, wcs_src, exposures_hst):
-        """Get a cutout of the COSMOS HST data overlapping the bounding box of a source, if any.
-
-        Parameters
-        ----------
-        src : `lsst.afw.table.BaseRecord`
-            A source to extract a cutout for.
-        wcs_src : `lsst.afw.geom.skyWcs`
-            The WCS for the source record.
-        exposures_hst : `list` [`multiprofit.objects.Exposure`]
-            A list of HST exposures, as returned by `_getExposuresHst`.
-
-        Returns
-        -------
-        exposure_cutout : `multiprofit.objects.Exposure`
-            A MultiProFit exposure objectc of the cutout region, including image and inverse variance.
-        cen_hst : `list` [`float`]
-            The centroid of the source in cutout pixel coordinates.
-        """
-        pixel_src = Point2D([src[f'slot_Centroid_{ax}'] for ax in ['x', 'y']])
-        cen_src = wcs_src.pixelToSky(pixel_src).getPosition(degrees)
-        bbox = src.getFootprint().getBBox()
-        corners_src = wcs_src.pixelToSky([Point2D(x) for x in (bbox.getMin(), bbox.getMax())])
-        corners_src = [x.getPosition(degrees) for x in corners_src]
-        for exposure in exposures_hst:
-            wcs_hst = exposure.meta['wcs']
-            array_shape = wcs_hst.array_shape
-            bbox_hst = []
-            for corner in corners_src:
-                pixel_hst = wcs_hst.world_to_array_index_values([corner])[0]
-                # TODO: Verify that axes are in the correct order
-                if 0 < pixel_hst[0] < array_shape[0] and 0 < pixel_hst[1] < array_shape[1]:
-                    bbox_hst.append(pixel_hst)
-                else:
-                    break
-            if len(bbox_hst) == 2:
-                break
-        if len(bbox_hst) != 2:
-            raise RuntimeError(f"Couldn't get COSMOS HST F814W cutout")
-        cutout_hst, cutout_hst_weight = [
-            np.float64(img[bbox_hst[0][1]:bbox_hst[1][1], bbox_hst[0][0]:bbox_hst[1][0]])
-            for img in [exposure.image, exposure.get_var_inverse()]
-        ]
-        cen_hst = wcs_hst.world_to_array_index_values([cen_src])[0] - bbox_hst[0]
-        bg_hst = cutout_hst < 0
-        var_hst = np.mean(cutout_hst[bg_hst]**2)
-        error_inverse = cutout_hst_weight / (var_hst * np.median(cutout_hst_weight[bg_hst]))
-        cat_rg_within = exposure.meta['cosmos_cat_rg_within']
-        closest = cat_rg_within[
-            np.argmin((cat_rg_within['RA']-cen_src[0])**2 + (cat_rg_within['DEC']-cen_src[1])**2)]
-        psf = exposure.meta['cosmos_cat_rg_psf_files'][closest['PSF_FILENAME']][closest['PSF_HDU']].data
-        exposure_cutout = mpfObj.Exposure(
-            band=exposure.band, image=cutout_hst, error_inverse=error_inverse, is_error_sigma=False)
-        exposure_cutout.meta['wcs'] = wcs_hst
-        return exposure_cutout, np.float64(psf), cen_hst
-
-    @staticmethod
-<<<<<<< HEAD
-    def _getExposureCorners(exposure):
-        """Get the corners of an exposure in degrees.
-
-        Parameters
-        ----------
-        exposure : `lsst.afw.image.Exposure`
-            An exposure with WCS.
-
-        Returns
-        -------
-        ra_corner : `list` [`float`]
-            Right ascension of each corner in degrees.
-        dec_corner : `list` [`float`]
-            Declination of each corner in degrees.
-        """
-        wcs_exp = exposure.getWcs()
-        ra_corner = []
-        dec_corner = []
-        for corner in exposure.getBBox().getCorners():
-            ra, dec = wcs_exp.pixelToSky(Point2D(corner))
-            ra_corner.append(ra.asDegrees())
-            dec_corner.append(dec.asDegrees())
-        return ra_corner, dec_corner
-
-    @staticmethod
-    def _getExposuresHst(exposure, path_cosmos_galsim):
-        """Get the COSMOS HST-F814W data overlapping the exposure, if any.
-
-        Parameters
-        ----------
-        exposure : `lsst.afw.image.Exposure`
-            An exposure with WCS.
-        path_cosmos_galsim: `str`
-            A path to the COSMOS GalSim catalog; see `fit` for details.
-
-        Returns
-        -------
-        exposures : `list` [`multiprofit.objects.Exposure`]
-            MultiProFit exposures with the image data, inverse variance and WCS of overlapping data.
-        """
-        ra_corner, dec_corner = __class__._getExposureCorners(exposure)
-        exposures_hst = cutout_HST(
-            [np.min(ra_corner), np.max(ra_corner)], [np.min(dec_corner), np.max(dec_corner)],
-            width=None, return_data=True)
-        exposures = []
-        cat_rg = fits.open(os.path.join(path_cosmos_galsim, "real_galaxy_catalog_25.2.fits"))[1].data
-        ra, dec = cat_rg['RA'], cat_rg['DEC']
-        cosmos_cat_rg_psf_files = {}
-        cosmos_cat_rg_psf_filenames = set()
-        for image, error_inverse in exposures_hst:
-            exposure = mpfObj.Exposure(
-                image=image.data, error_inverse=error_inverse.data, is_error_sigma=False, psf=None,
-                band='F814W')
-            wcs = WCS(image)
-            corners = wcs.calc_footprint()
-            within = (ra < np.min(corners[0:2, 0])) * (ra > np.max(corners[2:4, 0])) * (
-                    dec > np.max(corners[(0, 3), 1])) * (dec < np.min(corners[1:3, 1]))
-            cat_rg_within = cat_rg[within]
-            cosmos_cat_rg_psf_filenames.update(cat_rg_within['PSF_FILENAME'])
-            exposure.meta['cosmos_cat_rg_within'] = cat_rg_within
-            exposure.meta['cosmos_cat_rg_psf_files'] = cosmos_cat_rg_psf_files
-            exposure.meta['wcs'] = wcs
-            exposures.append(exposure)
-        for filename in cosmos_cat_rg_psf_filenames:
-            cosmos_cat_rg_psf_files[filename] = fits.open(os.path.join(path_cosmos_galsim, filename))
-        return exposures
 
     @staticmethod
     def __getParamFieldInfo(nameParam, prefix=None):
@@ -919,7 +792,9 @@ class MultiProFitTask(pipeBase.Task):
         if self.config.fitHstCosmos:
             if path_cosmos_galsim is None:
                 raise ValueError("Must specify path to COSMOS GalSim catalog if fitting HST images")
-            extras = self._getExposuresHst(next(iter(exposures.values())), path_cosmos_galsim)
+            tiles = cutout.get_tiles_HST_COSMOS()
+            ra_corner, dec_corner = cutout.get_corners_exposure(next(iter(exposures.values())))
+            extras = cutout.get_exposures_HST_COSMOS(ra_corner, dec_corner, tiles, path_cosmos_galsim)
             # TODO: Generalize this for e.g. CANDELS
             filters = [extras[0].band]
         else:
