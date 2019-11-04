@@ -62,6 +62,9 @@ class MultiProFitConfig(pexConfig.Config):
                                                                         "of each model's best fit")
     outputRuntime = pexConfig.Field(dtype=bool, default=True, doc="Whether to save the runtime of each "
                                                                   "model")
+    skipDeblendTooManyPeaks = pexConfig.Field(dtype=bool, default=False,
+                                              doc="Whether to skip fitting sources with "
+                                                  "deblend_tooManyPeaks flag set")
 
     def getModelSpecs(self):
         """Get a list of dicts of model specifications for MultiProFit/
@@ -945,14 +948,18 @@ class MultiProFitTask(pipeBase.Task):
                 name_model='gausspx_no_psf'
             )
 
+        flags_failure = ['base_PixelFlags_flag_saturatedCenter']
+        if self.config.skipDeblendTooManyPeaks:
+            flags_failure.append('deblend_tooManyPeaks')
         for idx in range(np.max([idx_begin, 0]), idx_end):
             src = sources[idx]
             results = None
-            failed = src['base_PixelFlags_flag_saturatedCenter']
+            flags_failed = {flag: src[flag] for flag in flags_failure}
+            failed = any(flags_failed.values())
             runtime = 0
             noiseReplaced = False
             if failed:
-                error = 'Skipping because base_PixelFlags_flag_saturated set'
+                error = f'Skipping because {[key for key, fail in flags_failed.items() if fail]} flag(s) set'
             else:
                 isolated = src['parent'] == 0 and src['deblend_nChild'] == 0
                 if self.config.isolatedOnly:
