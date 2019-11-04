@@ -488,7 +488,7 @@ class MultiProFitTask(pipeBase.Task):
         Returns
         -------
         catalog : `lsst.afw.table.SourceCatalog`
-            A new `SourceCatalog` with extra fields.
+            A new SourceCatalog with extra fields.
         fields : `dict` [`str`, `dict`]
             A dict of dicts, keyed by the field type. The values may contain further nested dicts e.g. those
             keyed by filter for PSF fit-related fields.
@@ -766,12 +766,14 @@ class MultiProFitTask(pipeBase.Task):
         None
         """
         for idxfit, (name, result) in enumerate(results['fits']['galsim'].items()):
-            fit = result['fits'][0]
-            values = [x for x, fixed in zip(fit['params_bestall'], fit['params_allfixed'])
-                      if not fixed]
-            for value, key in zip(values, fieldsBase[name]):
-                row[key] = value
-            self.__setExtraFields(fieldsExtra[name], row, fit)
+            result_fit = result.get('fits', None)
+            if result_fit is not None:
+                fit = result_fit[0]
+                values = [x for x, fixed in zip(fit['params_bestall'], fit['params_allfixed'])
+                          if not fixed]
+                for value, key in zip(values, fieldsBase[name]):
+                    row[key] = value
+                self.__setExtraFields(fieldsExtra[name], row, fit)
 
     def __setFieldsPsf(self, results, fieldsBase, fieldsExtra, row, filters):
         """Set fields for a source's PSF fit parameters.
@@ -972,11 +974,17 @@ class MultiProFitTask(pipeBase.Task):
                 resultsReturn = results
             # Setup field names if necessary
             if not addedFields and not failed:
-                catalog, fields = self.__getCatalog(filters, results, sources)
-                for idxFailed, runtime in indicesFailed.items():
-                    catalog[idxFailed][self.failFlagKey] = True
-                    catalog[idxFailed][self.runtimeKey] = runtime
-                addedFields = True
+                # If one of the models failed, we can't set up the catalog from it
+                if all(['fits' in x for x in results['fits']['galsim'].values()]):
+                    catalog, fields = self.__getCatalog(filters, results, sources)
+                    for idxFailed, runtime in indicesFailed.items():
+                        catalog[idxFailed][self.failFlagKey] = True
+                        catalog[idxFailed][self.runtimeKey] = runtime
+                    addedFields = True
+                else:
+                    # Sadly this means that the successful models won't get written. Oh well.
+                    error = "Skipping because at least one model failed before catalog fields added"
+                    failed = True
             # Fill in field values if successful, or save just the runtime to enter later otherwise
             if addedFields:
                 row = catalog[idx]
