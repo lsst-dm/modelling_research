@@ -3,7 +3,7 @@ from astropy.wcs import WCS
 from collections import defaultdict, namedtuple
 import logging
 import lsst.afw.table as afwTable
-from lsst.geom import Point2D
+from lsst.geom import Point2D, degrees
 from lsst.meas.base.measurementInvestigationLib import rebuildNoiseReplacer
 from lsst.meas.modelfit.display import buildCModelImages
 from lsst.meas.modelfit.cmodel.cmodelContinued import CModelConfig
@@ -564,10 +564,10 @@ class MultiProFitTask(pipeBase.Task):
             The centroid of the source in cutout pixel coordinates.
         """
         pixel_src = Point2D([src[f'slot_Centroid_{ax}'] for ax in ['x', 'y']])
-        cen_src = [x.asDegrees() for x in wcs_src.pixelToSky(pixel_src)]
+        cen_src = wcs_src.pixelToSky(pixel_src).getPosition(degrees)
         bbox = src.getFootprint().getBBox()
         corners_src = wcs_src.pixelToSky([Point2D(x) for x in (bbox.getMin(), bbox.getMax())])
-        corners_src = [[x.asDegrees() for x in y] for y in corners_src]
+        corners_src = [x.getPosition(degrees) for x in corners_src]
         for exposure in exposures_hst:
             wcs_hst = exposure.meta['wcs']
             array_shape = wcs_hst.array_shape
