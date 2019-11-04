@@ -718,13 +718,8 @@ class MultiProFitTask(pipeBase.Task):
         if nameFit is None:
             nameFit = name
         value = fit[nameFit]
-        # TODO: Fix the bug in MPF that necessitates this - linear fits not returning prior (DM-21197)
         if index is not None:
-            shape = np.shape(value)
-            if (not shape) and index != 0:
-                raise RuntimeError(f"Tried to set extra field with index={index} from value={value} w/o len")
-            if shape:
-                value = value[index]
+            value = value[index]
         row[extra[name]] = value
 
     def __setExtraFields(self, extra, row, fit):
