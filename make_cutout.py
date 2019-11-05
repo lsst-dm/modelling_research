@@ -1,10 +1,12 @@
 import astropy.io.fits as fits
+from astropy.utils.exceptions import AstropyWarning
+import copy
 import lsst.afw.geom as afwGeom
 import matplotlib.pyplot as plt
 import numpy as np
 import os
 from scipy.ndimage import gaussian_filter
-
+import warnings
 # Mostly shamelessly stolen from Sophie Reed (thanks)
 
 
@@ -131,7 +133,6 @@ def MAD(l, med):
 
 
 def cutout_scale(im, num_min=2.0, num_max=5.0):
-
     """
     Takes an image array and returns the vmin and vmax required to scale the image 
     between median + 5 * sigma MAD and median - 2 * sigma MAD
@@ -159,13 +160,6 @@ def make_cutout(filename, RA, DEC, width, nhdu=0, w_units="arcsecs", verbose=Fal
     The specified width should be in arcsecs or pixels.
     It is the full width.
     """
-
-    from astropy import wcs
-    import astropy.io.fits as fits
-    import numpy as np
-    import warnings
-    from astropy.utils.exceptions import AstropyWarning
-    import copy
 
     im_status = "good"
 
