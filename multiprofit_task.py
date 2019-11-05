@@ -639,7 +639,7 @@ class MultiProFitTask(pipeBase.Task):
         None
         """
         for idxfit, (name, result) in enumerate(results['fits']['galsim'].items()):
-            result_fit = result.get('fits', None)
+            result_fit = result.get('fits', None) if hasattr(result, 'get') else None
             if result_fit is not None:
                 fit = result_fit[0]
                 values = [x for x, fixed in zip(fit['params_bestall'], fit['params_allfixed'])
