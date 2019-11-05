@@ -877,12 +877,12 @@ class MultiProFitTask(pipeBase.Task):
             errorMsg = '' if not failed else f" failed: {error}"
             # Log with a priority just above info, since MultiProFit itself will generate a lot of info
             #  logs per source.
+            nFit += 1
             logger.log(
                 21, f"Fit src {idx} ({nFit}/{numSources}) id={src['id']} in {runtime:.3f}s "
                     f"(total time {time.time() - timeInit:.2f}s "
                     f"process_time {time.process_time() - processTimeInit:.2f}s)"
                     f"{errorMsg}")
-            nFit += 1
             if toWrite and addedFields and (nFit % self.config.intervalOutput) == 0:
                 catalog.writeFits(self.config.filenameOut)
         # Return the exposures to their original state
