@@ -451,7 +451,7 @@ class MultiProFitTask(pipeBase.Task):
                 noiseReplaced = True
             bands = [item[0].band for item in exposurePsfs]
             results = mpfFit.fit_galaxy_exposures(
-                exposurePsfs, bands, self.modelSpecs, results=results, plot=plot)
+                exposurePsfs, bands, self.modelSpecs, results=results, plot=plot, print_exception=False)
             if self.config.fitGaussian:
                 name_model = 'gausspx_no_psf'
                 model = self.models[name_model]
