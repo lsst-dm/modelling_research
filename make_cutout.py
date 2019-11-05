@@ -127,11 +127,6 @@ def make_cutout_lsst(coords, exp, coord_units=None, size=100, w_units="pixels", 
     return im_cutout, vmin, vmax, im_blank, ids, [c3, c2, c1, c0]
 
 
-def MAD(l, med):
-    import numpy as np
-    return np.median(abs(l - med))
-
-
 def cutout_scale(im, num_min=2.0, num_max=5.0):
     """
     Takes an image array and returns the vmin and vmax required to scale the image 
@@ -143,7 +138,7 @@ def cutout_scale(im, num_min=2.0, num_max=5.0):
     data = im.flatten()
     try:
         med = np.median(data[data != 0.0])
-        sigma_MAD = 1.4826*MAD(data[data != 0.0], med)
+        sigma_MAD = 1.4826*mad(data[data != 0.0], med)
     except IndexError:
         med = 0.0
         sigma_MAD = 0.0
