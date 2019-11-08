@@ -1,8 +1,12 @@
+import astropy.io.fits as fits
+from astropy.utils.exceptions import AstropyWarning
+import copy
+import lsst.afw.geom as afwGeom
+import matplotlib.pyplot as plt
 import numpy as np
 import os
-
-import lsst.afw.geom as afwGeom
-
+from scipy.ndimage import gaussian_filter
+import warnings
 # Mostly shamelessly stolen from Sophie Reed (thanks)
 
 
@@ -123,13 +127,7 @@ def make_cutout_lsst(coords, exp, coord_units=None, size=100, w_units="pixels", 
     return im_cutout, vmin, vmax, im_blank, ids, [c3, c2, c1, c0]
 
 
-def MAD(l, med):
-    import numpy as np
-    return np.median(abs(l - med))
-
-
 def cutout_scale(im, num_min=2.0, num_max=5.0):
-
     """
     Takes an image array and returns the vmin and vmax required to scale the image 
     between median + 5 * sigma MAD and median - 2 * sigma MAD
@@ -140,7 +138,7 @@ def cutout_scale(im, num_min=2.0, num_max=5.0):
     data = im.flatten()
     try:
         med = np.median(data[data != 0.0])
-        sigma_MAD = 1.4826*MAD(data[data != 0.0], med)
+        sigma_MAD = 1.4826*mad(data[data != 0.0], med)
     except IndexError:
         med = 0.0
         sigma_MAD = 0.0
@@ -151,20 +149,12 @@ def cutout_scale(im, num_min=2.0, num_max=5.0):
 
 
 def make_cutout(filename, RA, DEC, width, nhdu=0, w_units="arcsecs", verbose=False):
-
     """
     Makes cutouts from a file passed as either a filename or hdulist
     Returns a new hdulist with updated WCS and the cutout as the data
     The specified width should be in arcsecs or pixels.
     It is the full width.
     """
-
-    from astropy import wcs
-    import astropy.io.fits as fits
-    import numpy as np
-    import warnings
-    from astropy.utils.exceptions import AstropyWarning
-    import copy
 
     im_status = "good"
 
@@ -324,53 +314,115 @@ def make_cutout(filename, RA, DEC, width, nhdu=0, w_units="arcsecs", verbose=Fal
     return hdulist, im_status
 
 
-def cutout_HST(RA, DEC, sigma=0, width=30.0, return_data=False,
-               path=os.path.join(os.path.sep, 'project', 'sr525', 'hstCosmosImages'),
-               filecorner=None):
+def find_boxes_overlapping(left, right, bottom, top, corners_boxes, first=True):
+    """Find the set of overlapping boxes given a single box and a list of other boxes to compare.
 
+    Parameters
+    ----------
+    left, right, bottom, top : `float`
+        Coordinates of the edges of the box to test for overlap.
+    corners_boxes : iterable of array-like
+        An iterable of box edge/corner coordinates as above (left, right, bottom, top).
+    first : `bool`
+        Whether to return the first match only.
+
+    Returns
+    -------
+    idx : `int` or set [`int`]
+        The index of the first matching box if first is True, or the set of all matching box indices if not.
     """
-    Makes cutouts from the HST image of the COSMOS field
-    Width is the full width and needs to be given in arcsecs
-    Can return a fits file or a png
-    Can also return just the array used to make the image and the scaling parameters
-    sigma applies a gaussian filter
+    found = set()
+    for idx, (box_left, box_right, box_bottom, box_top) in enumerate(corners_boxes):
+        if not (right < box_left or left > box_right or top < box_top or bottom > box_top):
+            if first:
+                return idx
+            found.add(idx)
+    return None if first else found
+
+
+def cutout_HST(ra, dec, sigma=0, width=30.0, return_data=False, path=None, path_corners=None):
+    """Get a cutout of the image and variance map for a COSMOS HST field, or a plot thereof.
+
+    Parameters
+    ----------
+    ra, dec : `float` or array-like of `float`
+        Coordinates of a point or edges of a box to obtain a cutout for.
+    sigma : `float`
+        Radius of the Gaussian filter to apply. Default 0.
+    width : `float`
+        The full width and height of the cutout in arcseconds. Default 30.
+    return_data : `bool`
+        Whether to return data rather than make a plot.
+    path : `str`
+        A path to a directory containing the COSMOS FITS images.
+    path_corners : `str`
+        A path to a file containing ra_max, dec_min, ra_min, dec_max, filename for each FITS image.
+        The filename's full path will be stripped and replaced with the input path.
+
+    Returns
+    -------
+    rval : `list` or `matplotlib.figure.Figure`
+        None if no cutout can be generated.
+        If return_data is False, the handle of the generated figure.
+        If return_data is True:
+            If return_headers is True, a list of tuples of `astropy.io.fits.hdu.image.PrimaryHDU` for the
+            image and weights (inverse variances), respectively.
+            If return_headers is False, then a list with a single tuple containing an HDU list, and image
+            scaling parameter vmin and vmax.
+
+    Notes
+    -----
+    The COSMOS data can be downloaded from https://irsa.ipac.caltech.edu/data/COSMOS/images/.
+    You will likely want to use acs_mosaic_2.0 because these are aligned N-S W-E; but if you care to deal
+    with the ~11 degree rotation of the fields yourself, the unrotated versions are in acs_2.0.
     """
-
-    import astropy.io.fits as fits
-    import matplotlib.pyplot as plt
-    from scipy.ndimage import gaussian_filter
-
-    datas = []
-    if filecorner is None:
-        filecorner = os.path.join(path, 'tiles', 'corners.txt')
-    with open(filecorner, 'r') as f:
+    if path is None:
+        path = os.path.join(os.path.sep, 'project', 'sr525', 'hstCosmosImages')
+    if path_corners is None:
+        path_corners = os.path.join(path, 'tiles', 'corners.txt')
+    corners = []
+    filenames_image = []
+    filenames_weight = []
+    idx_corners = [2, 0, 1, 3]
+    with open(path_corners, 'r') as f:
         for line in f:
-            itemsline = line.split(',')
-            ra_min = float(itemsline[2])
-            ra_max = float(itemsline[0])
-            dec_min = float(itemsline[1])
-            dec_max = float(itemsline[3])
-            filename = os.path.join(path, itemsline[4][38:])
-            if ra_min < RA < ra_max and dec_min < DEC < dec_max:
-                print(filename)
-                with fits.open(filename[:-1]) as h:
-                    hdulist, im_status = make_cutout(h, RA, DEC, width, nhdu=0)
-                    im = hdulist[1].data
-                    vmin, vmax = cutout_scale(im)
-                    if sigma > 0:
-                        im = gaussian_filter(im, sigma)
-                    if not return_data:
-                        fig = plt.figure()
-                        ax = fig.add_subplot(111)
-                        ax.axes.get_xaxis().set_visible(False)
-                        ax.axes.get_yaxis().set_visible(False)
-                        ax.imshow(im, vmax=vmax, vmin=vmin)
-                        fig = plt.gcf()
-                        fig.set_size_inches(2.5, 2.5)
+            items_line = line.split(',')
+            corners.append([float(items_line[idx]) for idx in idx_corners])
+            filename = os.path.join(path, items_line[4][38:])[:-1]
+            filenames_image.append(filename)
+            filenames_weight.append(f'{filename[:-8]}wht.fits')
+    is_scalar = np.isscalar(ra), np.isscalar(dec)
+    if is_scalar[0] != is_scalar[1]:
+        raise RuntimeError(f'Inconsistent inputs: is_scalar(RA, DEC) = ({is_scalar[0]}, {is_scalar[1]})')
+    if is_scalar[0]:
+        hw = width/2
+        ra_box = ra - hw, ra + hw
+        dec_box = dec - hw, dec + hw
+    else:
+        ra_box, dec_box = ra, dec
+    return_headers = width is None and return_data
+    boxes = find_boxes_overlapping(ra_box[0], ra_box[1], dec_box[0], dec_box[1], corners,
+                                   first=not return_headers)
+    if return_headers:
+        return [[fits.open(f[box])[0] for f in (filenames_image, filenames_weight)] for box in boxes]
+    if not boxes:
+        return None
+    with fits.open(filenames_image[boxes][:-1]) as h:
+        hdulist, im_status = make_cutout(h, ra, dec, width, nhdu=0)
+        im = hdulist[1].data
+        vmin, vmax = cutout_scale(im)
+        if sigma > 0:
+            im = gaussian_filter(im, sigma)
+        if not return_data:
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+            ax.axes.get_xaxis().set_visible(False)
+            ax.axes.get_yaxis().set_visible(False)
+            ax.imshow(im, vmax=vmax, vmin=vmin)
+            fig = plt.gcf()
+            fig.set_size_inches(2.5, 2.5)
 
-                    if return_data:
-                        datas.append((hdulist, vmin, vmax))
-                        return datas
-                    else:
-                        return fig
-    return None
+        if return_data:
+            return [(hdulist, vmin, vmax)]
+        else:
+            return fig

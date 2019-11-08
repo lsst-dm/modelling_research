@@ -113,7 +113,8 @@ def main():
     for param, field in MultiProFitConfig._fields.items():
         type_default = field.dtype
         flag = dict(type=type_default if type_default is not bool else str2bool, nargs='?',
-                    default=field.default, help=f'Value for MultiProFitConfig.{param}', kwarg=True)
+                    default=field.default,
+                    help=f'Value for MultiProFitConfig.{param}', kwarg=True)
         flags[param] = flag
     kwargs = set()
 
