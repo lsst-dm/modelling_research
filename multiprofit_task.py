@@ -449,14 +449,15 @@ class MultiProFitTask(pipeBase.Task):
                         mpfObj.PSF(band, image=exposure.getPsf().computeKernelImage(center), engine="galsim")
                     ))
                 noiseReplaced = True
+            cenx, ceny = cen_hst if self.config.fitHstCosmos else source.getCentroid() - bbox.getBegin()
             bands = [item[0].band for item in exposurePsfs]
             results = mpfFit.fit_galaxy_exposures(
-                exposurePsfs, bands, self.modelSpecs, results=results, plot=plot, print_exception=False)
+                exposurePsfs, bands, self.modelSpecs, results=results, plot=plot, print_exception=False,
+                cenx=cenx, ceny=ceny)
             if self.config.fitGaussian:
                 name_model = 'gausspx_no_psf'
                 model = self.models[name_model]
                 self.modeller.model = model
-                cenx, ceny = cen_hst if self.config.fitHstCosmos else source.getCentroid() - bbox.getBegin()
                 result = self.__fitModel(model, exposurePsfs, cenx=cenx, ceny=ceny, modeller=self.modeller,
                                          resetPsfs=True, plot=plot and len(self.modelSpecs) == 0)
                 results['fits']['galsim'][name_model] = {'fits': [result], 'modeltype': 'gaussian:1'}
