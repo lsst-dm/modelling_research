@@ -458,7 +458,7 @@ class MultiProFitTask(pipeBase.Task):
                 self.modeller.model = model
                 cenx, ceny = cen_hst if self.config.fitHstCosmos else source.getCentroid() - bbox.getBegin()
                 result = self.__fitModel(model, exposurePsfs, cenx=cenx, ceny=ceny, modeller=self.modeller,
-                                         resetPsfs=True)
+                                         resetPsfs=True, plot=plot and len(self.modelSpecs) == 0)
                 results['fits']['galsim'][name_model] = {'fits': [result], 'modeltype': 'gaussian:1'}
                 results['models']['gaussian:1'] = model
             if plot:
