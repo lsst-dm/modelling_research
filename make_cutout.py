@@ -333,7 +333,7 @@ def find_boxes_overlapping(left, right, bottom, top, corners_boxes, first=True):
     """
     found = set()
     for idx, (box_left, box_right, box_bottom, box_top) in enumerate(corners_boxes):
-        if not (right < box_left or left > box_right or top < box_top or bottom > box_top):
+        if not (right < box_left or left > box_right or top < box_bottom or bottom > box_top):
             if first:
                 return idx
             found.add(idx)
