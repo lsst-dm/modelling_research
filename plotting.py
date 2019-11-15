@@ -154,7 +154,7 @@ def plotjoint(tab, columns, labels=None, columncolor=None, colorbaropts=None,
 def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None, limx=None, limy=None,
                                   ndivisions=None, nbinspan=None, labelx=None, labely=None, title=None,
                                   histtickspacingxmaj=None, histtickspacingymaj=None,
-                                  scatterleft=False, scatterright=False):
+                                  scatterleft=False, scatterright=False, drawzeroline=True):
     """
 
     :param x: Float[]; x data.
@@ -172,7 +172,8 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
     :param histtickspacingymaj: Float; spacing for major ticks on the y-axis marginal histogram's y-axis.
     :param scatterleft: Bool; scatter plot points leftwards of the leftmost bin center?
     :param scatterright: Bool; scatter plot points rightwards of the rightmost bin center?
-    :return:
+    :param drawzeroline: Bool; draw line at y=0?
+    :return: seaborn.JointGrid handle for the plot.
     """
     numpoints = len(x)
     if len(y) != numpoints:
@@ -208,7 +209,8 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
                  n_levels=np.int(np.ceil(numpoints**(1/3))))
     # Setup bin edges to have overlapping bins for running percentiles
     binedges = np.sort(x)[np.asarray(np.round(np.linspace(0, len(x)-1, num=nedgesover)), dtype=int)]
-    plt.plot(binedges[[0, -1]], [0, 0], 'k-', linewidth=1, label='')
+    if drawzeroline:
+        plt.axhline(y=0, color='k', linewidth=1, label='')
     plt.xlabel(labelx)
     plt.ylabel(labely)
     xbins = np.zeros(nbinsover)
