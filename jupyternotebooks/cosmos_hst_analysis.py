@@ -178,7 +178,6 @@ _ = plotjointsersic(tab, 'profit.hst.mg8serserbpx', 'profit.hst.mg4fax2px', ["fl
 
 fluxes = tab['profit.hst2hsc.mg8sermpx.flux.1']
 flux_scales = tab['profit.hst2hsc.mg8sermpx.flux_scale_hst2hsc.1']
-print(flux_scales)
 tab['profit.hst2hsc.mg8sermpx.flux.1'] /= flux_scales
 _ = plotjointsersic(tab, 'profit.hst2hsc.mg8sermpx', 'profit.hst.mg8sermpx', varnames, plotratiosjoint=False, postfixx='1', postfixy='1')
 _ = plotjointsersic(tab, 'profit.hst.mg8sermpx', 'profit.hst2hsc.mg8sermpx', varnames, postfixx='1', postfixy='1')
