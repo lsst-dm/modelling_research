@@ -234,6 +234,7 @@ class MultiProFitTask(pipeBase.Task):
         self.schema = None
         self.modeller = mpfObj.Modeller(None, 'scipy')
         self.models = {}
+        self.mask_names_zero = ['BAD', 'EDGE', 'SAT', 'NO_DATA']
 
     def _getMapper(self, schema):
         """Return a suitably configured schema mapper.
@@ -441,10 +442,15 @@ class MultiProFitTask(pipeBase.Task):
             else:
                 for noiseReplacer, (band, exposure) in zip(extras, exposures.items()):
                     noiseReplacer.insertSource(source.getId())
+                    bitmask = 0
+                    for bitname in self.mask_names_zero:
+                        bitval = exposure.mask.getPlaneBitMask(bitname)
+                        bitmask |= bitval
+                    err = 1. / np.float64(exposure.variance.subset(bbox).array)
+                    err[exposure.mask.subset(bbox).array & bitmask != 0] = 0
                     exposurePsfs.append((
                         mpfObj.Exposure(
-                            band=band, image=np.float64(exposure.image.subset(bbox).array),
-                            error_inverse=1. / np.float64(exposure.variance.subset(bbox).array),
+                            band=band, image=np.float64(exposure.image.subset(bbox).array), error_inverse=err,
                             is_error_sigma=False),
                         mpfObj.PSF(band, image=exposure.getPsf().computeKernelImage(center), engine="galsim")
                     ))
