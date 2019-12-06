@@ -216,11 +216,18 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
     # Get running percentiles
     for idxbin in range(nbinsover):
         xlower, xupper = binedges[[idxbin, idxbin + nbinspan + 1]]
-        condbin = (x >= xlower)*(x <= xupper)
-        xbins[idxbin] = np.median(x[condbin])
-        ybin = np.sort(y[condbin])
-        for idxper, percentile in enumerate(percentiles):
-            ybins[idxper][idxbin] = np.percentile(ybin, percentile)
+        condbin = (x >= xlower) & (x <= xupper)
+        # Add the bin percentiles
+        if np.any(condbin):
+            xbins[idxbin] = np.median(x[condbin])
+            ybin = np.sort(y[condbin])
+            for idxper, percentile in enumerate(percentiles):
+                ybins[idxper][idxbin] = np.percentile(ybin, percentile)
+        else:
+            # Repeat previous value if bin is somehow empty
+            xbins[idxbin] = (xlower + xupper)/2.
+            for idxper, percentile in enumerate(percentiles):
+                ybins[idxper][idxbin] = ybins[idxper][idxbin-1] if idxbin > 0 else np.nan
     for yper, pc, colpc in zip(ybins, percentiles, percentilecolours):
         plt.plot(xbins, yper, linestyle='-', color=colpc, linewidth=1.5, label=str(pc) + 'th %ile')
         for idxbin, idxlim in [(0, 0), (-1, 1)]:
