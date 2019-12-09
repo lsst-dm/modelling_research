@@ -22,8 +22,10 @@ from multiprofit.utils import flux_to_mag, mag_to_flux
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 import seaborn as sns
 from timeit import default_timer as timer
+import traceback
 
 
 # In[2]:
@@ -59,24 +61,39 @@ def readAsAstropy(file, time=True):
 
 postfix_cat = "_mag.fits"
 path_proj = "/project/dtaranu/cosmos/hsc/"
+subdir = f'{path_proj}/2019-12-04'
+prefix_hst = f"{subdir}/hst_F814W_iso/mpf_F814W_iso_9813_"
 cats = {}
+bands_ref = 'iz'
 for bands in ['i', 'griz', 'iz']:
-    path = f"{path_proj}2019-11-[0-3][0-3]/hsc_{bands}/mpf_9813_[0-9],[0-9]_{bands}_mag.fits"
+    is_ref = bands == bands_ref
+    path = f"{subdir}/hsc_{bands}/mpf_{bands}_9813_[0-9],[0-9]_mag.fits"
     files = np.sort(glob.glob(path))
     tables = []
-    if bands == 'iz':
-        patches = []
-        patch_rows = []
+    if is_ref:
         rows = 0
-    for file in files:
-        table = readAsAstropy(file)
-        tables.append(table)
-        if bands == 'iz':
-            rows += len(table)
-            patch_rows.append(rows)
-            patches.append(file.split('/')[-1].split('_')[2])
-    cats[bands] = vstack(tables)
-cats['f814w'] = vstack([readAsAstropy(f'{path_proj}/2019-11-12/hst_iso/mpf_9813_{x}_F814W_iso.fits') for x in patches])
+        patches = []
+        patches_unmatch = []
+        patch_rows = []
+        files_match = []
+        files_unmatch = []
+        for file in files:
+            patch = file.split('/')[-1].split('_')[3]
+            matched = os.path.isfile(f'{prefix_hst}{patch}.fits')
+            (files_match if matched else files_unmatch).append(file)
+            (patches if matched else patches_unmatch).append(patch)
+        file_lists = {'': files_match, '_unmatched': files_unmatch}
+    else:
+        file_lists = {'': files}
+    for postfix, files in file_lists.items():
+        for file in files:
+            table = readAsAstropy(file)
+            tables.append(table)
+            if is_ref:
+                rows += len(table)
+                patch_rows.append(rows)
+        cats[f'{bands}{postfix}'] = vstack(tables)
+cats['f814w'] = vstack([readAsAstropy(f'{prefix_hst}{patch}.fits') for patch in patches])
 
 
 # In[4]:
@@ -90,6 +107,7 @@ models = {
     },
     "gauss": {
         "mpf": ("multiprofit_gausspx_", 1),
+        "base": ("base_GaussianFlux_", 1)
     },
     "exp": {
         "mpf": ("multiprofit_mg8expgpx_", 1),
@@ -116,7 +134,8 @@ names = {
         "mpf": "instFlux",
         "mpf-psf": None,
         "mmf": "instFlux",
-        "mmf-psf": None,        
+        "mmf-psf": None,
+        "base": "instFlux",
     },
     "flux_z": {
         "mpf": "HSC-Z_instFlux",
@@ -166,12 +185,16 @@ names = {
     },
     "chisqred": {
         "mpf": "chisqred",
+    },
+    "time": {
+        "mmf": "time",
+        "mpf": "time",
     }
 }
-names_extra = ["time"]
-names_optional = ["nser", "loglike", "chisqred", "flux_z", "mag_z"]
-names_base = ["base_PixelFlags_flag_saturatedCenter", "base_PixelFlags_flag_sensor_edgeCenter",
-              "deblend_tooManyPeaks", "detect_isPatchInner", "modelfit_CModel_flag"]
+names_optional = ["nser", "loglike", "chisqred", "flux_z", "mag_z", "time"]
+flags_bad = ["base_PixelFlags_flag_saturatedCenter", "base_PixelFlags_flag_sensor_edgeCenter",
+             "deblend_tooManyPeaks", "modelfit_CModel_flag"]
+flags_good = ["detect_isPatchInner"]
 
 
 # In[5]:
@@ -192,14 +215,16 @@ for bands, cat in cats.items():
         is_psf = name_model == "psf"
         datum_model = {}
         for algo, (prefix, n_comps) in algos.items():
+            is_base = algo == "base"
             is_mmf = algo == "mmf"
+            is_base_or_mmf = is_base or is_mmf
             is_mpf = algo == "mpf"
             if is_mpf and is_psf:
                 prefix += band_prefix
             is_mmf_psf = is_mmf and is_psf
             datum = {}
             postfixes_out = [str(1 + x) for x in range(n_comps - is_psf)]
-            postfixes_in = np.repeat("", len(postfixes_out)) if (n_comps == 1 and is_mmf) else                 [f'{"c" if is_mpf else ""}{is_mpf + x}{joiner}' for x in range(n_comps - is_psf)]
+            postfixes_in = np.repeat("", len(postfixes_out)) if (n_comps == 1 and is_base_or_mmf) else                 [f'{"c" if is_mpf else ""}{is_mpf + x}{joiner}' for x in range(n_comps - is_psf)]
             if is_cmodel:
                 names_algo = {"loglike": names["loglike"]}
                 if not is_hst:
@@ -208,8 +233,10 @@ for bands, cat in cats.items():
                 names_algo = names
             for item, colnames in names_algo.items():
                 is_optional = item in names_optional
-                is_loglike = item == "loglike" or item == "chisqred"
-                is_mmf_loglike = is_mmf and is_loglike
+                is_like = (item == "loglike") or (item == "chisqred")
+                is_not_component = is_like or (item == "time")
+                is_mmf_like = is_mmf and is_like
+                is_mmf_not_component = is_mmf and is_not_component 
                 colname_postfix = '-psf' if (is_psf and f'{algo}-psf' in colnames) else ''
                 colname_in = f"{algo}{colname_postfix}"
                 colname = colnames.get(colname_in)
@@ -223,23 +250,22 @@ for bands, cat in cats.items():
                 if colname is not None:
                     if log:
                         print("item, colname, bands", item, colname, bands)
-                    for postfix_in, postfix_out in zip([""] if is_loglike else postfixes_in, postfixes_out):
-                        prefix_name = "multiprofit_measmodel_" if is_mmf_loglike else prefix
-                        colname_full = f"{prefix_name}{postfix_in}{colname}" if is_mmf_psf else                             f'{prefix_name}{postfix_in if len(postfix_in) > 0 else ""}{colname}{(joiner + name_model) if is_mmf_loglike else ""}'
+                    for postfix_in, postfix_out in zip([""] if is_not_component else postfixes_in, [""] if is_not_component else postfixes_out):
+                        prefix_name = "multiprofit_measmodel_" if is_mmf_like else prefix
+                        if is_mmf_psf:
+                            colname_full = f"{prefix_name}{postfix_in}{colname}"
+                        else:
+                            colname_full = f'{prefix_name}{postfix_in if len(postfix_in) > 0 else ""}'                                            f'{colname}{(joiner + name_model) if is_mmf_like else ""}'
                         if log:
                             print(item, colname_in, colname, is_optional, colname_full,
                                   colname_full in colnames_cat, f"{item}{joiner}{postfix_out}")
-                        if not is_optional or (colname_full in colnames_cat):
+                        if colname_full in colnames_cat:
                             column = cat[colname_full]
                             is_sigma = item.startswith("sigma_")
-                            if "item" == "mag" or is_sigma:
+                            if is_sigma:
                                 column = np.clip(column, 1e-2, np.Inf)
-                            datum[f"{item}{joiner}{postfix_out}"] = column
-            for colname in names_base:
-                datum[colname] = cat[colname]
-            for colname in names_extra:
-                if not (colname == "time" and (is_mmf_psf or is_cmodel)):
-                    datum[colname] = np.clip(cat[f"{prefix}{colname}"], -4, np.Inf)
+                        name_out = f"{item}{joiner if len(postfix_out) > 0 else ''}{postfix_out}"
+                        datum[name_out] = column
             if log:
                 print(algo, name_model, datum.keys(), postfixes_in, postfixes_out)
             if is_cmodel:
@@ -252,7 +278,7 @@ for bands, cat in cats.items():
                     datum["fracDev"] = flux_dev/(flux_dev + flux_exp)
                     del datum["mag_2"]
                     datum["mag_1"] = mag_c
-            else:
+            elif not is_base:
                 expo = 2 - is_mmf
                 for postfix in postfixes_out:
                     postfix = f"{joiner}{postfix}"
@@ -264,11 +290,13 @@ for bands, cat in cats.items():
                         datum[name_sigma_x] = np.sqrt(datum[name_sigma_x])
                         datum[name_sigma_y] = np.sqrt(datum[name_sigma_y])
                         datum[name_rho] = datum[name_rho]/(datum[name_sigma_x]*datum[name_sigma_y])
-            good = cat["detect_isPatchInner"]
-            for flag in [
-                "base_PixelFlags_flag_saturatedCenter", "base_PixelFlags_flag_sensor_edgeCenter",
-                "deblend_tooManyPeaks", "modelfit_CModel_flag"]:
-                good = good & ~cat[flag]
+            good = ~cat[flags_bad[0]]
+            for flags, is_bad in ((flags_bad[1:], True), (flags_good, False)):
+                for flag in flags:
+                    good = good & (~cat[flag] if is_bad else cat[flag])
+                    n_good = np.sum(good)
+                    if(not n_good > 0):
+                        raise RuntimeError(f'Found {n_good}/{len(good)} after flag {flag}')
             datum['good'] = good
             datum_model[algo] = datum
         datum_bands[name_model] = datum_model
@@ -286,8 +314,8 @@ units = {
 }
 
 columns_plot = {
-    "loglike": dict(postfix="_1", difference=True, limx=(0, 6e3), limy=(-25, 25), crop_x=True),
-    "time": dict(postfix="", log=True, ratio=True, limx=(-3., 0), limy=(-1.5, 2.5)),
+    "loglike": dict(postfix="", difference=True, limx=(0, 6e3), limy=(-25, 25), crop_x=True),
+    "time": dict(postfix="", log=True, ratio=True, limx=(-3., 0.5), limy=(-1.5, 2.5), plot_cumulative=True),
     "mag": dict(postfix="_1", difference=True, limx=(16.5, 29), limy=(-0.4, 0.2)),
     "mag_bright": dict(postfix="_1", difference=True, limx=(16.5, 24), limy=(-0.15, 0.15),
                        crop_x=True, column="mag"),
@@ -312,13 +340,15 @@ def get_columns_info(column_info, name_plot):
     datum_idx_x = column_info.get('datum_idx_x', 0)
     datum_idx_y = column_info.get('datum_idx_y', 1)
     name_column_y = column_info.get("column_y", name_column_x)
+    plot_cumulative = column_info.get("plot_cumulative", False)
     column_y = column_x if name_column_y is name_column_x else         f"{name_column_y}{column_info.get('postfix','')}"
-    return column_x, column_y, name_column_x, name_column_y, datum_idx_x, datum_idx_y
+    return column_x, column_y, name_column_x, name_column_y, datum_idx_x, datum_idx_y, plot_cumulative
 
 
 def plot_column_pair(
     x, y, cond, column_info, name_column_x, name_column_y,
-    algo_x, algo_y, model, band, units=None, title=None
+    algo_x, algo_y, model, band, units=None, title=None, cumulative=False,
+    title_cumulative=None
 ):
     if units is None:
         units = {}
@@ -330,16 +360,19 @@ def plot_column_pair(
     is_combo = is_ratio or is_difference
     crop_x = column_info.get('crop_x', False)
     crop_y = column_info.get('crop_y', False)
+    y_plot = y
     if is_difference:
-        y = y - x
+        y_plot = y_plot - x
     elif is_ratio:
-        y = y/x
+        y_plot = y/x
     if is_log_x:
         x = np.log10(x)
     if is_log_y:
-        y = np.log10(y)
-    unit_x = f", {units[name_column_x]}" if name_column_x in units else ''
-    unit_y = f" ({units[name_column_y]})" if (not is_ratio and name_column_y in units) else ''
+        y_plot = np.log10(y_plot)
+    unit_x = units.get(name_column_x, None)
+    unit_x_fmt = f', {unit_x}' if unit_x is not None else ''
+    unit_y = units.get(name_column_y, None)
+    unit_y_fmt = f" ({unit_y})" if (not is_ratio and name_column_y in units) else ''
     good = cond & np.isfinite(x) & np.isfinite(y)
     if name_column_x == "reff":
         good = good & (x > -1.)
@@ -348,20 +381,54 @@ def plot_column_pair(
     if crop_x:
         good = good & (x > lim_x[0]) & (x < lim_x[1])
     if crop_y:
-        good = good & (y > lim_y[0]) & (y < lim_y[1])
+        good = good & (y_plot > lim_y[0]) & (y_plot < lim_y[1])
     prefix = "log10 " if is_log else ""
-    postfix_x = f" [{algo_x}] ({model}, {band}-band{unit_x})"
-    postfix_y = f" [{algo_y}{'/' if is_ratio else '-'}{algo_x}]" if is_combo else f" [{algo_y}]{unit_y}"
+    postfix_x = f" [{algo_x}] ({model}, {band}-band{unit_x_fmt})"
+    postfix_y = f" [{algo_y}{'/' if is_ratio else '-'}{algo_x}]" if is_combo else f" [{algo_y}]{unit_y_fmt}"
+    label_x = f"{prefix}{name_column_x}{postfix_x}"
+    x_good, y_good = (ax[good] for ax in [x, y_plot])
     plotjoint_running_percentiles(
-        x[good], y[good], ndivisions=20, nbinspan=4, **argspj,
-        labelx=f"{prefix}{name_column_x}{postfix_x}", labely=f"{prefix}{name_column_y}{postfix_y}",
-        limx=lim_x, limy=lim_y, title=title)
+        x_good, y_good, ndivisions=np.max((20, int(len(x_good)/4000))), nbinspan=4, **argspj,
+        labelx=label_x, labely=f"{prefix}{name_column_y}{postfix_y}", limx=lim_x, limy=lim_y, title=title)
     plt.show(block=False)
+    if cumulative:
+        x_plot = [(np.sort(x_good), is_log_x, algo_x)]
+        plot_y = unit_x == unit_y
+        if plot_y:
+            if is_difference or is_ratio:
+                y_plot = np.log10(y[good]) if is_log_y else y[good]
+            x_plot.append((np.sort(y_plot), is_log_y, algo_y))
+        y_max = 0
+        for x_cumul, is_log, label in x_plot:
+            y_cumul = np.cumsum(10**x_cumul if is_log else x_cumul)
+            y_max = np.nanmax([y_max, y_cumul[-1]])
+            postfix_label = ''
+            # Clip slightly before lim_x[1] so that it plots nicely at the edge if it needs to be clipped
+            x_max = lim_x[1] - 1e-3*(lim_x[1] - lim_x[0])
+            if x_cumul[-1] > x_max:
+                idx = np.searchsorted(x_cumul, x_max)
+                x_cumul[idx] = x_max
+                y_cumul[idx] = y_cumul[-1]
+                idx = idx + 1
+                x_cumul = x_cumul[0:idx]
+                y_cumul = y_cumul[0:idx]
+                postfix_label = ' (clipped)'
+            sns.lineplot(x=x_cumul, y=y_cumul, label=f'{label}{postfix_label}', ci=None)
+        if plot_y:
+            plt.legend()
+        plt.xlim(lim_x)
+        plt.ylim([0, y_max])
+        plt.xlabel(label_x)
+        plt.ylabel(f'Cumulative {name_column_x} ({unit_x})')
+        if title_cumulative is not None:
+            plt.title(title_cumulative)
     
 
-def plot_models(data, band, algos, columns_plot, columns_plot_size):
+def plot_models(data, band, algos, columns_plot, columns_plot_size, models=None):
+    if models is None:
+        models = ["exp", "dev", "cmodel"]
     data_band = data[band]
-    for model in ["exp", "dev", "cmodel"]:
+    for model in models:
         is_single_comp = model != "cmodel"
         data_model = data_band[model]
         data_algos = [data_model[algo] for algo in algos]
@@ -370,17 +437,19 @@ def plot_models(data, band, algos, columns_plot, columns_plot_size):
         title = f'N={np.count_nonzero(cond)}'
         for name_plot, column_info in (columns_plot_size if is_single_comp else columns_plot).items():
             print(f"Plotting model {model} plot {name_plot}")
-            column_x, column_y, name_column_x, name_column_y, datum_idx_x, datum_idx_y =                 get_columns_info(column_info, name_plot)
+            column_x, column_y, name_column_x, name_column_y, datum_idx_x, datum_idx_y, plot_cumulative =                 get_columns_info(column_info, name_plot)
             try:
                 x = data_algos[datum_idx_x][column_x]
                 y = data_algos[datum_idx_y][column_y]
                 plot_column_pair(x, y, cond, column_info, name_column_x, name_column_y,
-                                 algos[datum_idx_x], algos[datum_idx_y], model, band, units, title=title)
+                                 algos[datum_idx_x], algos[datum_idx_y], model, band, units, title=title,
+                                 cumulative=plot_cumulative, title_cumulative=title if plot_cumulative else None)
             except Exception as e:
                 data_model_name = f"data['{band}']['{model}']"
                 print(f"Failed to read {data_model_name}['{algos[datum_idx_x]}']['{column_x}'] and/or "
                       f"{data_model_name}['{algos[datum_idx_y]}']['{column_y}'] "
                       f"due to {getattr(e, 'message', repr(e))}")
+                traceback.print_exc()
 
 
 # ## Comparing i-band meas_modelfit vs MultiProFit
@@ -430,11 +499,13 @@ def plot_models_algo(data, band, algo, models, columns_plot, columns_plot_size_a
     title = f'N={np.count_nonzero(cond)}'
     for name_plot, column_info in (columns_plot_size if is_single_comp else columns_plot).items():
         print(f"Plotting models {models} plot {name_plot}")
-        column_x, column_y, name_column_x, name_column_y, datum_idx_x, datum_idx_y =             get_columns_info(column_info, name_plot)
+        column_x, column_y, name_column_x, name_column_y, datum_idx_x, datum_idx_y, plot_cumulative =             get_columns_info(column_info, name_plot)
         try:
             x = data_algos[0][column_x]
             y = data_algos[1][column_y]
-            plot_column_pair(x, y, cond, column_info, name_column_x, name_column_y, models[0], models[1], algo, band, units, title=title)
+            plot_column_pair(x, y, cond, column_info, name_column_x, name_column_y,
+                             models[0], models[1], algo, band, units, title=title,
+                             cumulative=plot_cumulative, title_cumulative=title if plot_cumulative else None)
         except Exception as e:
             data_model_names = [f"data['{band}']['{model}']" for model in models]
             print(f"Failed to read {data_model_names[0]}['{algo}']['{column_x}'] and/or "
@@ -470,6 +541,15 @@ plot_models_algo(data, "griz", "mpf", ("mg8serb", "mg8serm"), {'loglike': column
 columns_plot["loglike"]["limy"], columns_plot_size["reff"]["limy"] = limy
 
 
+# ## Plot Gaussian size-mag_i relation
+# Is the Gaussian model more robust to growing to unreasonable sizes? Apparently not.
+
+# In[13]:
+
+
+plot_models(data, "i", ("mpf", "mpf"), {}, {"mag_reff_mmf": columns_plot_size["mag_reff_mmf"]}, models=["gauss"])
+
+
 # ## Comparing HSC-[IZ] with HST-F814W fits
 # Here the HST fits are for isolated HSC sources only (and hence have fewer bright galaxies since they tend to be larger and are thus more likely to be blended). This is to avoid having to deblend the HST sources.
 # This does mean that some fraction of the sources will be:
@@ -477,7 +557,7 @@ columns_plot["loglike"]["limy"], columns_plot_size["reff"]["limy"] = limy
 #     - undetected blends in HSC,
 #     - undetected in one or more bands, usually HST, but potentially HSC-I/Z for red/blue sources, respectively.
 
-# In[13]:
+# In[14]:
 
 
 # Define function for HSC vs HST plots
@@ -489,6 +569,7 @@ def plot_mpf_model_hsc_vs_hst(model, model_reff=None, plot_only_size_mag=False, 
     data_hsc = data['iz'][model]['mpf']
     if model_reff is None:
         model_reff = model
+    if model_reff == model:
         data_hst_reff, data_hsc_reff = data_hst, data_hsc
     else:
         data_hst_reff = data['f814w'][model]['mpf']
@@ -501,6 +582,9 @@ def plot_mpf_model_hsc_vs_hst(model, model_reff=None, plot_only_size_mag=False, 
     flux_hsc = data_hsc["flux_1"] + data_hsc["flux_z_1"]
     flux_hst = data_hst["flux_1"]
     good = cond & np.isfinite(flux_hsc) & np.isfinite(flux_hst) & data_hsc['good']
+    print(f"lim_x={lim_x} cond={np.sum(cond)}. isfin_hsc={np.sum(np.isfinite(flux_hsc))},"
+          f"isfin_hst={np.sum(np.isfinite(flux_hsc))}, good={np.sum(data_hsc['good'])}, allgood={np.sum(good)},"
+          f"good_not_cond={np.sum(good & ~cond)}")
     if reff_min is not None:
         good = good & (data_hst_reff["reff_1"] > reff_min/0.03)
     y = np.log10(flux_hsc[good]/flux_hst[good]) - 0.88
@@ -514,7 +598,7 @@ def plot_mpf_model_hsc_vs_hst(model, model_reff=None, plot_only_size_mag=False, 
             big_hsc = reff_hsc > -0.3
             big = big_hst | big_hst
             num_big = np.count_nonzero(big)
-            print(f'n_big_hst,hsc={np.count_nonzero(big_hst)},{np.count_nonzero(big_hsc)}; ' 
+            print(f'n_big_hst, hsc={np.count_nonzero(big_hst)}, {np.count_nonzero(big_hsc)}; ' 
                   f'frac_big={num_big}/{n_good}={num_big/n_good:.3e}')
             y = reff_hsc - reff_hst
             prefix = '$R_{eff, HSC|HST}$ > 0.5"'
@@ -548,7 +632,17 @@ def plot_mpf_model_hsc_vs_hst(model, model_reff=None, plot_only_size_mag=False, 
                     limx=lim_x, limy=(-0.6, 0.6), title=f'{prefix}, N={np.count_nonzero(good_size)}')
 
 
-# In[14]:
+# In[15]:
+
+
+plot_mpf_model_hsc_vs_hst("gauss")
+plt.show()
+
+
+# ## Are Gaussian sizes more robust?
+# Sadly, it doesn't seem so. TODO: Plot sizes vs PSF mags; most unreasonably large galaxies are probably >27 mags.
+
+# In[16]:
 
 
 # Plot the presumably robust Gaussian fits
@@ -558,14 +652,14 @@ print('Gauss mag vs Sersic reff')
 plot_mpf_model_hsc_vs_hst("gauss", model_reff="mg8serb", plot_only_size_mag=True, reff_min=1e-2, lims_mag=(18.5, 26))
 
 
-# In[15]:
+# In[17]:
 
 
 # Plot the hopefully still mostly robust exponential fits
 plot_mpf_model_hsc_vs_hst("exp")
 
 
-# In[16]:
+# In[18]:
 
 
 # Plot Sersic fits, including Sersic index
@@ -575,7 +669,7 @@ plot_mpf_model_hsc_vs_hst("mg8serb")
 # ## Investigating Discrepancies
 # Why don't HSC and HST match for bright sources which should be fairly reliably recovered?
 
-# In[17]:
+# In[19]:
 
 
 # Load the Butler for the latest HSC re-run, and all of the overlapping COSMOS HST images
@@ -590,7 +684,7 @@ calexps = {}
 meas = {}
 
 
-# In[18]:
+# In[20]:
 
 
 # Cache the calexps and original measurement catalogs with bboxes
@@ -609,7 +703,7 @@ tract = 9813
 bands = ['HSC-Z', 'HSC-I', 'HSC-R']
 
 
-# In[19]:
+# In[21]:
 
 
 # Plot HSC and HST images of discrepant models
@@ -652,10 +746,4 @@ for idx_row in row_big:
     plt.tight_layout()
     plt.show(block=False)
 sns.set_style("darkgrid", {'axes.grid' : True})
-
-
-# In[ ]:
-
-
-
 

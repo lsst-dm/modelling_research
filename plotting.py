@@ -272,11 +272,13 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
         cond = (y > ybins[0][idxbin]) & (y < ybins[-1][idxbin])
         cond = cond & ((x < xbins[idxbin]) if (idxbin == 0) else (x > xbins[idxbin]))
         plt.scatter(x[cond], y[cond], s=1, marker='+', color='k')
-    p.ax_marg_x.hist(x, bins=ndivisions * 2, weights=np.repeat(1.0 / len(x), len(x)))
+    p.ax_marg_x.hist(x, bins=ndivisions * 2, weights=np.repeat(1.0 / len(x), len(x)),
+                     histtype='stepfilled', linewidth=0)
     plt.setp(p.ax_marg_x.get_yticklabels(), visible=True)
     if histtickspacingxmaj is not None:
         p.ax_marg_x.yaxis.set_major_locator(mpl.ticker.MultipleLocator(histtickspacingxmaj))
-    p.ax_marg_y.hist(y, orientation='horizontal', bins=ndivisions * 4, weights=np.repeat(1.0 / len(y), len(y)))
+    p.ax_marg_y.hist(y, orientation='horizontal', bins=ndivisions * 4,
+                     weights=np.repeat(1.0 / len(y), len(y)), histtype='stepfilled', linewidth=0)
     p.ax_marg_y.xaxis.set_ticks_position('top')
     plt.setp(p.ax_marg_y.get_xticklabels(), visible=True)
     if histtickspacingymaj is not None:
