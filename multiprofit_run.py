@@ -76,12 +76,14 @@ def get_data(butler, tract, name_patch, cat_type=None, exposure_type=None, filte
     return exposures, sources
 
 
-def main():
-    path_cosmos_galsim = "/project/dtaranu/cosmos/hst/COSMOS_25.2_training_sample"
-    if not os.path.isdir(path_cosmos_galsim):
-        path_cosmos_galsim = None
-    parser = argparse.ArgumentParser(description='MultiProFit Butler Task running test',
-                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+def get_flags():
+    """ Return all valid MultiProFit Task flags with annotations.
+
+    Returns
+    -------
+    flags : `dict` [`dict`]
+        A dict of flag specifications (as dicts) by name.
+    """
     # TODO: Figure out if there's a way to get help from docstrings (defaults can be read easily)
     flags = {
         'repo': dict(type=str, nargs='?', default="/datasets/hsc/repo/rerun/RC/w_2019_38/DM-21386/",
@@ -94,7 +96,8 @@ def main():
         'filters': dict(type=str, nargs='*', default=['HSC-I'], help="List of bandpass filters"),
         'idx_begin': dict(type=int, nargs='?', default=0, help="Initial row index to fit"),
         'idx_end': dict(type=int, nargs='?', default=np.Inf, help="Final row index to fit"),
-        'path_cosmos_galsim': dict(type=str, nargs='?', default=path_cosmos_galsim,
+        'path_cosmos_galsim': dict(type=str, nargs='?',
+                                   default="/project/dtaranu/cosmos/hst/COSMOS_25.2_training_sample",
                                    help="Path to GalSim COSMOS catalogs"),
         'plot': dict(action='store_true', default=False, help="Plot each source fit"),
         'printTrace': dict(action='store_true', default=False, help="Print traceback for errors"),
@@ -106,6 +109,13 @@ def main():
                     default=field.default,
                     help=f'Value for MultiProFitConfig.{param}', kwarg=True)
         flags[param] = flag
+    return flags
+
+
+def main():
+    parser = argparse.ArgumentParser(description='MultiProFit Butler Task running test',
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    flags = get_flags()
     kwargs = set()
 
     for key, value in flags.items():
@@ -138,7 +148,7 @@ def main():
                                   filters=args.filters)
     catalog, results = task.fit(exposures, sources, idx_begin=args.idx_begin, idx_end=args.idx_end,
                                 printTrace=args.printTrace, plot=args.plot,
-                                path_cosmos_galsim=path_cosmos_galsim)
+                                path_cosmos_galsim=args.path_cosmos_galsim)
     return catalog, results
 
 
