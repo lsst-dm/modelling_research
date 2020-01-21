@@ -339,7 +339,8 @@ class MultiProFitTask(pipeBase.Task):
         if filter_ref is None:
             filter_ref = list(filters)[0]
         fluxes = ['_'.join(name.split('_')[0:-1]) for name in catalog.schema.getNames() if
-                  ('fit_' in name and name.endswith('_instFlux')) or name.endswith('Flux_instFlux')]
+                  ('fit_' in name and name.endswith('_instFlux')) or name.endswith('Flux_instFlux')
+                  or name.endswith('SdssShape_instFlux')]
         fluxes_filter = {band: [] for band in filters}
         for flux in fluxes:
             last = flux.split('_')[-1]
@@ -438,6 +439,8 @@ class MultiProFitTask(pipeBase.Task):
                 corners, cens = cutout.get_corners_src(source, wcs_src)
                 exposure, cen_hst, psf = cutout.get_exposure_cutout_HST(
                     corners, cens, extras, get_inv_var=True, get_psf=True)
+                if np.sum(exposure.image > 0) == 0:
+                    raise RuntimeError('HST cutout has zero positive pixels')
                 exposurePsfs.append((exposure, psf))
             else:
                 for noiseReplacer, (band, exposure) in zip(extras, exposures.items()):
@@ -892,6 +895,8 @@ class MultiProFitTask(pipeBase.Task):
                     f"{errorMsg}")
             if toWrite and addedFields and (nFit % self.config.intervalOutput) == 0:
                 catalog.writeFits(self.config.filenameOut)
+        if toWrite and addedFields and (nFit % self.config.intervalOutput) != 0:
+            catalog.writeFits(self.config.filenameOut)
         # Return the exposures to their original state
         if not self.config.fitHstCosmos:
             for noiseReplacer in extras:
