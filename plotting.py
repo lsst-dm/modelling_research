@@ -221,7 +221,7 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
         condbin = (x >= xlower) & (x <= xupper)
         # Add the bin percentiles
         if np.any(condbin):
-            xbins[idxbin] = np.median(x[condbin])
+            xbins[idxbin] = np.ma.median(x[condbin])
             ybin = np.sort(y[condbin])
             for idxper, percentile in enumerate(percentiles):
                 ybins[idxper][idxbin] = np.percentile(ybin, percentile)
