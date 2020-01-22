@@ -15,7 +15,8 @@ from lsst.geom import degrees, Point2D
 import glob
 from lsst.afw.table import SourceCatalog
 from lsst.daf.persistence import Butler
-from modelling_research.make_cutout import get_exposure_cutout_HST, get_exposures_HST_COSMOS, get_tiles_overlapping_HST, get_tiles_HST_COSMOS
+from modelling_research.make_cutout import (get_exposure_cutout_HST, get_exposures_HST_COSMOS,
+     get_tiles_overlapping_HST, get_tiles_HST_COSMOS)
 from modelling_research.plotting import plotjoint_running_percentiles
 from multiprofit.gaussutils import sigma_to_reff
 from multiprofit.utils import flux_to_mag, mag_to_flux
@@ -39,10 +40,13 @@ mpl.rcParams['image.origin'] = 'lower'
 sns.set(rc={'axes.facecolor': '0.85', 'figure.facecolor': 'w'})
 
 argspj = dict(
-    percentiles = [5, 16, 50, 84, 95],
-    percentilecolours = [(0.4, 0.6, 0.9), (0.3, 0.45, 0.6), (0.3, 0.3, 0.3), (0.3, 0.45, 0.6), (0.4, 0.6, 0.9)],
+    percentiles=[2.5, 16, 50, 84, 97.5],
+    percentilecolours=[(0.4, 0.6, 0.9), (0.3, 0.45, 0.6), (0.3, 0.3, 0.3),
+                       (0.3, 0.45, 0.6), (0.4, 0.6, 0.9)],
     scatterleft=True,
     scatterright=True,
+    ndivisions=120,
+    nbinspan=2,
 )
 
 
@@ -59,10 +63,11 @@ def readAsAstropy(file, time=True):
         print(f'Loaded file {file} in {timer() - t_begin:.2f}s')
     return table
 
+
 postfix_cat = "_mag.fits"
 path_proj = "/project/dtaranu/cosmos/hsc/"
 subdir = f'{path_proj}/2019-12-04'
-prefix_hst = f"{subdir}/hst_F814W_iso/mpf_F814W_iso_9813_"
+prefix_hst = f"{path_proj}/2020-01-15/hst_F814W_iso/mpf_F814W_iso_9813_"
 cats = {}
 bands_ref = 'iz'
 for bands in ['i', 'griz', 'iz']:
@@ -109,6 +114,10 @@ models = {
         "mpf": ("multiprofit_gausspx_", 1),
         "base": ("base_GaussianFlux_", 1)
     },
+    "gauss_no_psf": {
+        "mpf": ("multiprofit_gausspx_no_psf_", 1),
+        "base": ("base_SdssShape_", 1)
+    },
     "exp": {
         "mpf": ("multiprofit_mg8expgpx_", 1),
         "mmf": ("modelfit_CModel_exp_", 1),
@@ -148,6 +157,7 @@ names = {
         "mpf-psf": None,
         "mmf": "mag",
         "mmf-psf": None,
+        "base": "mag",
     },
     "mag_z": {
         "mpf": "HSC-Z_mag",
@@ -165,16 +175,19 @@ names = {
         "mpf": "sigma_x",
         "mmf": "ellipse_xx",
         "mmf-psf": "xx",
+        "base": "xx",
     },
     "sigma_y": {
         "mpf": "sigma_y",
         "mmf": "ellipse_yy",
         "mmf-psf": "yy",
+        "base": "yy",
     },
     "rho": {
         "mpf": "rho",
         "mmf": "ellipse_xy",
         "mmf-psf": "xy",
+        "base": "xy",
     },
     "nser": {
         "mpf": "nser",
@@ -213,18 +226,18 @@ for bands, cat in cats.items():
     for name_model, algos in models.items():
         is_cmodel = name_model == "cmodel"
         is_psf = name_model == "psf"
+        is_gauss = name_model == "gauss"
         datum_model = {}
         for algo, (prefix, n_comps) in algos.items():
             is_base = algo == "base"
             is_mmf = algo == "mmf"
-            is_base_or_mmf = is_base or is_mmf
             is_mpf = algo == "mpf"
             if is_mpf and is_psf:
                 prefix += band_prefix
             is_mmf_psf = is_mmf and is_psf
             datum = {}
             postfixes_out = [str(1 + x) for x in range(n_comps - is_psf)]
-            postfixes_in = np.repeat("", len(postfixes_out)) if (n_comps == 1 and is_base_or_mmf) else                 [f'{"c" if is_mpf else ""}{is_mpf + x}{joiner}' for x in range(n_comps - is_psf)]
+            postfixes_in = np.repeat("", len(postfixes_out)) if (n_comps == 1 and (is_base or is_mmf)) else                 [f'{"c" if is_mpf else ""}{is_mpf + x}{joiner}' for x in range(n_comps - is_psf)]
             if is_cmodel:
                 names_algo = {"loglike": names["loglike"]}
                 if not is_hst:
@@ -250,55 +263,62 @@ for bands, cat in cats.items():
                 if colname is not None:
                     if log:
                         print("item, colname, bands", item, colname, bands)
-                    for postfix_in, postfix_out in zip([""] if is_not_component else postfixes_in, [""] if is_not_component else postfixes_out):
+                    for postfix_in, postfix_out in zip([""] if is_not_component else postfixes_in,
+                                                       [""] if is_not_component else postfixes_out):
                         prefix_name = "multiprofit_measmodel_" if is_mmf_like else prefix
                         if is_mmf_psf:
                             colname_full = f"{prefix_name}{postfix_in}{colname}"
                         else:
                             colname_full = f'{prefix_name}{postfix_in if len(postfix_in) > 0 else ""}'                                            f'{colname}{(joiner + name_model) if is_mmf_like else ""}'
                         if log:
-                            print(item, colname_in, colname, is_optional, colname_full,
+                            print(bands, item, colname_in, colname, is_optional, colname_full,
                                   colname_full in colnames_cat, f"{item}{joiner}{postfix_out}")
                         if colname_full in colnames_cat:
                             column = cat[colname_full]
                             is_sigma = item.startswith("sigma_")
                             if is_sigma:
                                 column = np.clip(column, 1e-2, np.Inf)
-                        name_out = f"{item}{joiner if len(postfix_out) > 0 else ''}{postfix_out}"
-                        datum[name_out] = column
+                            name_out = f"{item}{joiner if len(postfix_out) > 0 else ''}{postfix_out}"
+                            datum[name_out] = column
             if log:
                 print(algo, name_model, datum.keys(), postfixes_in, postfixes_out)
-            if is_cmodel:
-                if is_mmf:
-                    datum["fracDev"] = cat[f"{prefix}fracDev"]
-                elif not is_hst:
-                    flux_dev = mag_to_flux(datum["mag_1"])
-                    flux_exp = mag_to_flux(datum["mag_2"])
-                    mag_c = flux_to_mag(flux_dev + flux_exp)
-                    datum["fracDev"] = flux_dev/(flux_dev + flux_exp)
-                    del datum["mag_2"]
-                    datum["mag_1"] = mag_c
-            elif not is_base:
-                expo = 2 - is_mmf
-                for postfix in postfixes_out:
-                    postfix = f"{joiner}{postfix}"
-                    name_sigma_x = f"sigma_x{postfix}"
-                    name_sigma_y = f"sigma_y{postfix}"
-                    datum[f"reff{postfix}"] = sigma2reff*np.sqrt(0.5*(datum[name_sigma_x]**expo + datum[name_sigma_y]**expo))
+            if datum:
+                if is_cmodel:
                     if is_mmf:
-                        name_rho = f"rho{postfix}"
-                        datum[name_sigma_x] = np.sqrt(datum[name_sigma_x])
-                        datum[name_sigma_y] = np.sqrt(datum[name_sigma_y])
-                        datum[name_rho] = datum[name_rho]/(datum[name_sigma_x]*datum[name_sigma_y])
-            good = ~cat[flags_bad[0]]
-            for flags, is_bad in ((flags_bad[1:], True), (flags_good, False)):
-                for flag in flags:
-                    good = good & (~cat[flag] if is_bad else cat[flag])
-                    n_good = np.sum(good)
-                    if(not n_good > 0):
-                        raise RuntimeError(f'Found {n_good}/{len(good)} after flag {flag}')
-            datum['good'] = good
-            datum_model[algo] = datum
+                        datum["fracDev"] = cat[f"{prefix}fracDev"]
+                    elif not is_hst:
+                        flux_dev = mag_to_flux(datum["mag_1"])
+                        flux_exp = mag_to_flux(datum["mag_2"])
+                        mag_c = flux_to_mag(flux_dev + flux_exp)
+                        datum["fracDev"] = flux_dev/(flux_dev + flux_exp)
+                        del datum["mag_2"]
+                        datum["mag_1"] = mag_c
+                elif not (is_base and is_gauss):
+                    expo = 2 - (is_mmf or is_base)
+                    for postfix in postfixes_out:
+                        postfix = f"{joiner}{postfix}"
+                        name_sigma_x = f"sigma_x{postfix}"
+                        name_sigma_y = f"sigma_y{postfix}"
+                        reff = np.sqrt(0.5*(datum[name_sigma_x]**expo + datum[name_sigma_y]**expo))
+                        if is_base:
+                            reff *= sigma2reff
+                        if is_mpf:
+                            reff[reff < 0.1] = 0.1
+                        datum[f"reff{postfix}"] = reff
+                        if is_mmf:
+                            name_rho = f"rho{postfix}"
+                            datum[name_sigma_x] = np.sqrt(datum[name_sigma_x])
+                            datum[name_sigma_y] = np.sqrt(datum[name_sigma_y])
+                            datum[name_rho] = datum[name_rho]/(datum[name_sigma_x]*datum[name_sigma_y])
+                good = ~cat[flags_bad[0]]
+                for flags, is_bad in ((flags_bad[1:], True), (flags_good, False)):
+                    for flag in flags:
+                        good = good & (~cat[flag] if is_bad else cat[flag])
+                        n_good = np.sum(good)
+                        if not n_good > 0:
+                            raise RuntimeError(f'Found {n_good}/{len(good)} after flag {flag}')
+                datum['good'] = good
+                datum_model[algo] = datum
         datum_bands[name_model] = datum_model
     data[bands] = datum_bands
 
@@ -388,8 +408,11 @@ def plot_column_pair(
     label_x = f"{prefix}{name_column_x}{postfix_x}"
     x_good, y_good = (ax[good] for ax in [x, y_plot])
     plotjoint_running_percentiles(
-        x_good, y_good, ndivisions=np.max((20, int(len(x_good)/4000))), nbinspan=4, **argspj,
-        labelx=label_x, labely=f"{prefix}{name_column_y}{postfix_y}", limx=lim_x, limy=lim_y, title=title)
+        x_good, y_good, **argspj,
+        labelx=label_x, labely=f"{prefix}{name_column_y}{postfix_y}",
+        title=title,
+        limx=lim_x, limy=lim_y,
+    )
     plt.show(block=False)
     if cumulative:
         x_plot = [(np.sort(x_good), is_log_x, algo_x)]
@@ -452,11 +475,49 @@ def plot_models(data, band, algos, columns_plot, columns_plot_size, models=None)
                 traceback.print_exc()
 
 
+# ## Joint Plot Format Description
+# Most of the following plots are joint plots made with seaborn. They show:
+# - A 2D kernel density estimate in a red-to-white gradient, covering the region where the density is too high for a scatter plot,
+# - Running percentiles for the y-axis quantity in x-axis bins containing equal numbers of points (with the line passing the point with the median x value within that bin),
+# - x- and y-axis marginalized histograms,
+# - Individual points coloured blue for outliers above/below the highest/lowest percentile per bin; and:
+# - Individual points coloured black for the outermost bins on the x-axis, where the percentiles are not measured.
+# The percentile measurements beyond the outermost bins also extend horizontally to the edge of the plot for visual purposes, indicating that any measurement of the percentiles beyond that region would be unreliable.
+
 # ## Comparing i-band meas_modelfit vs MultiProFit
 # 
 # Both are single-band fits.
 
+# ### Gaussian moments
+# These plots compare MultiProFit's single Gaussian, no PSF fits (useful for identifying faint point sources) with the stack's adaptive moments.
+# Encouragingly, they are nearly identical. This may even be a little surprising given that MultiProFit has a free centroid.
+
 # In[8]:
+
+
+# Plot i-band MMF vs MPF, no PSF Gauss only (should be very consistent)
+columns_plot_gnpf = {
+    "mag": dict(postfix="_1", difference=True, limx=(16.5, 29), limy=(-0.15, 0.1)),
+}
+columns_plot_size_gnpf = columns_plot_gnpf.copy()
+columns_plot_size_gnpf["reff"] = dict(postfix="_1", log=True, ratio=True, limx=(0., 1.), limy=(-0.3, 0.2))
+plot_models(data, "i", ("base", "mpf"), columns_plot_gnpf, columns_plot_size_gnpf, models=['gauss_no_psf'])
+
+
+# ### i-band MMF vs MPF, exp and deV
+# Some interesting results to note here:
+# 1. MultiProFit's exponential fits have better log likelihoods, almost certainly due to the free centroid since the other parameters are broadly consistent.
+# 2. Exp fit cumulative runtime is dominated by quick fits, not slow outliers. MPF is considerably slower than MMF but has a similar shape.
+# 3. MMF's size prior of ~4 pixels seems to dominate for low S/N galaxies, causing a pileup of galaxies with that size (especially for deV fits).
+# 4. MMF and MPF have a problem with unreasonably large and bright galaxies; visual inspection shows them mostly to be very low S/N objects/artifacts.
+# The large sizes mean that these have very low surface brightnesses but a lot of flux over a large area, so possibly they occur in regions with underestimated sky.
+# 5. MMF's size prior does work to limit the number of such overly large galaxies compared to MPF, but it isn't enough on its own.
+# 6. deV fits are in much greater disagreement than exp, possibly due to the difference in the Gaussian mixture approximation between MPF and MMF (which is Hogg & Lang 13/Tractor's luv profile).
+# 7. The pileup of deV fits at the size prior in MMF is more severe than for exp.
+# 8. While still faster than MPF overall, MMF deV cumulative runtime is dominated by a small number of slow (>3s) fits.
+# 9. CModel magnitudes are fairly consistent, probably because most galaxies have low fracDev and thus the discrepancy in deV fits is less important.
+
+# In[9]:
 
 
 # Plot i-band MMF vs MPF
@@ -468,19 +529,26 @@ plot_models(data, "i", ("mmf", "mpf"), columns_plot, columns_plot_size)
 # To be clear, these are comparing only the i-band parameters from the MultiProFit griz simultaneous fit. Some structural parameters are shared across bands (all of them for single Sersic fits). meas_modelfit is i-band only as before.
 # 
 # Right now the log likelihood plots are sadly useless because they include all bands for MultiProFit but only i-band for meas_modelfit.
+# 
+# The plots and conclusions therefrom are fairly similar to i-band only. Combined with the fact that the runtime scaling is close to optimal (slightly sub-linear with number of bands), this is an encouraging sign that multiband fits are practical.
 
-# In[9]:
+# In[10]:
 
 
 # Plot i-band MMF vs MPF (griz fit)
+columns_plot['time']['limx'] = (-3., 1)
+columns_plot_size['time']['limx'] = (-3., 1)
 plot_models(data, "griz", ("mmf", "mpf"), columns_plot, columns_plot_size)
 
 
 # ## Comparing griz-band MultiProFit CModel vs MG Sersic fits
 # 
-# As before, these are comparing only the i-band parameters, although griz are fit simultaneously.
+# As before, these are comparing only the i-band parameters, although griz are fit simultaneously. The main conclusions:
+# 
+# 1. Sersic fits aren't necessarily a clear winner over CModel. The median delta log likelihood is positive but fairly small. However, the 1-sigma contours are not symmetric in the Sersic model's favour, i.e. there are more galaxies where the Sersic is significantly better than CModel than vice versa.
+# 2. There are small but non-zero systematic offsets between Sersic and CModel mags, especially at the bright end.
 
-# In[10]:
+# In[11]:
 
 
 columns_plot_size_algo = columns_plot.copy()
@@ -514,7 +582,7 @@ def plot_models_algo(data, band, algo, models, columns_plot, columns_plot_size_a
                 #print(traceback.format_exc())
 
 
-# In[11]:
+# In[12]:
 
 
 # Plot MPF CModel vs Sersic (griz)
@@ -528,15 +596,17 @@ plot_models_algo(data, "griz", "mpf", ("cmodel", "mg8serb"), columns_plot, colum
 # mg8serm is initialized directly from the moments with n_ser=1 (exp.). This could be improved.
 # 
 # This is to test whether it is possible to initialize Sersic fits directly from the moments without having run any fixed-n fits (i.e. without running CModel).
+# The answer is yes, it can, but it takes a lot longer and sometimes converges to a worse fit - it turns out that many more galaxies hit the default max number of iterations of 100 per free parameter without converging.
 
-# In[12]:
+# In[13]:
 
 
 # Plot MPF Sersic with different initialization
-columns_plot["time"] = dict(postfix="", log=True, ratio=True, limx=(-2.3, 0.7), limy=(-1., 3.))
+columns_plot["time"] = dict(postfix="", log=True, ratio=True, limx=(-2., 2.), limy=(-1., 3.))
 limy = columns_plot["loglike"]["limy"], columns_plot_size["reff"]["limy"]
 columns_plot["loglike"]["limy"] = (-3, 0.2)
 columns_plot_size["reff"]["limy"] = (-0.7, 0.3)
+columns_plot_size["time"] = columns_plot["time"]
 plot_models_algo(data, "griz", "mpf", ("mg8serb", "mg8serm"), {'loglike': columns_plot['loglike']}, columns_plot_size_algo)
 columns_plot["loglike"]["limy"], columns_plot_size["reff"]["limy"] = limy
 
@@ -544,7 +614,7 @@ columns_plot["loglike"]["limy"], columns_plot_size["reff"]["limy"] = limy
 # ## Plot Gaussian size-mag_i relation
 # Is the Gaussian model more robust to growing to unreasonable sizes? Apparently not.
 
-# In[13]:
+# In[14]:
 
 
 plot_models(data, "i", ("mpf", "mpf"), {}, {"mag_reff_mmf": columns_plot_size["mag_reff_mmf"]}, models=["gauss"])
@@ -553,15 +623,17 @@ plot_models(data, "i", ("mpf", "mpf"), {}, {"mag_reff_mmf": columns_plot_size["m
 # ## Comparing HSC-[IZ] with HST-F814W fits
 # Here the HST fits are for isolated HSC sources only (and hence have fewer bright galaxies since they tend to be larger and are thus more likely to be blended). This is to avoid having to deblend the HST sources.
 # This does mean that some fraction of the sources will be:
-#     - artifacts in one (usually HSC, but mainly because I'm not checking all of the relevant flags before passing or using the masks),
-#     - undetected blends in HSC,
-#     - undetected in one or more bands, usually HST, but potentially HSC-I/Z for red/blue sources, respectively.
+#  1. artifacts in one (usually HSC, but mainly because I'm not checking all of the relevant flags before passing or using the masks); or
+#  2. undetected blends in HSC; or
+#  3. undetected in one or more bands, usually HST, but potentially HSC-I/Z for red/blue sources, respectively.
 
-# In[14]:
+# In[16]:
 
 
 # Define function for HSC vs HST plots
-def plot_mpf_model_hsc_vs_hst(model, model_reff=None, plot_only_size_mag=False, reff_min=None, lims_mag=None):
+def plot_mpf_model_hsc_vs_hst(model, model_reff=None, plot_only_size_mag=False, reff_min=None, lims_mag=None, argspj=None):
+    if argspj is None:
+        argspj = {}
     if lims_mag is None:
         lims_mag = (19.5, 25.5)
     lim_x = lims_mag
@@ -583,13 +655,17 @@ def plot_mpf_model_hsc_vs_hst(model, model_reff=None, plot_only_size_mag=False, 
     flux_hst = data_hst["flux_1"]
     good = cond & np.isfinite(flux_hsc) & np.isfinite(flux_hst) & data_hsc['good']
     print(f"lim_x={lim_x} cond={np.sum(cond)}. isfin_hsc={np.sum(np.isfinite(flux_hsc))},"
-          f"isfin_hst={np.sum(np.isfinite(flux_hsc))}, good={np.sum(data_hsc['good'])}, allgood={np.sum(good)},"
-          f"good_not_cond={np.sum(good & ~cond)}")
+          f"isfin_hst={np.sum(np.isfinite(flux_hsc))}, good={np.sum(data_hsc['good'])},"
+          f"allgood={np.sum(good)}, good_not_cond={np.sum(good & ~cond)}")
     if reff_min is not None:
         good = good & (data_hst_reff["reff_1"] > reff_min/0.03)
-    y = np.log10(flux_hsc[good]/flux_hst[good]) - 0.88
+    y = -2.5*(np.log10(flux_hsc[good]/flux_hst[good]) - 0.88)
     x_good = x[good]
     n_good = np.count_nonzero(good)
+    plotjoint_running_percentiles(
+        x_good, y, **argspj,
+        labelx=label_x, labely='mag$_{HSC}$-mag$_{HST}$',
+        limx=lim_x, limy=(-1, 1), title=f'N={n_good}')
     if is_single_comp:
         reff_hst = np.log10(data_hst_reff["reff_1"][good]*0.03)
         reff_hsc = np.log10(data_hsc_reff["reff_1"][good]*0.168)
@@ -603,23 +679,25 @@ def plot_mpf_model_hsc_vs_hst(model, model_reff=None, plot_only_size_mag=False, 
             y = reff_hsc - reff_hst
             prefix = '$R_{eff, HSC|HST}$ > 0.5"'
             plotjoint_running_percentiles(
-                x_good[big], y[big], ndivisions=10, nbinspan=3, **argspj,
+                x_good[big], y[big], **argspj,
                 labelx=label_x, labely="log10($R_{eff,HSC}$/$R_{eff,HST}$)",
                 limx=lim_x, limy=(-0.3, 0.3), title=f'{prefix}, N={num_big}')
         plotjoint_running_percentiles(
-            x_good, reff_hst, ndivisions=10, nbinspan=3, **argspj,
+            x_good, reff_hst, **argspj,
             labelx=label_x, labely='log10($R_{eff,HST}$/")',
             limx=lim_x, limy=(-2.3, 0.6), title=f'N={n_good}')
         if not plot_only_size_mag:
             plotjoint_running_percentiles(
-                reff_hst, y, ndivisions=10, nbinspan=3, **argspj,
+                reff_hst, y, **argspj,
                 labelx='log10($R_{eff,HST}$/")', labely="log10($R_{eff,HSC}$/$R_{eff,HST}$)",
                 limx=[-1.5, 1], limy=(-0.32, 0.68), title=f'N={n_good}')
             big_bright = big & (x_good < mag_bright)
             plotjoint_running_percentiles(
-                reff_hst[big_bright], y[big_bright], ndivisions=10, nbinspan=3, **argspj,
+                reff_hst[big_bright], y[big_bright], **argspj,
                 labelx='log10($R_{eff,HST}$/")', labely="log10($R_{eff,HSC}$/$R_{eff,HST}$)",
-                limx=[-0.32, 0.58], limy=(-0.15, 0.15), title=f'{prefix} & mag < {mag_bright}, N={np.count_nonzero(big_bright)}')
+                title=f'{prefix} & mag < {mag_bright}, N={np.count_nonzero(big_bright)}',
+                limx=[-0.32, 0.58], limy=(-0.15, 0.15),
+            )
             n_ser = data_hsc.get("nser_1", None)
             if n_ser is not None:
                 n_ser = n_ser[good]
@@ -627,22 +705,31 @@ def plot_mpf_model_hsc_vs_hst(model, model_reff=None, plot_only_size_mag=False, 
                 prefix = '$R_{eff, HSC&HST}$ > 1"'
                 y = np.log10(n_ser[good_size]/data_hst["nser_1"][good][good_size])
                 plotjoint_running_percentiles(
-                    x_good[good_size], y, ndivisions=10, nbinspan=3, **argspj,
+                    x_good[good_size], y, **argspj,
                     labelx=label_x, labely="log10($n_{ser,HSC}$/$n_{ser,HST}$)",
                     limx=lim_x, limy=(-0.6, 0.6), title=f'{prefix}, N={np.count_nonzero(good_size)}')
 
 
-# In[15]:
+# ###  HSC-[IZ] vs. HST-F814W, Gauss
+# 
+# Conclusions here:
+# 1. Magnitudes are sort-of-but-not-completely consistent. It's unclear whether this is mainly due to my shoddy attempt at calibrating without any colour terms.
+# 2. Sizes are surprisingly consistent - the scatter is not small, but the bias is.
+# 3. HSC fits of small galaxies are systematically larger than HST. This could be partly due to issues in PSF modelling. A double Gaussian is probably not a great representation of the HST PSF, and it's unclear how reliable the empirical PSFs (that the models are fit to) are in the first place - for HSC they're probably mostly fine, but for HST...?
+
+# In[17]:
 
 
-plot_mpf_model_hsc_vs_hst("gauss")
+argspj['ndivisions'] = 10
+argspj['nbinspan'] = 3
+plot_mpf_model_hsc_vs_hst("gauss", argspj=argspj)
 plt.show()
 
 
 # ## Are Gaussian sizes more robust?
 # Sadly, it doesn't seem so. TODO: Plot sizes vs PSF mags; most unreasonably large galaxies are probably >27 mags.
 
-# In[16]:
+# In[18]:
 
 
 # Plot the presumably robust Gaussian fits
@@ -652,14 +739,23 @@ print('Gauss mag vs Sersic reff')
 plot_mpf_model_hsc_vs_hst("gauss", model_reff="mg8serb", plot_only_size_mag=True, reff_min=1e-2, lims_mag=(18.5, 26))
 
 
-# In[17]:
+# In[19]:
 
 
 # Plot the hopefully still mostly robust exponential fits
 plot_mpf_model_hsc_vs_hst("exp")
 
 
-# In[18]:
+# ###  HSC-[IZ] vs. HST-F814W, Sersic
+# 
+# Conclusions:
+# 
+# 1. Magnitudes are really not very consistent at all, and worse than for exponential fits. Perhaps colour terms are more important here.
+# 2. Sizes are more consistent, albeit still not unbiased. Still, it's better than expected, if worse than hoped.
+# 3. There are so few large, isolated galaxies that it's hard to say if the Sersic indices are consistent, but I doubt it.
+# 4. One could conceivably use the size-magnitude relation as a rough prior, although it may be wise to use a more robust magnitude. Even a PSF magnitude might work.
+
+# In[20]:
 
 
 # Plot Sersic fits, including Sersic index
@@ -667,9 +763,11 @@ plot_mpf_model_hsc_vs_hst("mg8serb")
 
 
 # ## Investigating Discrepancies
-# Why don't HSC and HST match for bright sources which should be fairly reliably recovered?
+# Why don't HSC and HST sizes match for bright sources which should be fairly reliably recovered? See below for exact selection criteria.
+# 
+# Most of these cases are artifacts in one or the other, or unrecognized blends. Only a few seem to be genuine disagreements on an isolated galaxy, and even then it's not clear that MultiProFit did anything wrong (some appear to have unusual structures).
 
-# In[19]:
+# In[21]:
 
 
 # Load the Butler for the latest HSC re-run, and all of the overlapping COSMOS HST images
@@ -684,7 +782,11 @@ calexps = {}
 meas = {}
 
 
-# In[20]:
+# ### Discrepant galaxy selection
+# 
+# This focuses on bright (by UltraDeep standards) galaxies that should be reasonably resolved in HSC but have overestimated sizes compared to HST.
+
+# In[22]:
 
 
 # Cache the calexps and original measurement catalogs with bboxes
@@ -692,9 +794,9 @@ meas = {}
 model = 'mg8serb'
 data_hst = data['f814w'][model]['mpf']
 data_hsc = data['iz'][model]['mpf']
-safe = (data_hsc["mag_1"] > 20.5) & (data_hsc["mag_1"] < 23) & (data_hsc["reff_1"] > 3)
-# Factor of two bigger
-big_hsc = safe & (data_hsc["reff_1"]*0.168/(data_hst["reff_1"]*0.03) > 2)
+safe = (data_hsc["mag_1"] > 20.5) & (data_hsc["mag_1"] < 23) & (data_hsc["reff_1"] > 3) & (cats['f814w']['parent'] == 0) & (cats['f814w']['deblend_nChild'] == 0)
+# More than 50% or 0.176 dex bigger
+big_hsc = safe & (data_hsc["reff_1"]*0.168/(data_hst["reff_1"]*0.03) > 1.5)
 
 row_big = np.nonzero(big_hsc)[0]
 cat = cats['iz']
@@ -703,7 +805,7 @@ tract = 9813
 bands = ['HSC-Z', 'HSC-I', 'HSC-R']
 
 
-# In[21]:
+# In[23]:
 
 
 # Plot HSC and HST images of discrepant models
@@ -728,22 +830,32 @@ for idx_row in row_big:
     bbox = src.getFootprint().getBBox()
     cenx, ceny = src.getCentroid() - bbox.getBegin()
     radec = [[y for y in wcs.pixelToSky(Point2D(x)).getPosition(degrees)] for x in bbox.getCorners()]
-    img = get_exposure_cutout_HST(radec, (0, 0), exposures_hst)[0]
-    fig, axes = plt.subplots(ncols=2)
-    axes[0].imshow(make_lupton_rgb(*[x.image.subset(bbox).array for x in calexps_patch.values()], stretch=0.4, Q=8))
-    axes[0].set_title(f'HSC-[ZIR] $R_{{e}}$={data_hsc["reff_1"][idx_row]*0.168:.2f}" n={data_hsc["nser_1"][idx_row]:.2f}\n'
-                      f'$mag_i$={data_hsc["mag_1"][idx_row]:.2f} i-z={data_hsc["mag_1"][idx_row] - data_hsc["mag_z_1"][idx_row]:.2f}')
-    fluxratio = data_hst["flux_1"][idx_row]/(data_hsc["flux_1"][idx_row] + data_hsc["flux_z_1"][idx_row])
-    mag_hst = data_hsc["mag_1"][idx_row] - 2.5*(np.log10(fluxratio) + 0.88)
-    axes[0].scatter(cenx, ceny, marker='x', color='lime')
-    axes[0].scatter(data_hsc["cenx_1"][idx_row]-0.5, data_hsc["ceny_1"][idx_row]-0.5, marker='o', color='lime', facecolors='none')
-    axes[1].imshow(make_lupton_rgb(img.image,img.image, img.image, stretch=0.01, Q=6))
-    axes[1].set_title(f'HST F814W $R_{{e}}$={data_hst["reff_1"][idx_row]*0.03:.2f}" '
-                      f'n={data_hst["nser_1"][idx_row]:.2f}\n mag={mag_hst:.2f}')
-    axes[1].scatter(cenx*scale_hst2hsc, ceny*scale_hst2hsc, marker='x', color='lime')
-    axes[1].scatter(data_hst["cenx_1"][idx_row]-0.5, data_hst["ceny_1"][idx_row]-0.5, marker='o', color='lime', facecolors='none')
-    plt.suptitle(f'id={id_src} num={row_patch} patch={name_patch}', y=0.05)
-    plt.tight_layout()
-    plt.show(block=False)
+    try:
+        img = get_exposure_cutout_HST(radec, (0, 0), exposures_hst)[0]
+        if img.image[0, 0] != 0 or (0.1*np.count_nonzero(img.image) > np.prod(img.image.shape)):
+            fig, axes = plt.subplots(ncols=2)
+            axes[0].imshow(make_lupton_rgb(*[x.image.subset(bbox).array for x in calexps_patch.values()],
+                                           stretch=0.4, Q=8))
+            axes[0].set_title(f'HSC-[ZIR] $R_{{e}}$={data_hsc["reff_1"][idx_row]*0.168:.2f}"'
+                              f' n={data_hsc["nser_1"][idx_row]:.2f}\n'
+                              f'$mag_i$={data_hsc["mag_1"][idx_row]:.2f}'
+                              f' i-z={data_hsc["mag_1"][idx_row] - data_hsc["mag_z_1"][idx_row]:.2f}')
+            fluxratio = data_hst["flux_1"][idx_row]/(
+                data_hsc["flux_1"][idx_row] + data_hsc["flux_z_1"][idx_row])
+            mag_hst = data_hsc["mag_1"][idx_row] - 2.5*(np.log10(fluxratio) + 0.88)
+            axes[0].scatter(cenx, ceny, marker='x', color='lime')
+            axes[0].scatter(data_hsc["cenx_1"][idx_row]-0.5, data_hsc["ceny_1"][idx_row]-0.5,
+                            marker='o', color='lime', facecolors='none')
+            axes[1].imshow(make_lupton_rgb(img.image,img.image, img.image, stretch=0.01, Q=6))
+            axes[1].set_title(f'HST F814W $R_{{e}}$={data_hst["reff_1"][idx_row]*0.03:.2f}" '
+                              f'n={data_hst["nser_1"][idx_row]:.2f}\n mag={mag_hst:.2f}')
+            axes[1].scatter(cenx*scale_hst2hsc, ceny*scale_hst2hsc, marker='x', color='lime')
+            axes[1].scatter(data_hst["cenx_1"][idx_row]-0.5, data_hst["ceny_1"][idx_row]-0.5,
+                            marker='o', color='lime', facecolors='none')
+            plt.suptitle(f'id={id_src} num={row_patch} patch={name_patch}', y=0.05)
+            plt.tight_layout()
+            plt.show(block=False)
+    except Exception as e:
+        print(f'Failed plotting {id_src} in patch={name_patch} due to {e}')
 sns.set_style("darkgrid", {'axes.grid' : True})
 
