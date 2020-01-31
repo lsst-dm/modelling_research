@@ -154,7 +154,7 @@ def plotjoint(tab, columns, labels=None, columncolor=None, colorbaropts=None,
 def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None, limx=None, limy=None,
                                   ndivisions=None, nbinspan=None, labelx=None, labely=None, title=None,
                                   histtickspacingxmaj=None, histtickspacingymaj=None,
-                                  scatterleft=False, scatterright=False):
+                                  scatterleft=False, scatterright=False, drawzeroline=True):
     """
 
     :param x: Float[]; x data.
@@ -172,7 +172,8 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
     :param histtickspacingymaj: Float; spacing for major ticks on the y-axis marginal histogram's y-axis.
     :param scatterleft: Bool; scatter plot points leftwards of the leftmost bin center?
     :param scatterright: Bool; scatter plot points rightwards of the rightmost bin center?
-    :return:
+    :param drawzeroline: Bool; draw line at y=0?
+    :return: seaborn.JointGrid handle for the plot.
     """
     numpoints = len(x)
     if len(y) != numpoints:
@@ -208,7 +209,8 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
                  n_levels=np.int(np.ceil(numpoints**(1/3))))
     # Setup bin edges to have overlapping bins for running percentiles
     binedges = np.sort(x)[np.asarray(np.round(np.linspace(0, len(x)-1, num=nedgesover)), dtype=int)]
-    plt.plot(binedges[[0, -1]], [0, 0], 'k-', linewidth=1, label='')
+    if drawzeroline:
+        plt.axhline(y=0, color='k', linewidth=1, label='')
     plt.xlabel(labelx)
     plt.ylabel(labely)
     xbins = np.zeros(nbinsover)
@@ -254,9 +256,8 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
                     condy2 = isylo[condbin]
                     marker = '^'
                 colourpc = percentilecolours[-1 if upper else 0]
-                for condplot, markercond, sizecond in [
-                    (condoutlier*condy2, marker, 4),
-                    (condoutlier*(~condy2), '.', 2)]:
+                for condplot, markercond, sizecond in [(condoutlier*condy2, marker, 4),
+                                                       (condoutlier*(~condy2), '.', 2)]:
                     if np.sum(condplot) > 0:
                         plt.scatter(xcond[condplot], ycond[condplot], s=sizecond, marker=markercond,
                                     color=colourpc)
@@ -271,15 +272,17 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
         cond = (y > ybins[0][idxbin]) & (y < ybins[-1][idxbin])
         cond = cond & ((x < xbins[idxbin]) if (idxbin == 0) else (x > xbins[idxbin]))
         plt.scatter(x[cond], y[cond], s=1, marker='+', color='k')
-    p.ax_marg_x.hist(x, bins=ndivisions * 2, weights=np.repeat(1.0 / len(x), len(x)))
+    p.ax_marg_x.hist(x, bins=ndivisions * 2, weights=np.repeat(1.0 / len(x), len(x)),
+                     histtype='stepfilled', linewidth=0)
     plt.setp(p.ax_marg_x.get_yticklabels(), visible=True)
     if histtickspacingxmaj is not None:
         p.ax_marg_x.yaxis.set_major_locator(mpl.ticker.MultipleLocator(histtickspacingxmaj))
-    p.ax_marg_y.hist(y, orientation='horizontal', bins=ndivisions * 4, weights=np.repeat(1.0 / len(y), len(y)))
+    p.ax_marg_y.hist(y, orientation='horizontal', bins=ndivisions * 4,
+                     weights=np.repeat(1.0 / len(y), len(y)), histtype='stepfilled', linewidth=0)
     p.ax_marg_y.xaxis.set_ticks_position('top')
     plt.setp(p.ax_marg_y.get_xticklabels(), visible=True)
     if histtickspacingymaj is not None:
         p.ax_marg_y.xaxis.set_major_locator(mpl.ticker.MultipleLocator(histtickspacingymaj))
     if title is not None:
-        p.fig.suptitle(title)
+        p.fig.suptitle(title, y=1., verticalalignment='bottom')
     return p
