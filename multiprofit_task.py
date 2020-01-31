@@ -25,27 +25,53 @@ class MultiProFitConfig(pexConfig.Config):
     """
     computeMeasModelfitLikelihood = pexConfig.Field(dtype=bool, default=False,
                                                     doc="Whether to compute the log-likelihood of best-fit "
-                                                        "meas_modelfit parameters for each model")
+                                                        "meas_modelfit parameters per model")
     filenameOut = pexConfig.Field(dtype=str, default=None, doc="Filename for output of FITS table")
     fitCModel = pexConfig.Field(dtype=bool, default=True,
                                 doc="Whether to perform a CModel (linear combo of exponential and "
-                                    "deVaucouleurs) fit for each source; necessitates doing exp. + deV. fits")
+                                    "deVaucouleurs) fit per source; necessitates doing exp. + deV. fits")
     fitCModelExp = pexConfig.Field(dtype=bool, default=False,
                                    doc="Whether to perform an exponential fit with a fixed center (as "
-                                       "CModel does in meas_modelfit) for each source")
+                                       "CModel does in meas_modelfit) per source")
     fitGaussian = pexConfig.Field(dtype=bool, default=False,
                                   doc="Whether to perform a single Gaussian fit without PSF convolution")
     fitHstCosmos = pexConfig.Field(dtype=bool, default=False,
                                    doc="Whether to fit COSMOS HST F814W images instead of repo images")
+    fitDevExpFromCModel = pexConfig.Field(dtype=bool, default=False,
+                                          doc="Whether to perform a MG Sersic approximation Dev+Exp profile "
+                                              "fit (initialized from previous exp./Dev. fits) per source")
     fitSersic = pexConfig.Field(dtype=bool, default=True, doc="Whether to perform a MG Sersic approximation "
-                                                              "profile fit for each source")
+                                                              "profile fit per source")
     fitSersicFromCModel = pexConfig.Field(dtype=bool, default=False,
                                           doc="Whether to perform a MG Sersic approximation profile fit "
-                                              "(initalized from previous exp./dev. fits) for each source")
+                                              "(initalized from previous exp./dev. fits) per source;"
+                                              " ignored if fitCModel is False")
     fitSersicAmplitude = pexConfig.Field(dtype=bool, default=True,
-                                         doc="Whether to perform a linear fit of the Gaussian "
-                                             "amplitudes for the MG Sersic approximation profile fit for "
-                                             "each source; has no impact if fitSersic is False")
+                                         doc="Whether to perform a linear fit of the Gaussian"
+                                             " amplitudes for the MG Sersic approximation profile fit per"
+                                             " source; has no impact if fitSersic is False")
+    fitSersicFromCModelAmplitude = pexConfig.Field(dtype=bool, default=True,
+                                                   doc="Whether to perform a linear fit of the Gaussian"
+                                                       " amplitudes for the MG Sersic approximation profile"
+                                                       " fit (initialized from previous exp.Dev. fits) per"
+                                                       " source; has no impact if fitSersicFromCModel is"
+                                                       " False")
+    fitSersicX2FromDevExp = pexConfig.Field(dtype=bool, default=False,
+                                            doc="Whether to perform a MG Sersic approximation SersicX2 "
+                                                "profile fit (initialized from previous devExp fit) per "
+                                                "source; ignored if fitDevExpFromCModel is False")
+    fitSersicX2DEAmplitude = pexConfig.Field(dtype=bool, default=False,
+                                             doc="Whether to perform a linear fit of the Gaussian "
+                                                 "amplitudes for the MG SersicX2 approximation profile fit "
+                                                 "for each source; ignored if fitSersicX2FromDevExp is False")
+    fitSersicX2FromSerExp = pexConfig.Field(dtype=bool, default=False,
+                                            doc="Whether to perform a MG Sersic approximation SersicX2 "
+                                                "profile fit (initialized from previous serExp fit) per "
+                                                "source; ignored if fitSersicFromCModel is False")
+    fitSersicX2SEAmplitude = pexConfig.Field(dtype=bool, default=False,
+                                             doc="Whether to perform a linear fit of the Gaussian "
+                                                 "amplitudes for the MG SersicX2 approximation profile fit "
+                                                 "for each source; ignored if fitSersicX2FromSeRExp is False")
     gaussianOrderPsf = pexConfig.Field(dtype=int, default=2, doc="Number of Gaussians components for the PSF")
     gaussianOrderSersic = pexConfig.Field(dtype=int, default=8, doc="Number of Gaussians components for the "
                                                                     "MG Sersic approximation galaxy profile")
@@ -76,6 +102,8 @@ class MultiProFitConfig(pexConfig.Config):
         nameSersicPrefix = f"mgsersic{self.gaussianOrderSersic}"
         nameSersicModel = f"{nameSersicPrefix}:1"
         nameSersicAmpModel = f"gaussian:{self.gaussianOrderSersic}+rscale:1"
+        nameSersicX2Model = f"{nameSersicPrefix}:2"
+        nameSersicX2AmpModel = f"gaussian:{2*self.gaussianOrderSersic}+rscale:2"
         allParams = "cenx;ceny;nser;sigma_x;sigma_y;rscale;rho"
         if self.fitSersic:
             modelSpecs.append(
@@ -107,12 +135,42 @@ class MultiProFitConfig(pexConfig.Config):
                     dict(name=f"{nameMG}serbpx", model=nameSersicModel, fixedparams='', initparams='',
                          inittype="best", psfmodel=namePsfModel, psfpixel="T"),
                 ])
-                if self.fitSersicAmplitude:
+                if self.fitSersicFromCModelAmplitude:
                     modelSpecs.append(
                         dict(name=f"{nameMG}serbapx", model=nameSersicAmpModel, fixedparams=allParams,
                              initparams="rho=inherit;rscale=modify", inittype=f"{nameMG}sermpx",
                              psfmodel=namePsfModel, psfpixel="T")
                     )
+                if self.fitSersicX2FromSerExp:
+                    modelSpecs.append(
+                        dict(name=f"{nameMG}serx2sepx", model=nameSersicX2Model, fixedparams='',
+                             initparams='',
+                             inittype=f"{nameMG}serbpx;{nameMG}expgpx", psfmodel=namePsfModel,
+                             psfpixel="T")
+                    )
+                    if self.fitSersicX2SEAmplitude:
+                        modelSpecs.append(
+                            dict(name=f"{nameMG}serx2seapx", model=nameSersicX2AmpModel,
+                                 fixedparams=allParams, initparams="rho=inherit;rscale=modify",
+                                 inittype=f"{nameMG}serx2sepx", psfmodel=namePsfModel, psfpixel="T")
+                        )
+            if self.fitDevExpFromCModel:
+                modelSpecs.append(
+                    dict(name=f"{nameMG}devexppx", model=nameSersicX2Model, fixedparams='nser',
+                         initparams='nser=4,1', inittype=f"{nameMG}devepx;{nameMG}expgpx",
+                         psfmodel=namePsfModel, psfpixel="T")
+                )
+                if self.fitSersicX2FromDevExp:
+                    modelSpecs.append(
+                        dict(name=f"{nameMG}serx2px", model=nameSersicX2Model, fixedparams='', initparams='',
+                             inittype=f"{nameMG}devexppx", psfmodel=namePsfModel, psfpixel="T")
+                    )
+                    if self.fitSersicX2DEAmplitude:
+                        modelSpecs.append(
+                            dict(name=f"{nameMG}serx2apx", model=nameSersicX2AmpModel, fixedparams=allParams,
+                                 initparams="rho=inherit;rscale=modify", inittype=f"{nameMG}serx2px",
+                                 psfmodel=namePsfModel, psfpixel="T")
+                        )
         if self.fitCModelExp:
             modelSpecs.append(
                 dict(name=f"{nameMG}expcmpx", model=nameSersicModel, fixedparams='cenx;ceny;nser',
