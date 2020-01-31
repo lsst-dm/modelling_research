@@ -75,6 +75,8 @@ class MultiProFitConfig(pexConfig.Config):
     gaussianOrderPsf = pexConfig.Field(dtype=int, default=2, doc="Number of Gaussians components for the PSF")
     gaussianOrderSersic = pexConfig.Field(dtype=int, default=8, doc="Number of Gaussians components for the "
                                                                     "MG Sersic approximation galaxy profile")
+    fitPrereqs = pexConfig.Field(dtype=bool, default=False, doc="Set fit(Model) flags for necessary "
+                                                                "prerequisites even if not specified")
     intervalOutput = pexConfig.Field(dtype=int, default=100, doc="Number of sources to fit before writing "
                                                                  "output")
     isolatedOnly = pexConfig.Field(dtype=bool, default=False, doc="Whether to fit only isolated sources")
@@ -105,6 +107,19 @@ class MultiProFitConfig(pexConfig.Config):
         nameSersicX2Model = f"{nameSersicPrefix}:2"
         nameSersicX2AmpModel = f"gaussian:{2*self.gaussianOrderSersic}+rscale:2"
         allParams = "cenx;ceny;nser;sigma_x;sigma_y;rscale;rho"
+        if self.fitPrereqs:
+            prereqs = {
+                'fitSersic': ['fitSersicAmplitude'],
+                'fitSersicFromCModel': ['fitSersicFromCModelAmplitude', 'fitSersicX2FromSerExp'],
+                'fitCModel': ['fitSersicFromCModel', 'fitDevExpFromCModel'],
+                'fitSersicX2FromDevExp': ['fitSersicX2DEAmplitude'],
+                'fitDevExpFromCModel': ['fitSersicX2FromDevExp'],
+                'fitSersicX2FromSerExp': ['fitSersicX2SEAmplitude'],
+            }
+            for req, depends in prereqs.items():
+                dict_self = self.toDict()
+                if (not dict_self[req]) and any([dict_self[dep] for dep in depends]):
+                    self.update(**{req: True})
         if self.fitSersic:
             modelSpecs.append(
                 dict(name=f"{nameMG}sermpx", model=nameSersicModel, fixedparams='', initparams="nser=1",
