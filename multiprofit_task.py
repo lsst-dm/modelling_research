@@ -470,7 +470,7 @@ class MultiProFitTask(pipeBase.Task):
         return result
 
     @pipeBase.timeMethod
-    def __fitSource(self, source, exposures, extras, printTrace=False, plot=False):
+    def __fitSource(self, source, exposures, extras, printTrace=False, plot=False, **kwargs):
         """Fit a single deblended source with MultiProFit.
 
         Parameters
@@ -535,7 +535,7 @@ class MultiProFitTask(pipeBase.Task):
             bands = [item[0].band for item in exposurePsfs]
             results = mpfFit.fit_galaxy_exposures(
                 exposurePsfs, bands, self.modelSpecs, results=results, plot=plot, print_exception=False,
-                cenx=cenx, ceny=ceny)
+                cenx=cenx, ceny=ceny, **kwargs)
             if self.config.fitGaussian:
                 name_model = 'gausspx_no_psf'
                 model = self.models[name_model]
@@ -829,8 +829,8 @@ class MultiProFitTask(pipeBase.Task):
             self.__setFieldsMeasmodel(exposures, model, source, fields["measmodel"], row)
         row[self.runtimeKey] = runtime
 
-    def fit(self, exposures, sources, idx_begin=0, idx_end=np.Inf, logger=None, printTrace=False,
-            plot=False, path_cosmos_galsim=None):
+    def fit(self, data, idx_begin=0, idx_end=np.Inf, logger=None, printTrace=False,
+            plot=False, path_cosmos_galsim=None, **kwargs):
         """Fit a catalog of sources with MultiProFit.
 
         Each source has its PSF fit with a configureable Gaussian mixture PSF model and then fits a
@@ -842,10 +842,12 @@ class MultiProFitTask(pipeBase.Task):
 
         Parameters
         ----------
-        exposures : `dict` [`str`, `lsst.afw.image.Exposure`]
-            A dict of Exposures to fit, keyed by filter name.
-        sources: `lsst.afw.table`
-            A catalog containing deblended sources with footprints.
+        data : `dict` [`str`, `dict` [`str`]]
+            A dict of data for each filter, each containing:
+            ``"exposures"``
+                The exposure of that filter (`lsst.afw.image.Exposure`)
+            ``"sources"``
+                The catalog of sources to fit (`lsst.afw.table.SourceCatalog`)
         idx_begin : `int`
             The first index (row number) of the catalog to process.
         idx_end : `int`
@@ -860,6 +862,8 @@ class MultiProFitTask(pipeBase.Task):
             A file path to a directory containing real_galaxy_catalog_25.2.fits and
             real_galaxy_PSF_images_25.2_n[1-88].fits; required if config.fitHstCosmos is True.
             See https://zenodo.org/record/3242143.
+        **kwargs
+            Additional keyword arguments to pass to `__fitSource`.
 
         Returns
         -------
@@ -876,13 +880,15 @@ class MultiProFitTask(pipeBase.Task):
             if path_cosmos_galsim is None:
                 raise ValueError("Must specify path to COSMOS GalSim catalog if fitting HST images")
             tiles = cutout.get_tiles_HST_COSMOS()
-            ra_corner, dec_corner = cutout.get_corners_exposure(next(iter(exposures.values())))
+            ra_corner, dec_corner = cutout.get_corners_exposure(next(iter(data.values()))['exposure'])
             extras = cutout.get_exposures_HST_COSMOS(ra_corner, dec_corner, tiles, path_cosmos_galsim)
             # TODO: Generalize this for e.g. CANDELS
             filters = [extras[0].band]
         else:
-            extras = [rebuildNoiseReplacer(exposure, sources) for exposure in exposures.values()]
-            filters = exposures.keys()
+            extras = [rebuildNoiseReplacer(datum['exposure'], datum['sources']) for datum in data.values()]
+            filters = data.keys()
+        sources = data[list(filters)[0]]['sources']
+        exposures = {band: data[band]['exposure'] for band in filters}
         timeInit = time.time()
         processTimeInit = time.process_time()
         addedFields = False
@@ -924,7 +930,7 @@ class MultiProFitTask(pipeBase.Task):
                         error = 'Skipping because not isolated'
                 if not failed:
                     results, error, noiseReplaced = self.__fitSource(
-                        src, exposures, extras, printTrace=printTrace, plot=plot)
+                        src, exposures, extras, printTrace=printTrace, plot=plot, **kwargs)
                     failed = error is not None
                     runtime = (self.metadata["__fitSourceEndCpuTime"] -
                                self.metadata["__fitSourceStartCpuTime"])

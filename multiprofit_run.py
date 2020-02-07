@@ -58,22 +58,30 @@ def get_data(butler, tract, name_patch, cat_type=None, exposure_type=None, filte
 
     Returns
     -------
-    exposures : `dict` [`str`, `lsst.afw.image.Exposure`]
-        A dict of Exposures to fit, keyed by filter name.
-    sources : `lsst.afw.table.SourceCatalog`
-        A catalog containing deblended sources with footprints.
+    data : `dict` [`str`, `dict` [`str`]]
+        A dict of dicts keyed by filter name, each containing:
+        ``"exposures"``
+            The exposure of that filter (`lsst.afw.image.Exposure`)
+        ``"sources"``
+            The catalog of sources to fit (`lsst.afw.table.SourceCatalog`)
 
     """
     if filters is None:
         filters = ["HSC-I", "HSC-R", "HSC-G"]
     if exposure_type is None:
         exposure_type = "deepCoadd_calexp"
+    has_sources = sources is not None
+    if not has_sources and cat_type is None:
+        cat_type = "deepCoadd_meas"
 
-    dataId = {"tract": tract, "patch": name_patch, "filter": filters[0]}
-    sources = butler.get(cat_type if cat_type is not None else "deepCoadd_meas", dataId) if sources is None \
-        else sources
-    exposures = {band: butler.get(exposure_type, dataId, filter=band) for band in filters}
-    return exposures, sources
+    dataId = {"tract": tract, "patch": name_patch}
+    data = {}
+    for i, band in enumerate(filters):
+        data[band] = {
+            'exposure': butler.get(exposure_type, dataId, filter=band),
+            'sources': sources[i] if has_sources else butler.get(cat_type, dataId, filter=band),
+        }
+    return data
 
 
 def get_flags():
@@ -96,6 +104,10 @@ def get_flags():
         'filters': dict(type=str, nargs='*', default=['HSC-I'], help="List of bandpass filters"),
         'idx_begin': dict(type=int, nargs='?', default=0, help="Initial row index to fit"),
         'idx_end': dict(type=int, nargs='?', default=np.Inf, help="Final row index to fit"),
+        'img_multi_plot_max': dict(type=float, nargs='?', default=None,
+                                   help="Max value for colour images in plots"),
+        'weights_band': dict(type=float, nargs='*', default=None,
+                             help="Weights per filter to rescale cdimages in multi-band plots"),
         'path_cosmos_galsim': dict(type=str, nargs='?',
                                    default="/project/dtaranu/cosmos/hst/COSMOS_25.2_training_sample",
                                    help="Path to GalSim COSMOS catalogs"),
@@ -144,10 +156,10 @@ def main():
     kwargs = {key: argsvars[key] for key in kwargs}
     config = MultiProFitTask.ConfigClass(**kwargs)
     task = MultiProFitTask(config=config)
-    exposures, sources = get_data(butler, args.tract, name_patch=name_patch, sources=sources,
-                                  filters=args.filters)
-    catalog, results = task.fit(exposures, sources, idx_begin=args.idx_begin, idx_end=args.idx_end,
+    data = get_data(butler, args.tract, name_patch=name_patch, sources=sources, filters=args.filters)
+    catalog, results = task.fit(data, idx_begin=args.idx_begin, idx_end=args.idx_end,
                                 printTrace=args.printTrace, plot=args.plot,
+                                img_multi_plot_max=args.img_multi_plot_max, weights_band=args.weights_band,
                                 path_cosmos_galsim=args.path_cosmos_galsim)
     return catalog, results
 
