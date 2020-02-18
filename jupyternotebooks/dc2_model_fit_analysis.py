@@ -9,19 +9,12 @@
 
 
 # Import requirements
-import esutil
-import glob
-from lsst.afw.table import Schema, SourceCatalog
-from lsst.daf.persistence import Butler
-from lsst.meas.algorithms import ingestIndexReferenceTask as ingestTask, IndexerRegistry
-from lsst.meas.astrom import DirectMatchTask, DirectMatchConfig 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import modelling_research.dc2 as dc2
 from modelling_research.plotting import plotjoint_running_percentiles
 import numpy as np
-import pandas as pd
 import seaborn as sns
-import sqlite3
 from timeit import default_timer as timer
 
 
@@ -39,269 +32,39 @@ sns.set(rc={'axes.facecolor': '0.85', 'figure.facecolor': 'w'})
 # In[3]:
 
 
-# Where I keep DC2 stuff
-dc2_dst_path = '/project/dtaranu/dc2/'
-
-
-# In[4]:
-
-
-# DC2/LSST bands
-bands_dc2 = ['u', 'g', 'r', 'i', 'z', 'y']
-
-
-# In[5]:
-
-
 # Catalog matching settings
 # Reference band to match on. Should be 'r' for DC2 because reasons (truth refcats are r mag limited)
 band_ref = 'r'
 # Match radius of 0.5 arcsec
-config = DirectMatchConfig(matchRadius=0.5)
 
 
-# In[6]:
-
-
-# One-line convenience function to print things
-def time_print(time, format_time='.1f', prefix='', postfix=''):
-    time_new = timer()
-    timing = '' if time is None else (
-        f'{time_new-time:{format_time}}s' if (format_time is not None) else f'{time_new-time}s')
-    print(f'{prefix}{timing}{postfix}')
-    return time_new
-
-
-# In[7]:
+# In[4]:
 
 
 # Load the truth catalogs and count all of the rows
 # This allows for pre-allocation of the truth table to its full size
 # ... before determining HTM indices and writing refcats below
 redo_refcat = True
-if redo_refcat:
-    time = None
-    files = glob.glob(f'{dc2_dst_path}truth_cats/truth_summary_hp*.sqlite3')
-    truth_cats = {}
-    n_files = len(files)
-    for idx, file in enumerate(files):
-        with sqlite3.connect(file) as db: 
-            healpix = file.split('truth_summary_hp')[1].split('.sqlite3')[0]
-            prefix = f'Counted in  ' if idx > 0 else 'Counting starting'
-            time = time_print(time, format_time='.2f', prefix=prefix, postfix=f'; counting {healpix} ({idx+1}/{n_files}) file={file}')
-            cursor = db.cursor() 
-            n_rows = cursor.execute('SELECT COUNT(*) from truth_summary').fetchone()[0]
-            truth_cats[healpix] = (file, n_rows)
-    time = time_print(time, format_time='.2f', prefix=f'Counted in  ', postfix='; finished counting all truth catalogs')
-
-
-# In[8]:
-
-
-# Read/write the refcat
-deg2rad = np.pi/180.
-
-dc2_dst_refcat_path = f'{dc2_dst_path}ref_cats/gal_ref_cat/'
-butler = Butler(dc2_dst_refcat_path)
-butler_stars = Butler('/datasets/DC2/repoRun2.2i/')
-if redo_refcat:
-    time_start = timer()
-    schema = Schema()
-    overrides = {
-        'ra': 'coord_ra',
-        'dec': 'coord_dec',
-    }
-    flags = ['is_variable', 'is_pointsource']
-    ignore = ['host_galaxy', 'is_variable', 'is_pointsource']
-    flags_good = [flag for flag in flags if flag not in ignore]
-    schema.addField('id', type="L", doc='DC2 id')
-    for coord in ('ra', 'dec'):
-        schema.addField(overrides[coord], type="Angle", doc=f'Sky {coord} position', units='rad')
-    schema.addField('parent', type="L", doc='Parent id')
-    for flag in flags:
-        if flag not in ignore:
-            schema.addField(flag, type="Flag", doc=f'Is source {flag}')
-    schema.addField('redshift', type="D", doc='Redshift')
-    for postfix, doc in (('', '(extincted)'), ('_noMW', '(unextincted)')):
-        for band in bands_dc2:
-            name = f'lsst_{band}{postfix}_flux'
-            overrides[f'flux_{band}{postfix}'] = name
-            schema.addField(name, type="D", doc=f'True LSST {band} flux {doc}', units='nJy')
-
-    datasetConfig = ingestTask.DatasetConfig(format_version=1)
-    indexer = IndexerRegistry[datasetConfig.indexer.name](datasetConfig.indexer.active)
-    cat = SourceCatalog(schema)
-    dataId = indexer.makeDataId('master_schema', datasetConfig.ref_dataset_name)
-    ingestTask.addRefCatMetadata(cat)
-    butler.put(cat, 'ref_cat', dataId=dataId)
-
-    n_rows = np.sum([x[1] for x in truth_cats.values()])
-    cat.resize(n_rows)
-    sub = np.repeat(False, n_rows)
-    row_begin = 0
-    row_end = 0
-    ras = np.zeros(n_rows)
-    decs = np.zeros(n_rows)
-
-    time = None
-    for idx, (healpix, (file, n_rows)) in enumerate(truth_cats.items()):
-        time = time_print(time, prefix=f'Assigned in ' if idx > 0 else 'Loading underway',
-                          postfix=f';loading {healpix} ({idx+1}/{n_files}) nrows={n_rows} file={file}')
-        with sqlite3.connect(file) as db: 
-            truth = pd.read_sql_query("SELECT * from truth_summary", db)
-        time = time_print(time, prefix=f'Loaded in ', postfix='; assigning underway')
-        row_end += n_rows
-        # It's easier to keep track of the coordinates for indices in arrays than to convert Angles
-        ras[row_begin:row_end] = truth['ra']
-        decs[row_begin:row_end] = truth['dec']
-        # The output needs to be in radians
-        truth['ra'] *= deg2rad
-        truth['dec'] *= deg2rad
-        sub[row_begin:row_end] = True
-        columns = truth.columns 
-        for source in truth.columns:
-            if source not in ignore:
-                name = overrides.get(source, source)
-                cat[name][sub] = truth[source]
-        if flags_good:
-            assert(False, 'Flag setting is too slow; find a solution first')
-            for i, row in enumerate(cat):
-                row_src = truth.iloc[i]
-                for flag in flags:
-                    row[flag][sub] = row_src[flag]
-        sub[row_begin:row_end] = False
-        row_begin = row_end
-    time = time_print(time, prefix=f'Assigned in ', postfix='; computing indices')
-    
-    indices = np.array(indexer.indexPoints(ras, decs))
-    # Break up the pixels using a histogram
-    h, rev = esutil.stat.histogram(indices, rev=True)
-    time = time_print(time, prefix=f'Computed indices in ', postfix='; writing refcats')
-    gd, = np.where(h > 0)
-    for i in gd:
-        within = rev[rev[i]: rev[i + 1]]
-        sub[within] = True
-        index_htm = indices[within[0]]
-        # Write the individual pixel
-        dataId = indexer.makeDataId(index_htm, datasetConfig.ref_dataset_name)
-        cat_put = cat[sub]
-        try:
-            # Add stars to the catalog - they're already binned by the same htm pix
-            cat_stars = butler_stars.get('ref_cat', dataId)
-            # Only stars: the galaxies are wrong
-            cat_stars = cat_stars[~cat_stars['resolved']]
-            cat_extend = SourceCatalog(schema)
-            cat_extend.resize(len(cat_stars))
-            cat_extend['id'] = -cat_stars['id']
-            for column in ('coord_ra', 'coord_dec'):
-                cat_extend[column] = cat_stars[column]
-            for band in bands_dc2:
-                cat_extend[f'lsst_{band}_flux'] = cat_stars[f'lsst_{band}_smeared_flux']
-            cat_put.extend(cat_extend)
-        except Exception as e:
-            print(f"Failed to find stars/extend ref_cat for index={index_htm} due to {e}")
-        butler.put(cat_put, 'ref_cat', dataId=dataId)
-        time = time_print(time, prefix=f'Wrote refcat {index_htm} in ')
-        sub[within] = False
-    
-    print(f'Finished writing refcats in {time - time_start:.1f}s')
-    # And save the dataset configuration
-    dataId = indexer.makeDataId(None, datasetConfig.ref_dataset_name)
-    butler.put(datasetConfig, 'ref_cat_config', dataId=dataId)
+butler_ref = dc2.get_refcat(make=redo_refcat)
 
 
 # ## Crossmatch against reference catalog
 # 
 # All of the plots in this notebook compare stack measurements of sources measured by the LSST Science Pipelines cross-matched against a reference catalog that is part of the Science Pipelines repository. This reference catalog contains all sources brighter than 23 mags in r, and was generated through some kind of Task that must have read the original DC2 truth tables (more on that below).
 
-# In[9]:
+# In[5]:
 
 
-# Load MultiProFit catalogs and concat them. Note 3828/9 = 2.2i, 3832 et al. = 2.1.1i
-dc2_tracts = {
-    3828: (f'{dc2_dst_path}2020-01-31/', '2.2i'),
-    3832: (f'{dc2_dst_path}2020-01-31/', '2.1.1i'),
-}
-flux_match = f'lsst_{band_ref}'
-filters_single = ('g', 'r', 'i')
-filters_multi = ('gri',)
-filters_all = filters_single + filters_multi
-filters_order = [band_ref] + [band for band in filters_all if band != band_ref]
-cats = {}
-for tract, (path, run_dc2) in dc2_tracts.items():
-    task = DirectMatchTask(butler, config=config)
-    cats[tract] = {'meas': {}}
-    matched_ids_src = {}
-    schema_truth, truth_full = None, None
-    for band in filters_order:
-        print(f'Loading tract {tract} band {band}')
-        files = np.sort(glob.glob(f'{path}{band}/mpf_dc2_{band}_{tract}_[0-9],[0-9]_mag.fits'))
-        cat_full = None
-        n_files = len(files)
-        time = timer()
-        for idx, file in enumerate(files):
-            # This entire bit of aggravating code is a tedious way to get matched catalogs
-            # in different bands all matched on the same reference band
-            patch = file.split('_')[-2]
-            matches = matched_ids_src.get(patch, None)
-            has_match = matches is not None
-            cat = SourceCatalog.readFits(file)
-            if cat_full is None:
-                assert(idx == 0)
-                cat_full = SourceCatalog(cat.schema)
-            if not has_match:
-                assert(band == band_ref)
-                matches = task.run(cat, filterName=flux_match)
-                if truth_full is None:
-                    schema_truth = matches.refCat.schema
-                matches = matches.matches
-            n_matches = len(matches)
-            cat_full.reserve(n_matches)
-            if has_match:
-                n_good = 0
-                for id_src in matches:
-                    # See below - we saved the id of the src but sadly couldn't get the row index (I think)
-                    src = cat.find(id_src)
-                    cat_full.append(src)
-                    good_src = np.isfinite(src[f'multiprofit_gausspx_c1_{band if band in filters_single else band_ref}_mag'])
-                    n_good += good_src
-            else:
-                truth_patch = SourceCatalog(schema_truth)
-                truth_patch.reserve(n_matches)
-                match_ids = np.argsort([match.second.getId() for match in matches])
-                matched_ids_src_patch = np.zeros(n_matches, dtype=cat_full['id'].dtype)
-                # Loop through matches sorted by meas cat id
-                # Add them to the full truth/meas cats
-                # Save the id for other bands to find by
-                # (If there were a way to find row index by id that would probably be better,
-                # since it would only need to be done once in the ref_band)
-                for idx_save, idx_match in enumerate(match_ids):
-                    match = matches[idx_match]
-                    matched_ids_src_patch[idx_save] = match.second.getId()
-                    cat_full.append(match.second)
-                    truth_patch.append(match.first)
-                assert((idx_save + 1) == len(matched_ids_src_patch))
-                matched_ids_src[patch] = matched_ids_src_patch
-                cat_matched = cat_full[len(cat_full)-n_matches:]
-                if truth_full is None:
-                    assert(idx == 0)
-                    truth_full = truth_patch
-                else:
-                    truth_full.extend(truth_patch)
-            time = time_print(
-                time, prefix=f'Loaded in ', postfix=f'; loading {patch} ({idx+1}/{n_files})'
-                f'{" and matching" if not has_match else ""} file={file};'
-                f' len(cat,truth)={len(cat_full) if cat_full is not None else 0},'
-                f'{len(truth_full) if truth_full is not None else 0}'
-            )
-            cats[tract]['meas'][band] = cat_full.copy(deep=True)
-        cats[tract]['truth'] = truth_full.copy(deep=True)
+# Match with the refcat using afw's DirectMatchTask
+cats = dc2.match_refcat(butler_ref)
 
 
-# In[10]:
+# In[6]:
 
 
 # Model plot setup
+filters_single = ('g', 'r', 'i')
+filters_multi = ('gri',)
 models = {
     'mmf CModel': ('slot_ModelFlux_mag', 0),
     'mpf CModel': ('mg8cmodelpx', 2),
@@ -320,7 +83,7 @@ lim_y = {
 }
 
 
-# In[11]:
+# In[7]:
 
 
 # Model plot functions
@@ -373,8 +136,6 @@ def plot_matches(cats, resolved, models, bands=None, band_ref=None, band_ref_mul
         for name, (model, n_comps) in models.items():
             is_multiprofit = n_comps > 0
             name_model = f'multiprofit_{model}' if is_multiprofit else model
-            mags_true_good = {}
-            mags_model_good = {}
             cats_type = [(cats_meas, False)]
             if band_multi is not None and is_multiprofit:
                 cats_type.append((cat_multi, True))
@@ -384,7 +145,8 @@ def plot_matches(cats, resolved, models, bands=None, band_ref=None, band_ref_mul
                 good_band = good_mags_true[band]
                 true = mags_true[band]
                 for cat, multi in cats_type:
-                    y = get_total_mag((cat if multi else cat[band]), band, name_model, n_comps, is_multiprofit) - true
+                    y = get_total_mag((cat if multi else cat[band]),
+                                      band, name_model, n_comps, is_multiprofit) - true
                     mags_diff[band][multi] = y
                     x, y = true[good_band], y[good_band]
                     good = np.isfinite(y)
@@ -438,7 +200,7 @@ def plot_matches(cats, resolved, models, bands=None, band_ref=None, band_ref_mul
 # 5. Nearly everything is improved by fitting gri simultaneously - magnitudes, colours, etc. all have tigher scatter no matter the model or band. While the improvements in one-sigma scatter for magnitudes are not necessarily large, the 2+sigma scatter is significantly tighter, as are colours.
 #     - This is very encouraging and non-trivial; one could have imagined galaxies with non-detections in some bands to have more biased measurements in the bands with detections, but that doesn't seem to be the case very often. Of course it's at least partly expected since the morphology of the galaxy is identical in all bands in single-component models, but the fact that this improves colours substantially without making magnitudes worse is a major bonus.
 
-# In[12]:
+# In[8]:
 
 
 # Galaxies
@@ -450,7 +212,7 @@ plot_matches(cats, True, models, bands=filters_single, band_ref=band_ref, band_r
 # 
 # There's not much to say here, other than that the stars look basically fine and the choice of PSF/source model and single- vs multi-band fitting makes little difference. Someone more versed in stellar photometry might have more to say about the small biases in the medians, outliers, etc.
 
-# In[13]:
+# In[9]:
 
 
 # Stars
