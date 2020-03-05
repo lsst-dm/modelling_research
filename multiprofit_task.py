@@ -6,7 +6,7 @@ from lsst.meas.modelfit.display import buildCModelImages
 from lsst.meas.modelfit.cmodel.cmodelContinued import CModelConfig
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
-from . import make_cutout as cutout
+import modelling_research.make_cutout as cutout
 import matplotlib.pyplot as plt
 import multiprofit.fitutils as mpfFit
 import multiprofit.objects as mpfObj
@@ -511,11 +511,19 @@ class MultiProFitTask(pipeBase.Task):
             return results, None, noiseReplaced
         except Exception as e:
             if plot:
-                fig, axes = plt.subplots(1, len(exposures))
-                for idx, exposure in enumerate(exposures):
-                    axes[idx].imshow(exposure.image)
-            if printTrace:
-                traceback.print_exc()
+                if printTrace:
+                    traceback.print_exc()
+                n_exposures = len(exposures)
+                if n_exposures > 1:
+                    fig, axes = plt.subplots(1, n_exposures)
+                    for idx, (band, exposure) in enumerate(exposures.items()):
+                        axes[idx].imshow(exposure.image)
+                        axes[idx].set_title(f'{band} [{idx}/{n_exposures}]')
+                else:
+                    plt.figure()
+                    band, exposure = list(exposures.items())[0]
+                    plt.imshow(exposure.image)
+                    plt.title(band)
             return results, e, noiseReplaced
 
     def __getCatalog(self, filters, results, sources):
