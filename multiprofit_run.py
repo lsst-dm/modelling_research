@@ -1,7 +1,6 @@
 import argparse
 import logging
 import numpy as np
-import os
 import sys
 
 from lsst.afw.table import SourceCatalog
