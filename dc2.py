@@ -1,17 +1,17 @@
-import astropy.coordinates as coord
-import astropy.units as u
 import esutil
 import glob
 import lsst.afw.table as afwTable
 from lsst.daf.persistence import Butler
-from lsst.geom import Box2D
 from lsst.meas.algorithms import ingestIndexReferenceTask as ingestTask, IndexerRegistry
-from lsst.meas.astrom import DirectMatchTask, DirectMatchConfig
+from .match_refcat import match_refcat
 import numpy as np
 import pandas as pd
 import sqlite3
-from timeit import default_timer as timer
 from .timing import time_print
+
+
+def get_butlers():
+    return {version: Butler(path) for version, path in get_repos().items()}
 
 
 def get_filters():
@@ -20,6 +20,13 @@ def get_filters():
 
 def get_filter_ref():
     return 'r'
+
+
+def get_path_cats(prefix, band, tract):
+    path = f'{prefix}{band}/mpf_dc2_{band}_{tract}_[0-9],[0-9]_mag.fits'
+    files = glob.glob(path)
+    print(f'Loading {len(files)} files from path={path}')
+    return np.sort(files)
 
 
 def get_refcat(truth_path=None, refcat_path=None, truth_summary_path=None, make=False):
@@ -34,6 +41,22 @@ def get_refcat(truth_path=None, refcat_path=None, truth_summary_path=None, make=
         files = glob.glob(truth_summary_path)
         make_refcat(butler, files)
     return butler
+
+
+def get_repos():
+    return {
+        '2.1.1i': '/datasets/DC2/repoRun2.1.1i/rerun/w_2019_34/',
+        '2.2i': '/datasets/DC2/repoRun2.2i/rerun/w_2020_03/DM-22816/'
+    }
+
+
+def get_tracts():
+    truth_path = get_truth_path()
+    tracts = {
+        3828: (f'{truth_path}2020-01-31/', '2.2i'),
+        3832: (f'{truth_path}2020-01-31/', '2.1.1i'),
+    }
+    return tracts
 
 
 def get_truth_path():
@@ -164,208 +187,52 @@ def make_refcat(butler, files, filters=None, butler_stars=None):
     butler.put(datasetConfig, 'ref_cat_config', dataId=dataId)
 
 
-class Model:
-    def get_total_mag(self, cat, band):
-        return (
-            cat[self.field] if not self.is_multiprofit else
-            cat[f'{self.field}_c1_{band}_mag'] if self.n_comps == 1 else
-            -2.5 * np.log10(np.sum([
-                10 ** (-0.4 * cat[f'{self.field}_c{comp + 1}_{band}_mag'])
-                for comp in range(self.n_comps)], axis=0
-            ))
-        )
-
-    def __init__(self, desc, field, n_comps):
-        self.desc = desc
-        self.is_multiprofit = n_comps > 0
-        self.n_comps = n_comps
-        self.field = f'multiprofit_{field}' if self.is_multiprofit else field
-
-
-def _get_bbox_corners(bbox, wcs):
-    corners = wcs.pixelToSky(bbox.getCorners())
-    ra = np.sort([x.getRa() for x in corners])
-    dec = np.sort([x.getDec() for x in corners])
-    return [np.mean(x) for x in (ra[0:2], ra[2:4], dec[0:2], dec[2:4])]
-
-
-def _get_corner_cat(ra_min, ra_max, dec_min, dec_max, cat=None):
-    if cat is None:
-        cat = afwTable.SourceCatalog(afwTable.SourceTable.makeMinimalSchema())
-        cat.resize(4)
-    cat['coord_ra'][[0, 3]] = ra_min
-    cat['coord_ra'][1:3] = ra_max
-    cat['coord_dec'][0:2] = dec_min
-    cat['coord_dec'][2:4] = dec_max
-    return cat
-
-
-def _get_refcat_bbox(task, bbox, wcs, filterName=None, cat_corner=None):
-    """
-    Get all of the objects from a reference catalog within a bounding box.
+def match_refcat_dc2(
+        butler_refcat, tracts=None, butlers_dc2=None, filter_ref=None, match_afw=True, filters_single=None,
+        filters_multi=None, func_path=None, **kwargs
+):
+    """Load DC2 catalogs and Match catalogs to a reference catalog.
 
     Parameters
     ----------
-    task : `lsst.meas.astrom.directMatch.DirectMatchTask`
-        A matching task to load reference objects with.
-    bbox : `lsst.geom.Box2D`
-        A pixel bounding box; only objects within the box are returned.
-    wcs : `lsst.afw.geom.SkyWcs`
-        A WCS solution to transform the bbox.
-    filterName : `str`
-        The reference filter to load reference objects for.
-    cat_corner : `lsst.afw.table.SourceCatalog`
-        A SourceCatalog, the first four elements of which will be set to the coordinates of `bbox` and
-        then used to select reference objects within a circumscribing circle.
+    butler_refcat : `lsst.daf.persistence.Butler`
+        A butler with a reference catalog.
+    tracts : iterable [`int`]
+        A list of tract numbers.
+    butlers_dc2 : `dict` [`str`, `lsst.daf.persistence.Butler`]
+        A dict of butlers keyed by DC2 run name.
+    filter_ref :
+    match_afw :
+    filters_single :
+    filters_multi :
+    func_path :
 
     Returns
     -------
 
     """
-    ra_min, ra_max, dec_min, dec_max = _get_bbox_corners(bbox, wcs)
-    cat = _get_corner_cat(ra_min, ra_max, dec_min, dec_max, cat=cat_corner)
-    circle = task.calculateCircle(cat)
-    refcat = task.refObjLoader.loadSkyCircle(circle.center, circle.radius, filterName=filterName).refCat
-    ra, dec = refcat['coord_ra'], refcat['coord_dec']
-    return refcat[(ra > ra_min) & (ra < ra_max) & (dec > dec_min) & (dec < dec_max)]
-
-
-def match_refcat(butler, tracts=None, butlers_dc2=None, config=None, filter_ref=None, match_afw=True):
     # Load MultiProFit catalogs and concat them. Note 3828/9 = 2.2i, 3832 et al. = 2.1.1i
     if tracts is None:
-        truth_path = get_truth_path()
-        tracts = {
-            3828: (f'{truth_path}2020-01-31/', '2.2i'),
-            3832: (f'{truth_path}2020-01-31/', '2.1.1i'),
-        }
+        tracts = get_tracts()
     if butlers_dc2 is None:
-        butlers_dc2 = {
-            '2.2i': Butler('/datasets/DC2/repoRun2.2i/rerun/w_2020_03/DM-22816/'),
-            '2.1.1i': Butler('/datasets/DC2/repoRun2.1.1i/rerun/w_2019_34/'),
-        }
+        butlers_dc2 = get_butlers()
     if not match_afw:
         skymaps = {version: butler_dc2.get('deepCoadd_skyMap') for version, butler_dc2 in butlers_dc2.items()}
-    if config is None:
-        config = DirectMatchConfig(matchRadius=0.5)
     if filter_ref is None:
         filter_ref = get_filter_ref()
-    flux_match = f'lsst_{filter_ref}'
-    filters_single = ('g', 'r', 'i')
-    filters_multi = ('gri',)
-    filters_all = filters_single + filters_multi
-    filters_order = [filter_ref] + [band for band in filters_all if band != filter_ref]
-    task = DirectMatchTask(butler, config=config)
-
-    if not match_afw:
-        items_extra = [f'{t}{idx}' for t in ('dists', 'indices') for idx in range(1, 3)]
+    if filters_single is None:
+        filters_single = ('g', 'r', 'i')
+    if filters_multi is None:
+        filters_multi = ('gri',)
+    if func_path is None:
+        func_path = get_path_cats
 
     cats = {}
     for tract, (path, run_dc2) in tracts.items():
-        cats[tract] = {'meas': {}}
-        if not match_afw:
-            skymap_tract = skymaps[run_dc2][tract]
-            wcs = skymap_tract.getWcs()
-            for item in items_extra:
-                cats[tract][item] = []
-        matched_ids_src = {}
-        schema_truth, truth_full = None, None
-        # Store a bool mask of the valid children per patch in the band used for matching and apply consistently
-        # For some reason detect_isPatchInner isn't completely consistent in each filter
-        is_primary = {}
-        for band in filters_order:
-            print(f'Loading tract {tract} band {band}')
-            files = np.sort(glob.glob(f'{path}{band}/mpf_dc2_{band}_{tract}_[0-9],[0-9]_mag.fits'))
-            cat_full = None
-            n_files = len(files)
-            time = timer()
-            for idx, file in enumerate(files):
-                # This entire bit of aggravating code is a tedious way to get matched catalogs
-                # in different bands all matched on the same reference band
-                patch = file.split('_')[-2]
-                matches = matched_ids_src.get(patch, None)
-                has_match = matches is not None
-                cat = afwTable.SourceCatalog.readFits(file)
-                if cat_full is None:
-                    assert (idx == 0)
-                    cat_full = afwTable.SourceCatalog(cat.schema)
-                if not has_match:
-                    assert (band == filter_ref)
-                    is_primary[patch] = \
-                    butlers_dc2[run_dc2].get('deepCoadd_ref', {'tract': tract, 'patch': patch})[
-                        'detect_isPrimary']
-                cat = cat[is_primary[patch]]
-                if not has_match:
-                    if match_afw:
-                        matches = task.run(cat, filterName=flux_match)
-                        if truth_full is None:
-                            schema_truth = matches.refCat.schema
-                        matches = matches.matches
-                    else:
-                        bbox = Box2D(skymap_tract[tuple(int(x) for x in patch.split(','))].getInnerBBox())
-                        truth_patch = _get_refcat_bbox(task, bbox, wcs, filterName=flux_match).copy(deep=True)
-                        skyCoords = [
-                            coord.SkyCoord(x['coord_ra'], x['coord_dec'], unit=u.rad)
-                            for x in (truth_patch.asAstropy(), cat.copy(deep=True).asAstropy())
-                        ]
-                        n_truth, n_meas = len(truth_full) if truth_full is not None else 0, len(cat_full)
-                        for refcat_first in (True, False):
-                            postfix = 1 + (not refcat_first)
-                            indices, dists, _ = coord.match_coordinates_sky(skyCoords[~refcat_first],
-                                                                            skyCoords[refcat_first])
-                            cats[tract][f'dists{postfix}'].append(dists.arcsec)
-                            offset = n_meas if refcat_first else n_truth
-                            if offset:
-                                indices += offset
-                            cats[tract][f'indices{postfix}'].append(indices)
-                        matched_ids_src[patch] = True
-                if match_afw:
-                    n_matches = len(matches)
-                    cat_full.reserve(n_matches)
-                    if has_match:
-                        n_good = 0
-                        for id_src in matches:
-                            # See below - we saved the id of the src but sadly couldn't get the row index (right?)
-                            src = cat.find(id_src)
-                            cat_full.append(src)
-                            good_src = np.isfinite(
-                                src[f'multiprofit_gausspx_c1_'
-                                    f'{band if band in filters_single else filter_ref}_mag'])
-                            n_good += good_src
-                    else:
-                        truth_patch = afwTable.SourceCatalog(schema_truth)
-                        truth_patch.reserve(n_matches)
-                        match_ids = np.argsort([match.second.getId() for match in matches])
-                        matched_ids_src_patch = np.zeros(n_matches, dtype=cat_full['id'].dtype)
-                        # Loop through matches sorted by meas cat id
-                        # Add them to the full truth/meas cats
-                        # Save the id for other bands to find by
-                        # (If there were a way to find row index by id that would probably be better,
-                        # since it would only need to be done once in the ref_band)
-                        for idx_save, idx_match in enumerate(match_ids):
-                            match = matches[idx_match]
-                            matched_ids_src_patch[idx_save] = match.second.getId()
-                            cat_full.append(match.second)
-                            truth_patch.append(match.first)
-                        assert ((idx_save + 1) == len(matched_ids_src_patch))
-                        matched_ids_src[patch] = matched_ids_src_patch
-                else:
-                    cat_full.extend(cat)
-                if not has_match:
-                    if truth_full is None:
-                        assert (idx == 0)
-                        truth_full = truth_patch
-                    else:
-                        truth_full.extend(truth_patch)
-                time = time_print(
-                    time, prefix=f'Loaded in ',
-                    postfix=f'; loading {patch} ({idx + 1}/{n_files})'
-                            f'{" and matching" if not has_match else ""} file={file};'
-                            f' len(cat,truth)={len(cat_full) if cat_full is not None else 0},'
-                            f'{len(truth_full) if truth_full is not None else 0}'
-                )
-            cats[tract]['meas'][band] = cat_full.copy(deep=True)
-        cats[tract]['truth'] = truth_full.copy(deep=True)
-        if not match_afw:
-            for item in items_extra:
-                cats[tract][item] = np.concatenate(cats[tract][item])
+        cats[tract] = match_refcat(
+            butler_refcat, butlers_dc2[run_dc2], [tract], filter_ref, func_path, match_afw=match_afw,
+            skymap=skymaps[run_dc2], prefix_flux_match='lsst_', prefix_file_path=path,
+            filters_single=filters_single, filters_multi=filters_multi, **kwargs
+        )[tract]
+
     return cats
