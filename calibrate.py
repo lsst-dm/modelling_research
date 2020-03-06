@@ -46,7 +46,7 @@ def calibrate_catalog(catalog, photoCalibs_filter, filter_ref=None):
 
 def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat=False, write=True,
                        postfix='_mag.fits'):
-    """Calibrate FITS source catalogs from know repos.
+    """Calibrate FITS source measurement catalogs derived from data in a given repo.
 
     Parameters
     ----------
@@ -145,6 +145,8 @@ def reorder_fields(cat, filters=None, func_field=None):
     """
     if filters is None:
         filters = ('i', 'r', 'g')
+    if func_field is None:
+        func_field = is_field_multiprofit
     filters_order = {idx: band for idx, band in enumerate(filters)}
 
     schema = cat.schema
@@ -155,7 +157,7 @@ def reorder_fields(cat, filters=None, func_field=None):
 
     for field in fields:
         field_toadd = field
-        if is_field_multiprofit(field) and field.endswith('_instFlux'):
+        if func_field(field) and field.endswith('_instFlux'):
             split = field.split('_')
             name_field = '_'.join(split[:-2])
             band = split[-2]
