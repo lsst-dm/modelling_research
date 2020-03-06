@@ -9,10 +9,13 @@
 
 
 # Import requirements
+from lsst.daf.persistence import Butler
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import modelling_research.dc2 as dc2
+import modelling_research.meas_model as mrMeas
 from modelling_research.plotting import plotjoint_running_percentiles
+from modelling_research.plot_matches import plot_matches
 import numpy as np
 import seaborn as sns
 from timeit import default_timer as timer
@@ -35,152 +38,64 @@ sns.set(rc={'axes.facecolor': '0.85', 'figure.facecolor': 'w'})
 # Catalog matching settings
 # Reference band to match on. Should be 'r' for DC2 because reasons (truth refcats are r mag limited)
 band_ref = 'r'
-# Match radius of 0.5 arcsec
 
 
 # In[4]:
 
 
 # Load the truth catalogs and count all of the rows
-# This allows for pre-allocation of the truth table to its full size
-# ... before determining HTM indices and writing refcats below
-redo_refcat = True
-butler_ref = dc2.get_refcat(make=redo_refcat)
+butler_ref = dc2.get_refcat(make=False)
+
+
+# In[5]:
+
+
+# Load the DC2 repo butlers: we'll need them later
+butlers_dc2 = {
+    '2.2i': Butler('/datasets/DC2/repoRun2.2i/rerun/w_2020_03/DM-22816/'),
+}
 
 
 # ## Crossmatch against reference catalog
 # 
 # All of the plots in this notebook compare stack measurements of sources measured by the LSST Science Pipelines cross-matched against a reference catalog that is part of the Science Pipelines repository. This reference catalog contains all sources brighter than 23 mags in r, and was generated through some kind of Task that must have read the original DC2 truth tables (more on that below).
 
-# In[5]:
-
-
-# Match with the refcat using afw's DirectMatchTask
-cats = dc2.match_refcat(butler_ref)
-
-
 # In[6]:
 
 
-# Model plot setup
+# Match with the refcat using astropy's matcher
+truth_path = dc2.get_truth_path()
+tracts = {3828: (f'{truth_path}2020-01-31/', '2.2i'),}
 filters_single = ('g', 'r', 'i')
 filters_multi = ('gri',)
-models = {
-    'mmf CModel': ('slot_ModelFlux_mag', 0),
-    'mpf CModel': ('mg8cmodelpx', 2),
-    'mpf Sersic': ('mg8serbpx', 1),
-    'mpf Sersic Free Amp.': ('mg8serbapx', 8),
-    'mpf Sersic x 2': ('mg8serx2sepx', 2),
-    'mpf Sersic x 2 Free Amp.': ('mg8serx2seapx', 16),
-}
-models_stars = {
-    model: models[model] for model in ['mmf CModel', 'mpf CModel', 'mpf Sersic']
-}
-args = dict(scatterleft=True, scatterright=True, limx=(15, 25.),)
-lim_y = {
-    "resolved": (-0.6, 0.4),
-    "unresolved": (-0.1, 0.05),
-}
+cats = dc2.match_refcat_dc2(butler_ref, match_afw=False, tracts=tracts, butlers_dc2=butlers_dc2,
+                            filters_single=filters_single, filters_multi=filters_multi)
 
 
 # In[7]:
 
 
-# Model plot functions
-
-# Sum up fluxes from each component in multi-component models
-def get_total_mag(cat_band, band, name_model, n_comps, is_multiprofit):
-    return (
-        cat_band[name_model] if not is_multiprofit else
-        cat_band[f'{name_model}_c1_{band}_mag'] if n_comps == 1 else
-        -2.5*np.log10(np.sum([
-            10**(-0.4*cat_band[f'{name_model}_c{comp+1}_{band}_mag'])
-            for comp in range(n_comps)], axis=0
-        ))
-    )
-
-# Plot model - truth for all models and for mags and colours
-def plot_matches(cats, resolved, models, bands=None, band_ref=None, band_ref_multi=None,
-                 band_multi=None, colors=None, mag_max=None, **kwargs):
-    if mag_max is None:
-        mag_max = np.Inf
-    bands_is_none = bands is None
-    has_multi = band_multi is not None
-    obj_type = 'Galaxies' if resolved else 'Point Sources'
-    for tract, cat in cats.items():
-        cat_truth, cats_meas = cat['truth'], cat['meas']
-        if has_multi:
-            cat_multi = cats_meas[band_multi]
-            
-        if bands_is_none:
-            bands = cats_meas.keys()
-            bands = (band for band in bands if band != band_multi)
-        else:
-            cats_meas = {band: cats_meas[band] for band in bands}
-            
-        cats_meas = {band: cat for band, cat in cats_meas.items()}
-        if band_ref is None:
-            band_ref = bands[0]
-        cat_ref = cats_meas[band_ref]
-        good_ref = (cat_ref['parent'] != 0) | (cat_ref['deblend_nChild'] == 0)
-        good_ref = good_ref & cat_ref['detect_isPatchInner'] & ((cat_truth['id'] > 0) == resolved)
-        cat_truth = cat_truth[good_ref]
-        
-        for band, cat in cats_meas.items():
-            cats_meas[band] = cat[good_ref]
-        mags_true = {band: -2.5*np.log10(cat_truth[f'lsst_{band}_flux']) + 31.4 for band in bands}
-        if has_multi:
-            cat_multi = cat_multi[good_ref]
-        good_mags_true = {band: mags_true[band] < mag_max for band in bands}
-        
-        for name, (model, n_comps) in models.items():
-            is_multiprofit = n_comps > 0
-            name_model = f'multiprofit_{model}' if is_multiprofit else model
-            cats_type = [(cats_meas, False)]
-            if band_multi is not None and is_multiprofit:
-                cats_type.append((cat_multi, True))
-            mags_diff = {}
-            for band in bands:
-                mags_diff[band] = {}
-                good_band = good_mags_true[band]
-                true = mags_true[band]
-                for cat, multi in cats_type:
-                    y = get_total_mag((cat if multi else cat[band]),
-                                      band, name_model, n_comps, is_multiprofit) - true
-                    mags_diff[band][multi] = y
-                    x, y = true[good_band], y[good_band]
-                    good = np.isfinite(y)
-                    postfix = f'({band_multi})' if multi else ''
-                    title = f'DC2 {tract} {obj_type} {band}-band, {name}{postfix}, N={np.sum(good)}'
-                    print(title)
-                    labelx = f'${band}_{{true}}$'
-                    plotjoint_running_percentiles(
-                        x[good], y[good], title=title,
-                        labelx=labelx, labely=f'${band}_{{model}}$ - {labelx}',
-                        **kwargs
-                    )
-                    plt.show()
-            if colors is None:
-                colors = list(bands)
-                colors = [(colors[idx], colors[idx+1]) for idx in range(len(colors)-1)]
-            elif not colors:
-                continue
-            for b1, b2 in colors:
-                bx = b2 if band_ref_multi is None else band_ref_multi
-                good_band = good_mags_true[bx]
-                for _, multi in cats_type:
-                    x = mags_true[bx][good_band]
-                    y = mags_diff[b1][multi][good_band] - mags_diff[b2][multi][good_band]
-                    good = np.isfinite(y)
-                    band = f'{b1}-{b2}'
-                    postfix = f'({band_multi})' if multi else ''
-                    title = f'DC2 {tract} {obj_type} {band}, {name}{postfix}, N={np.sum(good)}'
-                    print(title)
-                    plotjoint_running_percentiles(
-                        x[good], y[good], title=title,
-                        labelx=f'${bx}_{{true}}$', labely=f'${band}_{{model-true}}$',
-                        **kwargs)
-                    plt.show()
+# Model plot setup
+models = {
+    desc: mrMeas.Model(desc, field, n_comps)
+    for desc, field, n_comps in [
+        ('PSF', 'base_PsfFlux_mag', 0),
+        ('mmf CModel', 'modelfit_CModel_mag', 0),
+        ('mpf CModel', 'mg8cmodelpx', 2),
+        ('mpf Sersic', 'mg8serbpx', 1),
+        ('mpf Sersic Free Amp.', 'mg8serbapx', 8),
+        ('mpf Sersic x 2', 'mg8serx2sepx', 2),
+        ('mpf Sersic x 2 Free Amp.', 'mg8serx2seapx', 16),
+    ]
+}
+models_stars = {
+    model: models[model] for model in ['mmf CModel', 'mpf CModel', 'mpf Sersic']
+}
+args = dict(scatterleft=True, scatterright=True, limx=(14.5, 24.5),)
+lim_y = {
+    "resolved": (-0.6, 0.4),
+    "unresolved": (-0.08, 0.06),
+}
 
 
 # ## Galaxy fluxes and colours
@@ -204,18 +119,25 @@ def plot_matches(cats, resolved, models, bands=None, band_ref=None, band_ref_mul
 
 
 # Galaxies
-plot_matches(cats, True, models, bands=filters_single, band_ref=band_ref, band_ref_multi=band_ref,
-             band_multi=filters_multi[0], mag_max=25, limy=lim_y['resolved'], **args)
+plot_matches(
+    cats, True, models, filters_single, band_ref=band_ref, band_multi=filters_multi[0],
+    band_ref_multi=band_ref, mag_max=24.5, limy=lim_y['resolved'], match_dist_asec=0.168,
+    plot_compure=False, rematch=True, **args
+)
 
 
 # ## Point source fluxes and colours
 # 
-# There's not much to say here, other than that the stars look basically fine and the choice of PSF/source model and single- vs multi-band fitting makes little difference. Someone more versed in stellar photometry might have more to say about the small biases in the medians, outliers, etc.
+# There's not much to say here, other than that the stars look basically fine up to the saturation limit of ~16 and the choice of PSF/source model and single- vs multi-band fitting makes little difference. Someone more versed in stellar photometry might have more to say about the small biases in the medians, outliers, etc.
 
 # In[9]:
 
 
 # Stars
-plot_matches(cats, False, models_stars, bands=filters_single, band_ref=band_ref, band_ref_multi=band_ref,
-             band_multi=filters_multi[0], mag_max=23, limy=lim_y['unresolved'], **args)
+args['limx']=(16, 23)
+plot_matches(
+    cats, False, models_stars, filters_single, band_ref=band_ref, band_multi=filters_multi[0],
+    band_ref_multi=band_ref, mag_max=23, limy=lim_y['unresolved'], match_dist_asec=0.168,
+    plot_compure=False, rematch=True, **args
+)
 
