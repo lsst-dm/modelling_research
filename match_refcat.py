@@ -1,5 +1,6 @@
 import astropy.coordinates as coord
 import astropy.units as u
+from .tables import read_split_cat_fits
 import lsst.afw.table as afwTable
 from lsst.geom import Box2D
 from lsst.meas.astrom import DirectMatchTask, DirectMatchConfig
@@ -160,7 +161,7 @@ def match_refcat(
                 patch = file.split('_')[-2]
                 matches = matched_ids_src.get(patch, None)
                 has_match = matches is not None
-                cat = afwTable.SourceCatalog.readFits(file)
+                cat = read_split_cat_fits(file)
                 if cat_full is None:
                     assert (idx == 0)
                     cat_full = afwTable.SourceCatalog(cat.schema)
