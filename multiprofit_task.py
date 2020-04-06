@@ -1,4 +1,5 @@
 from collections import defaultdict, namedtuple
+import copy
 import logging
 import lsst.afw.table as afwTable
 from lsst.meas.base.measurementInvestigationLib import rebuildNoiseReplacer
@@ -26,6 +27,8 @@ class MultiProFitConfig(pexConfig.Config):
     computeMeasModelfitLikelihood = pexConfig.Field(dtype=bool, default=False,
                                                     doc="Whether to compute the log-likelihood of best-fit "
                                                         "meas_modelfit parameters per model")
+    deblend = pexConfig.Field(dtype=bool, default=False, doc="Whether to fit parents simultaneously with "
+                                                             "children")
     filenameOut = pexConfig.Field(dtype=str, default=None, doc="Filename for output of FITS table")
     fitCModel = pexConfig.Field(dtype=bool, default=True,
                                 doc="Whether to perform a CModel (linear combo of exponential and "
@@ -385,8 +388,9 @@ class MultiProFitTask(pipeBase.Task):
         self.__addExtraField(extra, schema, prefix, 'nEvalGrad', 'number of Jacobian evaluations')
 
     @staticmethod
-    def __fitModel(model, exposurePsfs, modeller=None, cenx=None, ceny=None, resetPsfs=False, **kwargs):
-        """Fit a single model of a source to a number of exposures, initializing from the estimated moments.
+    def __fitModel(model, exposurePsfs, modeller=None, sources=None, resetPsfs=False, **kwargs):
+        """Fit a model to sources in a series of exposures, initializing from the estimated moments or
+        provided values.
 
         Parameters
         ----------
@@ -396,10 +400,8 @@ class MultiProFitTask(pipeBase.Task):
             An iterable of exposure-PSF pairs to fit.
         modeller : `multiprofit.objects.Modeller`, optional
             A MultiProFit modeller to use to fit the model; default creates a new modeller.
-        cenx : `float`, optional
-            The x coordinate of the source within the exposures.
-        ceny : `float`, optional
-            The y coordinate of the source within the exposures.
+        sources : `list` [`dict`]
+            A list of sources specified as a dict of values by parameter name, with flux a dict by filter.
         resetPsfs : `bool`, optional
             Whether to set the PSFs to None and thus fit a model with no PSF convolution.
         kwargs
@@ -417,22 +419,29 @@ class MultiProFitTask(pipeBase.Task):
                 exposure.psf = None
             exposures_no_psf[exposure.band] = [exposure]
         model.data.exposures = exposures_no_psf
-        params_free = model.get_parameters(fixed=False)
-        fluxes, moments_by_name, values_min, values_max, num_pix_img = mpfFit.get_init_from_moments(
-            (exposure for exposure, _ in exposurePsfs), cenx=cenx, ceny=ceny
-        )
-        for param in params_free:
-            value = fluxes.get(param.band) if isinstance(param, mpfObj.FluxParameter) else \
-                moments_by_name.get(param.name)
-            if param.name.startswith('cen'):
-                param.limits.upper = exposurePsfs[0][0].image.shape[param.name[-1] == 'y']
-            if value is not None:
-                param.set_value(value, transformed=False)
+        params_free = [src.get_parameters(free=True) for src in model.sources]
+        n_sources = 0 if sources is None else len(sources)
+        if n_sources == 0 or (n_sources == 1 and 'sigma_x' not in sources[0]):
+            fluxes, sources[0], _, _, _ = mpfFit.get_init_from_moments(
+                (exposure for exposure, _ in exposurePsfs),
+                cenx=sources[0].get('cenx', 0), ceny=sources[0].get('ceny', 0))
+            sources[0]['flux'] = fluxes
+        if n_sources != len(params_free):
+            raise ValueError(f'len(sources)={n_sources} != len(model.sources)={len(model.sources)}')
+        for values, params in zip(sources, params_free):
+            fluxes = values.get('flux', {})
+            for param in params:
+                value = fluxes.get(param.band, 1) if isinstance(param, mpfObj.FluxParameter) else \
+                    values.get(param.name)
+                if param.name.startswith('cen'):
+                    param.limits.upper = exposurePsfs[0][0].image.shape[param.name[-1] == 'x']
+                if value is not None:
+                    param.set_value(value, transformed=False)
         result, _ = mpfFit.fit_model(model=model, modeller=modeller, **kwargs)
         return result
 
     @pipeBase.timeMethod
-    def __fitSource(self, source, exposures, extras, printTrace=False, plot=False, **kwargs):
+    def __fitSource(self, source, exposures, extras, children=None, printTrace=False, plot=False, **kwargs):
         """Fit a single deblended source with MultiProFit.
 
         Parameters
@@ -459,6 +468,10 @@ class MultiProFitTask(pipeBase.Task):
         """
         results = None
         noiseReplaced = False
+        deblend = children is not None
+        if deblend and len(self.modelSpecs) > 0:
+            raise RuntimeError("Can only deblend with gausspx_no_psf model")
+        fit_hst = self.config.fitHstCosmos
         try:
             foot = source.getFootprint()
             bbox = foot.getBBox()
@@ -469,7 +482,7 @@ class MultiProFitTask(pipeBase.Task):
             # isSingle = nPeaks == 1
             exposurePsfs = []
             # TODO: Check total flux first
-            if self.config.fitHstCosmos:
+            if fit_hst:
                 wcs_src = next(iter(exposures.values())).getWcs()
                 corners, cens = cutout.get_corners_src(source, wcs_src)
                 exposure, cen_hst, psf = cutout.get_exposure_cutout_HST(
@@ -493,16 +506,53 @@ class MultiProFitTask(pipeBase.Task):
                         mpfObj.PSF(band, image=exposure.getPsf().computeKernelImage(center), engine="galsim")
                     ))
                 noiseReplaced = True
-            cenx, ceny = cen_hst if self.config.fitHstCosmos else source.getCentroid() - bbox.getBegin()
+            cen_src = source.getCentroid()
+            begin = bbox.getBegin()
+            cens = cen_hst if fit_hst else cen_src - begin
+            if self.config.fitGaussian:
+                rho_min, rho_max = -0.9, 0.9
+                if fit_hst and deblend:
+                    # Use wcs_hst/src instead
+                    # wcs_hst = exposure.meta['wcs']
+                    scale_x = 0.168 / 0.03
+                    scales = np.array([scale_x, scale_x])
+                sources = []
+                for child in children if deblend else [source]:
+                    cen_child = ((cen_hst + scales*(child.getCentroid() - cen_src)) if fit_hst else (
+                            child.getCentroid() - begin)) if deblend else cens
+                    ellipse = {'cenx': cen_child[0], 'ceny': cen_child[1]}
+                    cov = child['base_SdssShape_xy']
+                    if np.isfinite(cov):
+                        sigma_x, sigma_y = (np.sqrt(child[f'base_SdssShape_{ax}']) for ax in ['xx', 'yy'])
+                        if sigma_x > 0 and sigma_y > 0:
+                            ellipse['rho'] = np.clip(cov / (sigma_x * sigma_y), rho_min, rho_max)
+                            ellipse['sigma_x'], ellipse['sigma_y'] = sigma_x, sigma_y
+                    sources.append(ellipse)
+
             bands = [item[0].band for item in exposurePsfs]
             results = mpfFit.fit_galaxy_exposures(
                 exposurePsfs, bands, self.modelSpecs, results=results, plot=plot, print_exception=False,
-                cenx=cenx, ceny=ceny, **kwargs)
+                cenx=cens[0], ceny=cens[1], **kwargs)
             if self.config.fitGaussian:
+                n_sources = len(sources)
                 name_model = 'gausspx_no_psf'
-                model = self.models[name_model]
+                name_model_full = f'{name_model}_{n_sources}'
+                if name_model_full in self.models:
+                    model = self.models[name_model_full]
+                else:
+                    filters = [x[0].band for x in exposurePsfs]
+                    model = mpfFit.get_model(
+                        {band: 1 for band in filters}, "gaussian:1", (1, 1), slopes=[0.5], engine='galsim',
+                        engineopts={'use_fast_gauss': True, 'drawmethod': mpfObj.draw_method_pixel['galsim']},
+                        name_model=name_model_full
+                    )
+                    for _ in range(n_sources-1):
+                        model.sources.append(copy.deepcopy(model.sources[0]))
+                    # Probably don't need to cache anything more than this
+                    if n_sources < 10:
+                        self.models[name_model_full] = model
                 self.modeller.model = model
-                result = self.__fitModel(model, exposurePsfs, cenx=cenx, ceny=ceny, modeller=self.modeller,
+                result = self.__fitModel(model, exposurePsfs, modeller=self.modeller, sources=sources,
                                          resetPsfs=True, plot=plot and len(self.modelSpecs) == 0)
                 results['fits']['galsim'][name_model] = {'fits': [result], 'modeltype': 'gaussian:1'}
                 results['models']['gaussian:1'] = model
@@ -874,10 +924,10 @@ class MultiProFitTask(pipeBase.Task):
         if self.config.fitGaussian:
             if len(filters) > 1:
                 raise ValueError(f'Cannot fit Gaussian (no PSF) model with multiple filters ({filters})')
-            self.models['gausspx_no_psf'] = mpfFit.get_model(
+            self.models['gausspx_no_psf_1'] = mpfFit.get_model(
                 {band: 1 for band in filters}, "gaussian:1", (1, 1), slopes=[0.5], engine='galsim',
                 engineopts={'use_fast_gauss': True, 'drawmethod': mpfObj.draw_method_pixel['galsim']},
-                name_model='gausspx_no_psf'
+                name_model='gausspx_no_psf_1'
             )
 
         flags_failure = ['base_PixelFlags_flag_saturatedCenter']
@@ -893,14 +943,17 @@ class MultiProFitTask(pipeBase.Task):
             if failed:
                 error = f'Skipping because {[key for key, fail in flags_failed.items() if fail]} flag(s) set'
             else:
-                isolated = src['parent'] == 0 and src['deblend_nChild'] == 0
+                parent = src['deblend_nChild'] > 0
+                isolated = (src['parent'] == 0) and not parent
                 if self.config.isolatedOnly:
                     failed = not isolated
                     if failed:
                         error = 'Skipping because not isolated'
                 if not failed:
+                    children = None if not self.config.deblend or not parent else [
+                        sources[int(x)] for x in np.where(sources['parent'] == src['id'])[0]]
                     results, error, noiseReplaced = self.__fitSource(
-                        src, exposures, extras, printTrace=printTrace, plot=plot, **kwargs)
+                        src, exposures, extras, children=children, printTrace=printTrace, plot=plot, **kwargs)
                     failed = error is not None
                     runtime = (self.metadata["__fitSourceEndCpuTime"] -
                                self.metadata["__fitSourceStartCpuTime"])
@@ -922,10 +975,12 @@ class MultiProFitTask(pipeBase.Task):
                     failed = True
             # Fill in field values if successful, or save just the runtime to enter later otherwise
             if addedFields:
-                row = catalog[idx]
-                if not failed:
-                    self.__setRow(filters, results, fields, row, exposures, src, runtime=runtime)
-                row[self.failFlagKey] = failed
+                # TODO: See DM-22267 for follow-up ticket to implement this for blends
+                if not (self.config.deblend and parent):
+                    row = catalog[idx]
+                    if not failed:
+                        self.__setRow(filters, results, fields, row, exposures, src, runtime=runtime)
+                    row[self.failFlagKey] = failed
             elif failed:
                 indicesFailed[idx] = runtime
             id_src = src.getId()
