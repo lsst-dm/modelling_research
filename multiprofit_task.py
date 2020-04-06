@@ -92,6 +92,9 @@ class MultiProFitConfig(pexConfig.Config):
     skipDeblendTooManyPeaks = pexConfig.Field(dtype=bool, default=False,
                                               doc="Whether to skip fitting sources with "
                                                   "deblend_tooManyPeaks flag set")
+    useSdssShape = pexConfig.Field(dtype=bool, default=False,
+                                   doc="Whether to use the baseSdssShape* moments to initialize Gaussian "
+                                       "fits")
 
     def getModelSpecs(self):
         """Get a list of dicts of model specifications for MultiProFit/
@@ -412,6 +415,8 @@ class MultiProFitTask(pipeBase.Task):
         results : `dict`
             The results returned by multiprofit.fitutils.fit_model, if no error occurs.
         """
+        if sources is None:
+            sources = [{}]
         # Set the PSFs to None in each exposure to skip convolution
         exposures_no_psf = {}
         for exposure, _ in exposurePsfs:
@@ -420,8 +425,8 @@ class MultiProFitTask(pipeBase.Task):
             exposures_no_psf[exposure.band] = [exposure]
         model.data.exposures = exposures_no_psf
         params_free = [src.get_parameters(free=True) for src in model.sources]
-        n_sources = 0 if sources is None else len(sources)
-        if n_sources == 0 or (n_sources == 1 and 'sigma_x' not in sources[0]):
+        n_sources = len(sources)
+        if n_sources == 1 and ('sigma_x' not in sources[0]):
             fluxes, sources[0], _, _, _ = mpfFit.get_init_from_moments(
                 (exposure for exposure, _ in exposurePsfs),
                 cenx=sources[0].get('cenx', 0), ceny=sources[0].get('ceny', 0))
@@ -516,18 +521,19 @@ class MultiProFitTask(pipeBase.Task):
                     # wcs_hst = exposure.meta['wcs']
                     scale_x = 0.168 / 0.03
                     scales = np.array([scale_x, scale_x])
-                sources = []
-                for child in children if deblend else [source]:
-                    cen_child = ((cen_hst + scales*(child.getCentroid() - cen_src)) if fit_hst else (
-                            child.getCentroid() - begin)) if deblend else cens
-                    ellipse = {'cenx': cen_child[0], 'ceny': cen_child[1]}
-                    cov = child['base_SdssShape_xy']
-                    if np.isfinite(cov):
-                        sigma_x, sigma_y = (np.sqrt(child[f'base_SdssShape_{ax}']) for ax in ['xx', 'yy'])
-                        if sigma_x > 0 and sigma_y > 0:
-                            ellipse['rho'] = np.clip(cov / (sigma_x * sigma_y), rho_min, rho_max)
-                            ellipse['sigma_x'], ellipse['sigma_y'] = sigma_x, sigma_y
-                    sources.append(ellipse)
+                sources = [{}]
+                if deblend or self.config.useSdssShape:
+                    for child in (children if deblend else [source]):
+                        cen_child = ((cen_hst + scales*(child.getCentroid() - cen_src)) if fit_hst else (
+                                child.getCentroid() - begin)) if deblend else cens
+                        ellipse = {'cenx': cen_child[0], 'ceny': cen_child[1]}
+                        cov = child['base_SdssShape_xy']
+                        if np.isfinite(cov):
+                            sigma_x, sigma_y = (np.sqrt(child[f'base_SdssShape_{ax}']) for ax in ['xx', 'yy'])
+                            if sigma_x > 0 and sigma_y > 0:
+                                ellipse['rho'] = np.clip(cov / (sigma_x * sigma_y), rho_min, rho_max)
+                                ellipse['sigma_x'], ellipse['sigma_y'] = sigma_x, sigma_y
+                        sources.append(ellipse)
 
             bands = [item[0].band for item in exposurePsfs]
             results = mpfFit.fit_galaxy_exposures(
