@@ -30,6 +30,8 @@ class MultiProFitConfig(pexConfig.Config):
     deblend = pexConfig.Field(dtype=bool, default=False, doc="Whether to fit parents simultaneously with "
                                                              "children")
     filenameOut = pexConfig.Field(dtype=str, default=None, doc="Filename for output of FITS table")
+    fitBackground = pexConfig.Field(dtype=bool, default=False,
+                                     doc="Whether to fit a flat background level for each band")
     fitCModel = pexConfig.Field(dtype=bool, default=True,
                                 doc="Whether to perform a CModel (linear combo of exponential and "
                                     "deVaucouleurs) fit per source; necessitates doing exp. + deV. fits")
@@ -545,8 +547,8 @@ class MultiProFitTask(pipeBase.Task):
 
             bands = [item[0].band for item in exposurePsfs]
             results = mpfFit.fit_galaxy_exposures(
-                exposurePsfs, bands, self.modelSpecs, results=results, plot=plot, print_exception=False,
-                cenx=cens[0], ceny=cens[1], **kwargs)
+                exposurePsfs, bands, self.modelSpecs, results=results, plot=plot, print_exception=True,
+                cenx=cens[0], ceny=cens[1], fit_background=self.config.fitBackground, **kwargs)
             if self.config.fitGaussian:
                 n_sources = len(sources)
                 name_model = 'gausspx_no_psf'
