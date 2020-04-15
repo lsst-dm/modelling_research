@@ -27,6 +27,24 @@ def get_slurm_headers(time='96:00:00', queue='normal', n_tasks=1):
     return headers
 
 
+def get_slurm_patches_cosmos_hsc():
+    return [
+        [f'{x},{y}' for x in range(2, 7) for y in range(2, 7) if not ((x == 4) and (x == y))],
+        list(itertools.chain(
+            (f'0,{y}' for y in range(2, 7)),
+            (f'1,{y}' for y in range(0, 9)),
+            (f'{x},{y}' for x in range(2, 4) for y in [0, 1, 7, 8]),
+            (f'4,{x}' for x in range(2)),
+        )),
+        list(itertools.chain(
+            (f'8,{y}' for y in range(2, 7)),
+            (f'7,{y}' for y in range(0, 9)),
+            (f'{x},{y}' for x in range(6, 4, -1) for y in [0, 1, 7, 8]),
+            (f'4,{x}' for x in range(7, 9)),
+        )),
+    ]
+
+
 def get_mpf_fitcosmos(filename, idx_start, idx_end, src,
                       path_catalog='/project/dtaranu/cosmos/hst/COSMOS_25.2_training_sample/',
                       filename_catalog='real_galaxy_catalog_25.2.fits',

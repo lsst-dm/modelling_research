@@ -43,6 +43,13 @@ def get_refcat(truth_path=None, refcat_path=None, truth_summary_path=None, make=
     return butler
 
 
+def get_slurm_patches():
+    return [
+        [f'{x},{y}' for x in range(3) for y in range(7)] + [f'3,{y}' for y in range(3)],
+        [f'3,{y}' for y in range(4, 7)] + [f'{x},{y}' for x in range(4, 7) for y in range(7)],
+    ]
+
+
 def get_repos():
     return {
         '2.1.1i': '/datasets/DC2/repoRun2.1.1i/rerun/w_2019_34/',
