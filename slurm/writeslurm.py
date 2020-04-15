@@ -68,7 +68,7 @@ def get_mpf_task(name_file, name_log=None, **kwargs):
         if arg not in flags_default:
             raise RuntimeWarning(f'{arg} not in default flag list')
         cmd = f'{cmd} --{arg} {value}'
-    cmd = f'{cmd} >> {name_log}.log 2>> {name_log}.err'
+    cmd = f'{cmd} ${{2}} >> {name_log}.log 2>> {name_log}.err'
     return cmd
 
 
