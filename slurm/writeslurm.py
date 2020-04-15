@@ -1,3 +1,4 @@
+import itertools
 import os
 from modelling_research.multiprofit_run import get_flags
 
@@ -16,7 +17,7 @@ def get_cmds(path=None, toolset='devtoolset-8'):
     return cmds
 
 
-def get_slurm_headers(time='96:00:00', queue='normal', n_tasks=1):
+def get_slurm_headers(time='48:00:00', queue='normal', n_tasks=1):
     headers = [
         f'-p {queue}',
         f'--time={time}',
@@ -72,8 +73,12 @@ def get_mpf_task(name_file, name_log=None, **kwargs):
     return cmd
 
 
-def write_slurm(filename, cmds, sbatches, header='#!/bin/bash'):
+def write_slurm(filename, cmds, sbatches, header='#!/bin/bash', write_name=True, name_job=None):
+    if name_job is None:
+        name_job = filename
     with open(filename, 'w') as f:
+        if write_name:
+            sbatches[-1] = f'--job-name {name_job}'
         f.write(header + os.linesep)
         f.writelines("#SBATCH " + sbatch + os.linesep for sbatch in sbatches)
         f.writelines(cmd + os.linesep for cmd in cmds)
@@ -95,13 +100,12 @@ def write_slurm_fitcosmos(path, src='hsc', filename_src=None, idx_start=0, idx_e
     else:
         tasks = 1
     cmds = get_cmds()
-    sbatches = get_slurm_headers()
+    sbatches = get_slurm_headers(n_tasks=tasks)
     idx = idx_start
     while idx < idx_end:
         idx_end_task = idx + tasks*num - 1
         idx_range = f'_{idx}-{idx_end_task}'
         name = f'{src}{idx_range}'
-        sbatches[-1] = '--job-name ' + name
         name_full = f'{prefix}{name}{postfix}'
         file = os.path.join(path, name_full + '.job')
         if cpus_multiprog is not None:
@@ -116,7 +120,7 @@ def write_slurm_fitcosmos(path, src='hsc', filename_src=None, idx_start=0, idx_e
             cmds[-1] = get_mpf_fitcosmos(
                 f'{prefix}{filename_src}{idx_range}{postfix}', idx, idx_end_task,
                 src, filename_log=name_full, **kwargs)
-        write_slurm(file, cmds, sbatches)
+        write_slurm(file, cmds, sbatches, name_job=name)
         idx = idx_end_task + 1
 
 
@@ -146,7 +150,8 @@ def write_slurm_fit_mpftask(path, patches=None, multiprog=False, prefix='mpf', *
                                  **kwargs))
         cmds_conf = []
     cmds = get_cmds()
-    sbatches = get_slurm_headers()
+    n_tasks = len(patches) if multiprog else 1
+    sbatches = get_slurm_headers(n_tasks=n_tasks)
     for idx, patch in enumerate(patches):
         if multiprog:
             cmd_multi = f'{idx} bash {name_multiprog}.bash {patch}{os.linesep}'
@@ -156,12 +161,11 @@ def write_slurm_fit_mpftask(path, patches=None, multiprog=False, prefix='mpf', *
             cmds[-1] = get_mpf_task(prefix_patch, name_patch=patch, filenameOut=f'{prefix_patch}.fits',
                                     **kwargs)
             filename_job = os.path.join(path, f'{prefix_patch}.job')
-            write_slurm(filename_job, cmds, sbatches)
+            write_slurm(filename_job, cmds, sbatches, name_job=prefix_patch)
     if multiprog:
-        filename_conf = os.path.join(path, f'{name_multiprog}.conf')
-        with open(filename_conf, 'w') as f:
+        filename_conf = f'{name_multiprog}.conf'
+        with open(os.path.join(path, filename_conf), 'w') as f:
             f.writelines(cmds_conf)
-        cmds[-1] = f'srun --output {name_multiprog}.log --ntasks={len(patches)} --multi-prog {filename_conf}'
+        cmds[-1] = f'srun --output {name_multiprog}.log --ntasks={n_tasks} --multi-prog {filename_conf}'
         filename_job = os.path.join(path, f'{name_multiprog}.job')
-        write_slurm(filename_job, cmds, sbatches)
-
+        write_slurm(filename_job, cmds, sbatches, name_job=name_multiprog)
