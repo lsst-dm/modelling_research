@@ -274,6 +274,12 @@ def parse_multiprofit_dataId(filename):
     return bands, int(tract), patch
 
 
+def parse_multiprofit_dataId_Hsc(filename):
+    bands, tract, patch = parse_multiprofit_dataId(filename)
+    bands = tuple(f'HSC-{b.upper()}' for b in bands)
+    return bands, tract, patch
+
+
 def reorder_fields(cat, filters=None, func_field=None):
     """Reorder filter-dependent instFlux fields in a catalog.
 
