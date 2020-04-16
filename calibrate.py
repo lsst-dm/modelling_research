@@ -54,8 +54,8 @@ def calibrate_catalog(catalog, photoCalibs_filter, filter_ref=None, func_field=N
 
 
 def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cats=False, write=True,
-                       files_ngmix=None, datasetType_ngmix=None, postfix='_mag.fits', type_cat=None,
-                       get_cmodel_forced=False, func_field=None):
+                       files_ngmix=None, datasetType_ngmix=None, postfix='_mag.fits',
+                       type_cat=None, type_calib=None, get_cmodel_forced=False, func_field=None):
     """Calibrate FITS source measurement catalogs derived from data in a given repo.
 
     Parameters
@@ -80,6 +80,8 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
         The postfix to add to filenames when writing calibrate catalogs; default '_mag.fits'.
     type_cat: type
         A type of catalog to read; default `lsst.afw.table.SourceCatalog`.
+    type_calib : `str`
+        The type of calibration to use; default "deepCoadd_photoCalib".
     get_cmodel_forced: `bool`
         Whether to add cmodel forced photometry columns.
     func_field : callable
@@ -101,6 +103,8 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
         repos = dc2.get_repos()
         if butler is None:
             butler = {}
+    if type_calib is None:
+        type_calib = 'deepCoadd_photoCalib'
 
     if files_ngmix is not None:
         is_ngmix_butler = isinstance(files_ngmix, Butler)
@@ -220,7 +224,7 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
         if n_columns > tables.n_columns_max:
             raise RuntimeError(f'pre-calib cat has {n_columns}>max={tables.n_columns_max}')
 
-        photoCalibs = {band: butler_cal.get('deepCoadd_photoCalib', set_dataId_band(dataId, band))
+        photoCalibs = {band: butler_cal.get(type_calib, set_dataId_band(dataId, band))
                        for band in bands}
 
         cat_calib = calibrate_catalog(cat, photoCalibs, func_field=func_field)
