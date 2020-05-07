@@ -1049,9 +1049,9 @@ class MultiProFitTask(pipeBase.Task):
                 # If one of the models failed, we can't set up the catalog from it
                 if all(['fits' in x for x in results['fits']['galsim'].values()]):
                     catalog, fields = self.__getCatalog(filters, results, sources)
-                    for idxFailed, runtime in indicesFailed.items():
-                        catalog[idxFailed][self.failFlagKey] = True
-                        catalog[idxFailed][self.runtimeKey] = runtime
+                    for idx_failed, runtime_failed in indicesFailed.items():
+                        catalog[idx_failed][self.failFlagKey] = True
+                        catalog[idx_failed][self.runtimeKey] = runtime_failed
                     addedFields = True
                 else:
                     # Sadly this means that the successful models won't get written. Oh well.
