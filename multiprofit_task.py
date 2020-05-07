@@ -85,6 +85,9 @@ class MultiProFitConfig(pexConfig.Config):
     intervalOutput = pexConfig.Field(dtype=int, default=100, doc="Number of sources to fit before writing "
                                                                  "output")
     isolatedOnly = pexConfig.Field(dtype=bool, default=False, doc="Whether to fit only isolated sources")
+    maxParentFootprintPixels = pexConfig.Field(dtype=int, default=1000000,
+                                               doc="Maximum number of pixels in a parent footprint allowed "
+                                                   "before failing or reverting to child footprint")
     outputChisqred = pexConfig.Field(dtype=bool, default=True, doc="Whether to save the reduced chi^2 of "
                                                                    "each model's best fit")
     outputLogLikelihood = pexConfig.Field(dtype=bool, default=True, doc="Whether to save the log likelihood "
@@ -469,7 +472,7 @@ class MultiProFitTask(pipeBase.Task):
 
     @pipeBase.timeMethod
     def __fitSource(self, source, exposures, extras, children=None, printTrace=False, plot=False,
-                    footprint=None, **kwargs):
+                    footprint=None, failOnLargeFootprint=False, **kwargs):
         """Fit a single deblended source with MultiProFit.
 
         Parameters
@@ -487,6 +490,9 @@ class MultiProFitTask(pipeBase.Task):
             Whether to generate a plot window with the final output; default False.
         footprint : `lsst.afw.detection.Footprint`, optional
             The footprint to fit within. Default source.getFootprint().
+        failOnLargeFootprint : `bool`, optional
+            Whether to return a failure if the fallback (source) footprint dimensions also exceed
+            `self.config.maxParentFootprintPixels`; default False.
 
         Returns
         -------
@@ -504,9 +510,16 @@ class MultiProFitTask(pipeBase.Task):
             raise RuntimeError("Can only deblend with gausspx_no_psf model")
         fit_hst = self.config.fitHstCosmos
         try:
+            if footprint is not None:
+                if footprint.getBBox().getArea() > self.config.maxParentFootprintPixels:
+                    footprint = None
             if footprint is None:
                 footprint = source.getFootprint()
             bbox = footprint.getBBox()
+            area = bbox.getArea()
+            if failOnLargeFootprint and (area > self.config.maxParentFootprintPixels):
+                raise RuntimeError(f'Source footprint (fallback) area={area} pix exceeds '
+                                   f'max={self.config.maxParentFootprintPixels}')
             center = bbox.getCenter()
             # TODO: Implement multi-object fitting/deblending
             # peaks = footprint.getPeaks()
@@ -1024,7 +1037,7 @@ class MultiProFitTask(pipeBase.Task):
                             self.config.useParentFootprint and is_child) else None
                     results, error, noiseReplaced = self.__fitSource(
                         src, exposures, extras, children=children, printTrace=printTrace, plot=plot,
-                        footprint=footprint, **kwargs)
+                        footprint=footprint, failOnLargeFootprint=is_parent, **kwargs)
                     failed = error is not None
                     runtime = (self.metadata["__fitSourceEndCpuTime"] -
                                self.metadata["__fitSourceStartCpuTime"])
