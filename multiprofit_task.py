@@ -912,7 +912,7 @@ class MultiProFitTask(pipeBase.Task):
         row[self.runtimeKey] = runtime
 
     def fit(self, data, idx_begin=0, idx_end=np.Inf, logger=None, printTrace=False,
-            plot=False, path_cosmos_galsim=None, **kwargs):
+            plot=False, path_cosmos_galsim=None, sources=None, **kwargs):
         """Fit a catalog of sources with MultiProFit.
 
         Each source has its PSF fit with a configureable Gaussian mixture PSF model and then fits a
@@ -944,6 +944,9 @@ class MultiProFitTask(pipeBase.Task):
             A file path to a directory containing real_galaxy_catalog_25.2.fits and
             real_galaxy_PSF_images_25.2_n[1-88].fits; required if config.fitHstCosmos is True.
             See https://zenodo.org/record/3242143.
+        sources : `lsst.afw.table.SourceCatalog`, optional
+            A source catalog to override filter-specific catalogs provided in `data`, e.g. deepCoadd_ref.
+            Default None.
         **kwargs
             Additional keyword arguments to pass to `__fitSource`.
 
@@ -958,6 +961,10 @@ class MultiProFitTask(pipeBase.Task):
         # Set up a logger to suppress output for now
         if logger is None:
             logger = logging.getLogger(__name__)
+        filters = data.keys()
+        exposures = {band: data[band]['exposure'] for band in filters}
+        if sources is None:
+            sources = data[list(filters)[0]]['sources']
         if self.config.fitHstCosmos:
             if path_cosmos_galsim is None:
                 raise ValueError("Must specify path to COSMOS GalSim catalog if fitting HST images")
@@ -968,9 +975,6 @@ class MultiProFitTask(pipeBase.Task):
             filters = [extras[0].band]
         else:
             extras = [rebuildNoiseReplacer(datum['exposure'], datum['sources']) for datum in data.values()]
-            filters = data.keys()
-        sources = data[list(filters)[0]]['sources']
-        exposures = {band: data[band]['exposure'] for band in filters}
         timeInit = time.time()
         processTimeInit = time.process_time()
         addedFields = False
