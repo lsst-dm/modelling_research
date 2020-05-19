@@ -171,7 +171,7 @@ def _plot_purity(
     if has_psf:
         model = models['PSF']
         for band, cat in cats.items():
-            mags_psf[band] = model.get_total_mag(cat[right_types[band]], band)
+            mags_psf[band] = model.get_mag_total(cat[right_types[band]], band)
 
     matched = None
     for name, model in models.items():
@@ -185,7 +185,7 @@ def _plot_purity(
                 matched[indices[matched_any & select_truth]] = 1
                 matched[indices[matched_any & ~select_truth]] = -1
 
-            mags = mags_psf[band] if is_psf else model.get_total_mag(cat[right_type], band)
+            mags = mags_psf[band] if is_psf else model.get_mag_total(cat[right_type], band)
             within = mags < mag_max
             matched_right = matched[right_type]
 
@@ -383,7 +383,7 @@ def plot_matches(
                 mags_diff[band] = {}
                 true = mags_true[band]
                 for cat, multi in cats_type:
-                    y = model.get_total_mag(cat if multi else cat[band], band) - true
+                    y = model.get_mag_total(cat if multi else cat[band], band) - true
                     mags_diff[band][multi] = y
                     x, y = true[good_band], y[good_band]
                     good = np.isfinite(y)

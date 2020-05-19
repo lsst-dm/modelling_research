@@ -123,6 +123,12 @@ def write_slurm_fitcosmos(path, src='hsc', filename_src=None, idx_start=0, idx_e
         write_slurm(file, cmds, sbatches, name_job=name)
         idx = idx_end_task + 1
 
+# A handy script to write a resume file
+# TODO: make this a function, or just give up and hope it's easy in gen3
+# tail -n 1 mpf_*.log | awk -F"[ (/)]" '{if($6 != $7 && $1 != "==>") print prev, $6, $7} {prev=$0}'
+# | head  -n 24
+# | awk -F"[ _.]" '{print NR-1,"bash mpf_cosmos-hsc_iz_9813_resume.bash",$6,"\"--resume 1 --idx_begin",int($9/100) "00\""}' > tmp
+
 
 def write_slurm_fit_mpftask(path, patches=None, multiprog=False, prefix='mpf', **kwargs):
     """Writes slurm files for batch processing of MultiProfitTask.
