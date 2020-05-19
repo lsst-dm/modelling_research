@@ -376,7 +376,7 @@ def plot_matches(
 
         for name, model in models.items() if plot_diffs else {}:
             cats_type = [(cats_meas, False)]
-            if band_multi is not None and model.is_multiprofit:
+            if band_multi is not None and model.multiband:
                 cats_type.append((cat_multi, True))
             mags_diff = {}
             for band, good_band in good_mags_true.items():
