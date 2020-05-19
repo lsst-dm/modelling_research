@@ -606,9 +606,9 @@ class MultiProFitTask(pipeBase.Task):
                 plt.show()
             return results, None, noiseReplaced
         except Exception as e:
+            if printTrace:
+                traceback.print_exc()
             if plot:
-                if printTrace:
-                    traceback.print_exc()
                 n_exposures = len(exposures)
                 if n_exposures > 1:
                     fig, axes = plt.subplots(1, n_exposures)
