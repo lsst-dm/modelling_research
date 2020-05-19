@@ -1,8 +1,8 @@
 from timeit import default_timer as timer
 
 
-def time_print(time, time_new=None, format_time='.1f', prefix='', postfix='', unit='s'):
-    """ Print a message along with a time interval.
+def time_print(time=None, time_new=None, format_time='.1f', prefix='', postfix='', unit='s'):
+    """ Print a message along with a time interval since a previous time.
 
     Parameters
     ----------
