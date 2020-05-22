@@ -62,14 +62,14 @@ butlers_dc2 = {
 
 # Match with the refcat using astropy's matcher
 truth_path = dc2.get_truth_path()
-tracts = {3828: (f'{truth_path}2020-04-06-freebg/', '2.2i'),}
+tracts = {3828: (f'{truth_path}2020-04-06/', '2.2i'),}
 filters_single = ('g', 'r', 'i')
 filters_multi = ('gri',)
 patch_max = 7
 # Calibrate catalogs: this only needs to be done once; get_cmodel_forced should only be true for single bands for reasons
 calibrate_cats = False
-get_ngmix = False
-get_cmodel_forced = False
+get_ngmix = True
+get_cmodel_forced = True
 if calibrate_cats:
     butler_ngmix_gri = Butler('/project/dtaranu/dc2/ngmix/gri') if get_ngmix else None
     path = tracts[3828][0]
@@ -85,14 +85,7 @@ cats = dc2.match_refcat_dc2(butler_ref, match_afw=False, tracts=tracts, butlers_
 # 
 # All of the plots in this notebook compare stack measurements of sources measured by the LSST Science Pipelines cross-matched against a reference catalog that is part of the Science Pipelines repository. This reference catalog contains all sources brighter than 23 mags in r, and was generated through some kind of Task that must have read the original DC2 truth tables (more on that below).
 
-# In[23]:
-
-
-from importlib import reload
-reload(modelling_research)
-
-
-# In[25]:
+# In[8]:
 
 
 # Model plot setup
@@ -158,7 +151,7 @@ mpl.rcParams['axes.labelsize'] = 15
 # 5. Nearly everything is improved by fitting gri simultaneously - magnitudes, colours, etc. all have tigher scatter no matter the model or band. While the improvements in one-sigma scatter for magnitudes are not necessarily large, the 2+sigma scatter is significantly tighter, as are colours.
 #     - This is very encouraging and non-trivial; one could have imagined galaxies with non-detections in some bands to have more biased measurements in the bands with detections, but that doesn't seem to be the case very often. Of course it's at least partly expected since the morphology of the galaxy is identical in all bands in single-component models, but the fact that this improves colours substantially without making magnitudes worse is a major bonus.
 
-# In[ ]:
+# In[9]:
 
 
 # Galaxies
@@ -173,7 +166,7 @@ plot_matches(
 # 
 # There's not much to say here, other than that the stars look basically fine up to the saturation limit of ~16 and the choice of PSF/source model and single- vs multi-band fitting makes little difference. Someone more versed in stellar photometry might have more to say about the small biases in the medians, outliers, etc.
 
-# In[ ]:
+# In[10]:
 
 
 # Stars
@@ -184,7 +177,7 @@ plot_matches(
 )
 
 
-# In[ ]:
+# In[11]:
 
 
 # Compare ngmix vs mpf g-r colours. They agree almost shockingly well for ~80-90% of sources.
@@ -207,7 +200,7 @@ if get_ngmix:
     )
 
 
-# In[ ]:
+# In[12]:
 
 
 # r-band size mass for all objects
@@ -238,7 +231,7 @@ for name_model, sizes in sizes_model.items():
     plt.show()
 
 
-# In[ ]:
+# In[13]:
 
 
 # Timing ngmix and MultiProFit
