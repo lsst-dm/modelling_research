@@ -30,6 +30,8 @@ class MultiProFitConfig(pexConfig.Config):
     deblend = pexConfig.Field(dtype=bool, default=False, doc="Whether to fit parents simultaneously with "
                                                              "children")
     filenameOut = pexConfig.Field(dtype=str, default=None, doc="Filename for output of FITS table")
+    fitBackground = pexConfig.Field(dtype=bool, default=False,
+                                     doc="Whether to fit a flat background level for each band")
     fitCModel = pexConfig.Field(dtype=bool, default=True,
                                 doc="Whether to perform a CModel (linear combo of exponential and "
                                     "deVaucouleurs) fit per source; necessitates doing exp. + deV. fits")
@@ -95,6 +97,9 @@ class MultiProFitConfig(pexConfig.Config):
     useSdssShape = pexConfig.Field(dtype=bool, default=False,
                                    doc="Whether to use the baseSdssShape* moments to initialize Gaussian "
                                        "fits")
+    useParentFootprint = pexConfig.Field(dtype=bool, default=False,
+                                         doc="Whether to use the parent's footprint when fitting deblended "
+                                             "children")
 
     def getModelSpecs(self):
         """Get a list of dicts of model specifications for MultiProFit/
@@ -446,7 +451,8 @@ class MultiProFitTask(pipeBase.Task):
         return result
 
     @pipeBase.timeMethod
-    def __fitSource(self, source, exposures, extras, children=None, printTrace=False, plot=False, **kwargs):
+    def __fitSource(self, source, exposures, extras, children=None, printTrace=False, plot=False,
+                    footprint=None, **kwargs):
         """Fit a single deblended source with MultiProFit.
 
         Parameters
@@ -462,6 +468,9 @@ class MultiProFitTask(pipeBase.Task):
             Whether to print the traceback in case of an error; default False.
         plot : `bool`, optional
             Whether to generate a plot window with the final output; default False.
+        footprint : `lsst.afw.detection.Footprint`, optional
+            The footprint to fit within. Default source.getFootprint().
+
         Returns
         -------
         results : `dict`
@@ -478,11 +487,12 @@ class MultiProFitTask(pipeBase.Task):
             raise RuntimeError("Can only deblend with gausspx_no_psf model")
         fit_hst = self.config.fitHstCosmos
         try:
-            foot = source.getFootprint()
-            bbox = foot.getBBox()
+            if footprint is None:
+                footprint = source.getFootprint()
+            bbox = footprint.getBBox()
             center = bbox.getCenter()
             # TODO: Implement multi-object fitting/deblending
-            # peaks = foot.getPeaks()
+            # peaks = footprint.getPeaks()
             # nPeaks = len(peaks)
             # isSingle = nPeaks == 1
             exposurePsfs = []
@@ -537,8 +547,8 @@ class MultiProFitTask(pipeBase.Task):
 
             bands = [item[0].band for item in exposurePsfs]
             results = mpfFit.fit_galaxy_exposures(
-                exposurePsfs, bands, self.modelSpecs, results=results, plot=plot, print_exception=False,
-                cenx=cens[0], ceny=cens[1], **kwargs)
+                exposurePsfs, bands, self.modelSpecs, results=results, plot=plot, print_exception=True,
+                cenx=cens[0], ceny=cens[1], fit_background=self.config.fitBackground, **kwargs)
             if self.config.fitGaussian:
                 n_sources = len(sources)
                 name_model = 'gausspx_no_psf'
@@ -949,17 +959,22 @@ class MultiProFitTask(pipeBase.Task):
             if failed:
                 error = f'Skipping because {[key for key, fail in flags_failed.items() if fail]} flag(s) set'
             else:
-                parent = src['deblend_nChild'] > 0
-                isolated = (src['parent'] == 0) and not parent
+                id_parent = src['parent']
+                is_parent = src['deblend_nChild'] > 0
+                is_child = src['parent'] != 0
+                isolated = not is_child and not is_parent
                 if self.config.isolatedOnly:
                     failed = not isolated
                     if failed:
                         error = 'Skipping because not isolated'
                 if not failed:
-                    children = None if not self.config.deblend or not parent else [
+                    children = None if not self.config.deblend or not is_parent else [
                         sources[int(x)] for x in np.where(sources['parent'] == src['id'])[0]]
+                    footprint = sources.find(id_parent).getFootprint() if (
+                            self.config.useParentFootprint and is_child) else None
                     results, error, noiseReplaced = self.__fitSource(
-                        src, exposures, extras, children=children, printTrace=printTrace, plot=plot, **kwargs)
+                        src, exposures, extras, children=children, printTrace=printTrace, plot=plot,
+                        footprint=footprint, **kwargs)
                     failed = error is not None
                     runtime = (self.metadata["__fitSourceEndCpuTime"] -
                                self.metadata["__fitSourceStartCpuTime"])
@@ -982,7 +997,7 @@ class MultiProFitTask(pipeBase.Task):
             # Fill in field values if successful, or save just the runtime to enter later otherwise
             if addedFields:
                 # TODO: See DM-22267 for follow-up ticket to implement this for blends
-                if not (self.config.deblend and parent):
+                if not (self.config.deblend and is_parent):
                     row = catalog[idx]
                     if not failed:
                         self.__setRow(filters, results, fields, row, exposures, src, runtime=runtime)

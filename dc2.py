@@ -23,7 +23,7 @@ def get_filter_ref():
 
 
 def get_path_cats(prefix, band, tract):
-    path = f'{prefix}{band}/mpf_dc2_{band}_{tract}_[0-9],[0-9]_mag.fits'
+    path = f'{prefix}{band}/mpf_dc2_{band}_{tract}_[0-7],[0-7]_mag.fits'
     files = glob.glob(path)
     print(f'Loading {len(files)} files from path={path}')
     return np.sort(files)

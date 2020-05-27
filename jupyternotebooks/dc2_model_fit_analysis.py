@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# # Fitting DC2 v2 Simulation Data with MultiProFit
+# # Fitting DC2 v2 Simulation Data with MultiProFit - Free Sky Background Edition
 # 
 # This notebook plots results from fitting sources from the Vera Rubin Observatory/LSST Dark Energy Science Collaboration (DESC, https://lsstdesc.org/) DC2 simulations (http://lsstdesc.org/DC2-production/) using MultiProFit (https://github.com/lsst-dm/multiprofit, 'MPF'). Specifically, it reads the results of using a Task to fit exposures given an existing catalog with fits from meas_modelfit (https://github.com/lsst/meas_modelfit, 'MMF'). MMF implements a variant of the SDSS CModel algorithm (https://www.sdss.org/dr12/algorithms/magnitudes/#cmodel). In additional to CModel, MultiProFit allows for multi-band fitting, as well as fitting of Sersic profiles, multi-Gaussian approximations thereof ('MG' Sersic), and non-parametric radial profiles (Gaussian mixtures model with shared ellipse parameters, effectively having a Gaussian mixture radial profile). Thus, the main results are comparisons of the two codes doing basically the same thing (single-band exponential, de Vaucouleurs, and CModel linear combination fits), followed by plots highlighting Sersic vs CModel fits, more complicated double Sersic/free-amplitude models, and MultiProFit's multi-band fits.
 
@@ -14,6 +14,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import modelling_research.dc2 as dc2
 import modelling_research.meas_model as mrMeas
+from modelling_research.calibrate import calibrate_catalogs
 from modelling_research.plotting import plotjoint_running_percentiles
 from modelling_research.plot_matches import plot_matches
 import numpy as np
@@ -59,13 +60,25 @@ butlers_dc2 = {
 # In[6]:
 
 
+# Match with the refcat using astropy's matcher
+truth_path = dc2.get_truth_path()
+tracts = {3828: (f'{truth_path}2020-04-06/', '2.2i'),}
+filters_single = ('g', 'r', 'i')
+filters_multi = ('gri',)
+patch_max = 7
 # Calibrate catalogs: this only needs to be done once; get_cmodel_forced should only be true for single bands for reasons
 calibrate_cats = False
+get_ngmix = True
+get_cmodel_forced = True
 if calibrate_cats:
-    from modelling_research.calibrate import calibrate_catalogs
-    butler_ngmix_gri = Butler('/project/dtaranu/dc2/ngmix/gri')
-    files = [f'/project/dtaranu/dc2/2020-01-31/i/mpf_dc2_i_3828_{x},{y}.fits' for x in range(7) for y in range (7)]
-    cats = calibrate_catalogs(files, butlers_dc2, is_dc2=True, files_ngmix=butler_ngmix_gri, get_cmodel_forced=False)
+    butler_ngmix_gri = Butler('/project/dtaranu/dc2/ngmix/gri') if get_ngmix else None
+    path = tracts[3828][0]
+    for bands in filters_single + filters_multi:
+        files = [f'{path}{bands}/mpf_dc2_{bands}_3828_{x},{y}.fits' for x in range(patch_max) for y in range (patch_max)]
+        cats = calibrate_catalogs(files, butlers_dc2, is_dc2=True, files_ngmix=butler_ngmix_gri,
+                                  get_cmodel_forced=get_cmodel_forced and (len(bands) == 1))
+cats = dc2.match_refcat_dc2(butler_ref, match_afw=False, tracts=tracts, butlers_dc2=butlers_dc2,
+                            filters_single=filters_single, filters_multi=filters_multi)
 
 
 # ## Crossmatch against reference catalog
@@ -75,39 +88,37 @@ if calibrate_cats:
 # In[7]:
 
 
-# Match with the refcat using astropy's matcher
-truth_path = dc2.get_truth_path()
-tracts = {3828: (f'{truth_path}2020-01-31/', '2.2i'),}
-filters_single = ('g', 'r', 'i')
-filters_multi = ('gri',)
-cats = dc2.match_refcat_dc2(butler_ref, match_afw=False, tracts=tracts, butlers_dc2=butlers_dc2,
-                            filters_single=filters_single, filters_multi=filters_multi)
-
-
-# In[8]:
-
-
 # Model plot setup
 # ngmix takes out a pixel scale factor of 2.5*log10(0.2**2)
 # TODO: remove this offset when fixed in ngmix
 offset_ngmix = -3.4948500216800937
+model_specs = [
+    ('PSF', 'base_PsfFlux', 0),
+    ('stack CModel', 'modelfit_CModel', 0),
+    ('forced CModel', 'modelfit_forced_CModel', 0),
+] if get_cmodel_forced else []
+model_specs.extend([
+    ('MPF CModel', 'mg8cmodelpx', 2),
+    ('MPF Sersic', 'mg8serbpx', 1),
+    ('MPF Sersic Free Amp.', 'mg8serbapx', 8),
+    ('MPF Sersic x 2', 'mg8serx2sepx', 2),
+    ('MPF Sersic x 2 Free Amp.', 'mg8serx2seapx', 16),
+])
+if get_ngmix:
+    model_specs.append(('ngmix bd', 'ngmix_bd', 0))
+
 models = {
     desc: mrMeas.Model(desc, field, n_comps, mag_offset=offset_ngmix if mrMeas.is_field_ngmix(field) else None)
-    for desc, field, n_comps in [
-        ('PSF', 'base_PsfFlux', 0),
-        ('stack CModel', 'modelfit_CModel', 0),
-        ('forced CModel', 'modelfit_forced_CModel', 0),
-        ('MPF CModel', 'mg8cmodelpx', 2),
-        ('MPF Sersic', 'mg8serbpx', 1),
-        ('MPF Sersic Free Amp.', 'mg8serbapx', 8),
-        ('MPF Sersic x 2', 'mg8serx2sepx', 2),
-        ('MPF Sersic x 2 Free Amp.', 'mg8serx2seapx', 16),
-        ('ngmix bd', 'ngmix_bd', 0),
-    ]
+    for desc, field, n_comps in model_specs
 }
-models_stars = {
-    model: models[model] for model in ['PSF', 'stack CModel', 'MPF CModel', 'MPF Sersic', 'ngmix bd']
-}
+
+models_stars = ['PSF', 'stack CModel'] if get_cmodel_forced else []
+models_stars.extend(['MPF CModel', 'MPF Sersic'])
+if get_ngmix:
+    models_stars.append('ngmix bd')
+
+models_stars = {model: models[model] for model in models_stars}
+
 args = dict(scatterleft=True, scatterright=True,)
 args_type = {
     'resolved': {
@@ -140,7 +151,7 @@ mpl.rcParams['axes.labelsize'] = 15
 # 5. Nearly everything is improved by fitting gri simultaneously - magnitudes, colours, etc. all have tigher scatter no matter the model or band. While the improvements in one-sigma scatter for magnitudes are not necessarily large, the 2+sigma scatter is significantly tighter, as are colours.
 #     - This is very encouraging and non-trivial; one could have imagined galaxies with non-detections in some bands to have more biased measurements in the bands with detections, but that doesn't seem to be the case very often. Of course it's at least partly expected since the morphology of the galaxy is identical in all bands in single-component models, but the fact that this improves colours substantially without making magnitudes worse is a major bonus.
 
-# In[9]:
+# In[8]:
 
 
 # Galaxies
@@ -155,7 +166,7 @@ plot_matches(
 # 
 # There's not much to say here, other than that the stars look basically fine up to the saturation limit of ~16 and the choice of PSF/source model and single- vs multi-band fitting makes little difference. Someone more versed in stellar photometry might have more to say about the small biases in the medians, outliers, etc.
 
-# In[10]:
+# In[9]:
 
 
 # Stars
@@ -166,29 +177,30 @@ plot_matches(
 )
 
 
-# In[11]:
+# In[10]:
 
 
 # Compare ngmix vs mpf g-r colours. They agree almost shockingly well for ~80-90% of sources.
 cat_mb = cats[3828]['meas']['gri']
 cat_good = cat_mb[cat_mb['detect_isPatchInner'] & cat_mb['detect_isPrimary']]
-models_gmr = ['ngmix bd', 'MPF Sersic']
-gmr = {model: models[model].get_total_color(cat_good, 'g', 'r') for model in models_gmr}
-flux = models['ngmix bd'].get_total_mag(cat_good, 'r')
-good = flux < args_type['resolved']['limx'][1]
-for model in models_gmr:
-    good &= np.isfinite(gmr[model])
-plotjoint_running_percentiles(
-    flux[good],
-    gmr['ngmix bd'][good] - gmr['MPF Sersic'][good],
-    labelx='$r_{ngmix,bd}$', labely='${g-r}_{ngmix,bd}$ - ${g-r}_{mpf,Sersic}$',
-    limx=args_type['resolved']['limx'], limy=(-0.2, 0.2),
-    title='DC2 3828 All ngmix bd vs MPF Sersic (gri)',
-    **args
-)
+if get_ngmix:
+    models_gmr = ['ngmix bd', 'MPF Sersic']
+    gmr = {model: models[model].get_total_color(cat_good, 'g', 'r') for model in models_gmr}
+    flux = models['ngmix bd'].get_total_mag(cat_good, 'r')
+    good = flux < args_type['resolved']['limx'][1]
+    for model in models_gmr:
+        good &= np.isfinite(gmr[model])
+    plotjoint_running_percentiles(
+        flux[good],
+        gmr['ngmix bd'][good] - gmr['MPF Sersic'][good],
+        labelx='$r_{ngmix,bd}$', labely='${g-r}_{ngmix,bd}$ - ${g-r}_{mpf,Sersic}$',
+        limx=args_type['resolved']['limx'], limy=(-0.2, 0.2),
+        title='DC2 3828 All ngmix bd vs MPF Sersic (gri)',
+        **args
+    )
 
 
-# In[12]:
+# In[11]:
 
 
 # r-band size mass for all objects
@@ -197,12 +209,15 @@ plotjoint_running_percentiles(
 scale_pix = 0.2
 sizes_model = {
     'stack CModel': np.log10(scale_pix*np.sqrt(0.5*(
-        cat_good['modelfit_CModel_ellipse_xx'] + cat_good['modelfit_CModel_ellipse_yy']))),
-    'MPF Sersic': np.log10(scale_pix*np.sqrt(0.5*(
-        cat_good['multiprofit_mg8serbpx_c1_sigma_x']**2 + 
-        cat_good['multiprofit_mg8serbpx_c1_sigma_y']**2))),
-    'ngmix bd': np.log10(np.sqrt(0.5*cat_good['ngmix_bd_T'])),
-}
+        cat_good['modelfit_CModel_ellipse_xx'] + cat_good['modelfit_CModel_ellipse_yy'])))
+} if get_cmodel_forced else {}
+sizes_model['MPF Sersic'] = np.log10(
+    scale_pix*np.sqrt(0.5*(
+        cat_good['multiprofit_mg8serbpx_c1_sigma_x']**2 
+        + cat_good['multiprofit_mg8serbpx_c1_sigma_y']**2))
+)
+if get_ngmix:
+    sizes_model['ngmix bd']: np.log10(np.sqrt(0.5*cat_good['ngmix_bd_T']))
 for name_model, sizes in sizes_model.items():
     is_ngmix = name_model.startswith('ngmix')
     mag = models[name_model].get_total_mag(cat_good, 'r')
@@ -216,18 +231,19 @@ for name_model, sizes in sizes_model.items():
     plt.show()
 
 
-# In[13]:
+# In[12]:
 
 
 # Timing ngmix and MultiProFit
 cat_mb = cats[3828]['meas'][band_multi]
 times = {
-    'ngmix': np.log10(cat_mb['ngmix_time']),
-    'mpf': np.log10(cat_mb['multiprofit_gausspx_time'] + cat_mb['multiprofit_mg8expgpx_time'] + 
-                    cat_mb['multiprofit_mg8devepx_time'] + cat_mb['multiprofit_mg8serbpx_time']),
+    'mpf sersic': np.log10(cat_mb['multiprofit_gausspx_time'] + cat_mb['multiprofit_mg8expgpx_time']
+                       + cat_mb['multiprofit_mg8devepx_time'] + cat_mb['multiprofit_mg8serbpx_time']),
 }
+if get_ngmix:
+    times['ngmix bd'] = np.log10(cat_mb['ngmix_time'])
 
-model_ref = 'cmodel'
+model_ref = 'stack cmodel'
 times_ref = None
 for band in band_multi:
     cat = cats[3828]['meas'][band]
@@ -261,4 +277,10 @@ for model, times_model in times.items():
             scatterleft=True, scatterright=True,
         )
         plt.show()
+
+
+# In[ ]:
+
+
+
 
