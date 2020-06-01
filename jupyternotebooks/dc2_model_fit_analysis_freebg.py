@@ -98,11 +98,11 @@ model_specs = [
     ('forced CModel', 'modelfit_forced_CModel', 0),
 ] if get_cmodel_forced else []
 model_specs.extend([
-    ('MPF CModel', 'mg8cmodelpx', 2),
-    ('MPF Sersic', 'mg8serbpx', 1),
-    ('MPF Sersic Free Amp.', 'mg8serbapx', 8),
-    ('MPF Sersic x 2', 'mg8serx2sepx', 2),
-    ('MPF Sersic x 2 Free Amp.', 'mg8serx2seapx', 16),
+    ('MPF CModel', 'multiprofit_mg8cmodelpx', 2),
+    ('MPF Sersic', 'multiprofit_mg8serbpx', 1),
+    ('MPF Sersic Free Amp.', 'multiprofit_mg8serbapx', 8),
+    ('MPF Sersic x 2', 'multiprofit_mg8serx2sepx', 2),
+    ('MPF Sersic x 2 Free Amp.', 'multiprofit_mg8serx2seapx', 16),
 ])
 if get_ngmix:
     model_specs.append(('ngmix bd', 'ngmix_bd', 0))
@@ -185,8 +185,8 @@ cat_mb = cats[3828]['meas']['gri']
 cat_good = cat_mb[cat_mb['detect_isPatchInner'] & cat_mb['detect_isPrimary']]
 if get_ngmix:
     models_gmr = ['ngmix bd', 'MPF Sersic']
-    gmr = {model: models[model].get_total_color(cat_good, 'g', 'r') for model in models_gmr}
-    flux = models['ngmix bd'].get_total_mag(cat_good, 'r')
+    gmr = {model: models[model].get_color_total(cat_good, 'g', 'r') for model in models_gmr}
+    flux = models['ngmix bd'].get_mag_total(cat_good, 'r')
     good = flux < args_type['resolved']['limx'][1]
     for model in models_gmr:
         good &= np.isfinite(gmr[model])
@@ -220,7 +220,7 @@ if get_ngmix:
     sizes_model['ngmix bd']: np.log10(np.sqrt(0.5*cat_good['ngmix_bd_T']))
 for name_model, sizes in sizes_model.items():
     is_ngmix = name_model.startswith('ngmix')
-    mag = models[name_model].get_total_mag(cat_good, 'r')
+    mag = models[name_model].get_mag_total(cat_good, 'r')
     good = (mag < 24.5) & np.isfinite(sizes)
     plotjoint_running_percentiles(
         mag[good], sizes[good], limx=args_type['resolved']['limx'], limy=(-2.5, 2),

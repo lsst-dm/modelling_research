@@ -4,6 +4,7 @@ from lsst.daf.persistence import Butler
 from . import meas_model as mm
 from . import tables
 from .timing import time_print
+from timeit import default_timer as timer
 
 
 def calibrate_catalog(catalog, photoCalibs_filter, filter_ref=None, func_field=None):
@@ -54,8 +55,9 @@ def calibrate_catalog(catalog, photoCalibs_filter, filter_ref=None, func_field=N
 
 
 def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cats=False, write=True,
-                       files_ngmix=None, datasetType_ngmix=None, postfix='_mag.fits', type_cat=None,
-                       get_cmodel_forced=False, func_field=None):
+                       files_ngmix=None, datasetType_ngmix=None, postfix='_mag.fits',
+                       type_cat=None, type_calib=None, get_cmodel_forced=False, func_field=None,
+                       log=True):
     """Calibrate FITS source measurement catalogs derived from data in a given repo.
 
     Parameters
@@ -80,6 +82,8 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
         The postfix to add to filenames when writing calibrate catalogs; default '_mag.fits'.
     type_cat: type
         A type of catalog to read; default `lsst.afw.table.SourceCatalog`.
+    type_calib : `str`
+        The type of calibration to use; default "deepCoadd_photoCalib".
     get_cmodel_forced: `bool`
         Whether to add cmodel forced photometry columns.
     func_field : callable
@@ -101,6 +105,8 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
         repos = dc2.get_repos()
         if butler is None:
             butler = {}
+    if type_calib is None:
+        type_calib = 'deepCoadd_photoCalib'
 
     if files_ngmix is not None:
         is_ngmix_butler = isinstance(files_ngmix, Butler)
@@ -114,13 +120,18 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
     if type_cat is None:
         type_cat = SourceCatalog
 
-    time = None
+    time_init = timer()
+    time_now = time_init
+    n_files = len(files)
     cats = []
 
     for idx, file in enumerate(files):
-        time = time_print(time, prefix=f'Calibrated in  ' if time is not None else 'Calibrating starting',
-                          postfix=f', now on {file}')
+        if log:
+            preprint = "Unknown" if (idx == 0) else f'{(time_now - time_init) * (n_files - idx) / idx:.1f}s'
+            print(f'ETA={preprint}; Calibrating {file}... ', end='')
         cat = type_cat.readFits(file)
+        if log:
+            time_now = time_print(time_now, prefix='Read in ')
         filename = file.split('.fits')[0]
         bands, tract, patch = func_dataId(filename)
         dataId = {'tract': tract, 'patch': patch}
@@ -131,7 +142,10 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
                 path = repos[version]
                 print(f'DC2 butler {path} for {tract} not found; loading...')
                 butler[version] = Butler(path)
-                time_print(time, prefix=f'Loaded butler in ')
+                # Ignore the time spent reading butlers for the ETA
+                time_init -= time_now
+                time_print(time_now, prefix=f'Loaded butler in ')
+                time_init += time_now
             butler_cal = butler[version]
         else:
             butler_cal = butler
@@ -220,7 +234,7 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
         if n_columns > tables.n_columns_max:
             raise RuntimeError(f'pre-calib cat has {n_columns}>max={tables.n_columns_max}')
 
-        photoCalibs = {band: butler_cal.get('deepCoadd_photoCalib', set_dataId_band(dataId, band))
+        photoCalibs = {band: butler_cal.get(type_calib, set_dataId_band(dataId, band))
                        for band in bands}
 
         cat_calib = calibrate_catalog(cat, photoCalibs, func_field=func_field)
@@ -233,6 +247,9 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
                 tables.write_split_cat_fits(filename_out, cat, cat_calib)
             else:
                 cat_calib.writeFits(filename_out)
+            if log:
+                info = f'{filename_out} ' if write else ''
+                time_now = time_print(time_now, prefix=f"Calibrated {info}in ")
     if return_cats:
         return cats
 
@@ -268,6 +285,12 @@ def get_cat(cat, type_cat=None):
 def parse_multiprofit_dataId(filename):
     bands, tract, patch = filename.split('/')[-1].split('_')[-3:]
     return bands, int(tract), patch
+
+
+def parse_multiprofit_dataId_Hsc(filename):
+    bands, tract, patch = parse_multiprofit_dataId(filename)
+    bands = tuple(f'HSC-{b.upper()}' for b in bands)
+    return bands, tract, patch
 
 
 def reorder_fields(cat, filters=None, func_field=None):

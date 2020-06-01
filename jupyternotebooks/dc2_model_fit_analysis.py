@@ -85,7 +85,7 @@ cats = dc2.match_refcat_dc2(butler_ref, match_afw=False, tracts=tracts, butlers_
 # 
 # All of the plots in this notebook compare stack measurements of sources measured by the LSST Science Pipelines cross-matched against a reference catalog that is part of the Science Pipelines repository. This reference catalog contains all sources brighter than 23 mags in r, and was generated through some kind of Task that must have read the original DC2 truth tables (more on that below).
 
-# In[7]:
+# In[8]:
 
 
 # Model plot setup
@@ -98,11 +98,11 @@ model_specs = [
     ('forced CModel', 'modelfit_forced_CModel', 0),
 ] if get_cmodel_forced else []
 model_specs.extend([
-    ('MPF CModel', 'mg8cmodelpx', 2),
-    ('MPF Sersic', 'mg8serbpx', 1),
-    ('MPF Sersic Free Amp.', 'mg8serbapx', 8),
-    ('MPF Sersic x 2', 'mg8serx2sepx', 2),
-    ('MPF Sersic x 2 Free Amp.', 'mg8serx2seapx', 16),
+    ('MPF CModel', 'multiprofit_mg8cmodelpx', 2),
+    ('MPF Sersic', 'multiprofit_mg8serbpx', 1),
+    ('MPF Sersic Free Amp.', 'multiprofit_mg8serbapx', 8),
+    ('MPF Sersic x 2', 'multiprofit_mg8serx2sepx', 2),
+    ('MPF Sersic x 2 Free Amp.', 'multiprofit_mg8serx2seapx', 16),
 ])
 if get_ngmix:
     model_specs.append(('ngmix bd', 'ngmix_bd', 0))
@@ -151,7 +151,7 @@ mpl.rcParams['axes.labelsize'] = 15
 # 5. Nearly everything is improved by fitting gri simultaneously - magnitudes, colours, etc. all have tigher scatter no matter the model or band. While the improvements in one-sigma scatter for magnitudes are not necessarily large, the 2+sigma scatter is significantly tighter, as are colours.
 #     - This is very encouraging and non-trivial; one could have imagined galaxies with non-detections in some bands to have more biased measurements in the bands with detections, but that doesn't seem to be the case very often. Of course it's at least partly expected since the morphology of the galaxy is identical in all bands in single-component models, but the fact that this improves colours substantially without making magnitudes worse is a major bonus.
 
-# In[8]:
+# In[9]:
 
 
 # Galaxies
@@ -166,7 +166,7 @@ plot_matches(
 # 
 # There's not much to say here, other than that the stars look basically fine up to the saturation limit of ~16 and the choice of PSF/source model and single- vs multi-band fitting makes little difference. Someone more versed in stellar photometry might have more to say about the small biases in the medians, outliers, etc.
 
-# In[9]:
+# In[10]:
 
 
 # Stars
@@ -177,7 +177,7 @@ plot_matches(
 )
 
 
-# In[10]:
+# In[11]:
 
 
 # Compare ngmix vs mpf g-r colours. They agree almost shockingly well for ~80-90% of sources.
@@ -185,8 +185,8 @@ cat_mb = cats[3828]['meas']['gri']
 cat_good = cat_mb[cat_mb['detect_isPatchInner'] & cat_mb['detect_isPrimary']]
 if get_ngmix:
     models_gmr = ['ngmix bd', 'MPF Sersic']
-    gmr = {model: models[model].get_total_color(cat_good, 'g', 'r') for model in models_gmr}
-    flux = models['ngmix bd'].get_total_mag(cat_good, 'r')
+    gmr = {model: models[model].get_color_total(cat_good, 'g', 'r') for model in models_gmr}
+    flux = models['ngmix bd'].get_mag_total(cat_good, 'r')
     good = flux < args_type['resolved']['limx'][1]
     for model in models_gmr:
         good &= np.isfinite(gmr[model])
@@ -200,7 +200,7 @@ if get_ngmix:
     )
 
 
-# In[11]:
+# In[12]:
 
 
 # r-band size mass for all objects
@@ -220,7 +220,7 @@ if get_ngmix:
     sizes_model['ngmix bd']: np.log10(np.sqrt(0.5*cat_good['ngmix_bd_T']))
 for name_model, sizes in sizes_model.items():
     is_ngmix = name_model.startswith('ngmix')
-    mag = models[name_model].get_total_mag(cat_good, 'r')
+    mag = models[name_model].get_mag_total(cat_good, 'r')
     good = (mag < 24.5) & np.isfinite(sizes)
     plotjoint_running_percentiles(
         mag[good], sizes[good], limx=args_type['resolved']['limx'], limy=(-2.5, 2),
@@ -231,7 +231,7 @@ for name_model, sizes in sizes_model.items():
     plt.show()
 
 
-# In[12]:
+# In[13]:
 
 
 # Timing ngmix and MultiProFit

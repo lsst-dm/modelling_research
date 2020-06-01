@@ -85,12 +85,16 @@ class MultiProFitConfig(pexConfig.Config):
     intervalOutput = pexConfig.Field(dtype=int, default=100, doc="Number of sources to fit before writing "
                                                                  "output")
     isolatedOnly = pexConfig.Field(dtype=bool, default=False, doc="Whether to fit only isolated sources")
+    maxParentFootprintPixels = pexConfig.Field(dtype=int, default=1000000,
+                                               doc="Maximum number of pixels in a parent footprint allowed "
+                                                   "before failing or reverting to child footprint")
     outputChisqred = pexConfig.Field(dtype=bool, default=True, doc="Whether to save the reduced chi^2 of "
                                                                    "each model's best fit")
     outputLogLikelihood = pexConfig.Field(dtype=bool, default=True, doc="Whether to save the log likelihood "
                                                                         "of each model's best fit")
     outputRuntime = pexConfig.Field(dtype=bool, default=True, doc="Whether to save the runtime of each "
                                                                   "model")
+    resume = pexConfig.Field(dtype=bool, default=False, doc="Whether to resume from the previous output file")
     skipDeblendTooManyPeaks = pexConfig.Field(dtype=bool, default=False,
                                               doc="Whether to skip fitting sources with "
                                                   "deblend_tooManyPeaks flag set")
@@ -336,14 +340,10 @@ class MultiProFitTask(pipeBase.Task):
         mapper = afwTable.SchemaMapper(schema, True)
         mapper.addMinimalSchema(schema, True)
         mapper.editOutputSchema().disconnectAliases()
-        self.runtimeKey = mapper.editOutputSchema().addField('multiprofit_time_total', type=np.float64,
-                                                             doc='runtime in ms')
-        self.failFlagKey = mapper.editOutputSchema().addField('multiprofit_fail_flag', type="Flag",
-                                                              doc='generic MultiProFit failure flag')
         return mapper
 
     @staticmethod
-    def __addExtraField(extra, schema, prefix, name, doc, unit=None):
+    def __addExtraField(extra, schema, prefix, name, doc, dtype=np.float64, unit=None, exists=False):
         """Add an extra field to a schema and store a reference to it by its short name.
 
         Parameters
@@ -360,6 +360,9 @@ class MultiProFitTask(pipeBase.Task):
             A brief documentation string for the field.
         unit : `str`
             A string convertible to an astropy unit.
+        exists : `bool`
+            Check if the field already exists and validate it instead of adding a new one.
+
         Returns
         -------
         No return. The new field is added to `schema` and a reference to it is stored in `extra`.
@@ -368,9 +371,19 @@ class MultiProFitTask(pipeBase.Task):
             doc = ''
         if unit is None:
             unit = ''
-        extra[name] = schema.addField(joinFilter('_', [prefix, name]), type=np.float64, doc=doc, units=unit)
+        fullname = joinFilter('_', [prefix, name])
+        if exists:
+            item = schema.find(fullname)
+            field = item.field
+            if field.dtype != dtype or field.getUnits() != unit:
+                raise RuntimeError(f'Existing field {field} has dtype {field.dtype}!={dtype} and/or units'
+                                   f'{field.getUnits()}!={unit}')
+            key = item.key
+        else:
+            key = schema.addField(fullname, type=dtype, doc=doc, units=unit)
+        extra[name] = key
 
-    def __addExtraFields(self, extra, schema, prefix=None):
+    def __addExtraFields(self, extra, schema, prefix=None, exists=False):
         """Add all extra fields for a given model based on `self.config` settings.
 
         Parameters
@@ -381,19 +394,26 @@ class MultiProFitTask(pipeBase.Task):
             An existing table schema to add the field to.
         prefix : `str`, optional
             A string such as a model name to prepend to each field name; default None.
+        exists : `bool`
+            Check if the fields already exist and validate them instead of adding new ones.
 
         Returns
         -------
         No return. The new fields are added to `schema` and reference to them are stored in `extra`.
         """
         if self.config.outputChisqred:
-            self.__addExtraField(extra, schema, prefix, 'chisqred', 'reduced chi-squared of the best fit')
+            self.__addExtraField(extra, schema, prefix, 'chisqred', 'reduced chi-squared of the best fit',
+                                 exists=exists)
         if self.config.outputLogLikelihood:
-            self.__addExtraField(extra, schema, prefix, 'loglike', 'log-likelihood of the best fit')
+            self.__addExtraField(extra, schema, prefix, 'loglike', 'log-likelihood of the best fit',
+                                 exists=exists)
         if self.config.outputRuntime:
-            self.__addExtraField(extra, schema, prefix, 'time', 'model runtime excluding setup', 's')
-        self.__addExtraField(extra, schema, prefix, 'nEvalFunc', 'number of objective function evaluations')
-        self.__addExtraField(extra, schema, prefix, 'nEvalGrad', 'number of Jacobian evaluations')
+            self.__addExtraField(extra, schema, prefix, 'time', 'model runtime excluding setup', unit='s',
+                                 exists=exists)
+        self.__addExtraField(extra, schema, prefix, 'nEvalFunc', 'number of objective function evaluations',
+                             exists=exists)
+        self.__addExtraField(extra, schema, prefix, 'nEvalGrad', 'number of Jacobian evaluations',
+                             exists=exists)
 
     @staticmethod
     def __fitModel(model, exposurePsfs, modeller=None, sources=None, resetPsfs=False, **kwargs):
@@ -452,7 +472,7 @@ class MultiProFitTask(pipeBase.Task):
 
     @pipeBase.timeMethod
     def __fitSource(self, source, exposures, extras, children=None, printTrace=False, plot=False,
-                    footprint=None, **kwargs):
+                    footprint=None, failOnLargeFootprint=False, **kwargs):
         """Fit a single deblended source with MultiProFit.
 
         Parameters
@@ -470,6 +490,9 @@ class MultiProFitTask(pipeBase.Task):
             Whether to generate a plot window with the final output; default False.
         footprint : `lsst.afw.detection.Footprint`, optional
             The footprint to fit within. Default source.getFootprint().
+        failOnLargeFootprint : `bool`, optional
+            Whether to return a failure if the fallback (source) footprint dimensions also exceed
+            `self.config.maxParentFootprintPixels`; default False.
 
         Returns
         -------
@@ -487,9 +510,16 @@ class MultiProFitTask(pipeBase.Task):
             raise RuntimeError("Can only deblend with gausspx_no_psf model")
         fit_hst = self.config.fitHstCosmos
         try:
+            if footprint is not None:
+                if footprint.getBBox().getArea() > self.config.maxParentFootprintPixels:
+                    footprint = None
             if footprint is None:
                 footprint = source.getFootprint()
             bbox = footprint.getBBox()
+            area = bbox.getArea()
+            if failOnLargeFootprint and (area > self.config.maxParentFootprintPixels):
+                raise RuntimeError(f'Source footprint (fallback) area={area} pix exceeds '
+                                   f'max={self.config.maxParentFootprintPixels}')
             center = bbox.getCenter()
             # TODO: Implement multi-object fitting/deblending
             # peaks = footprint.getPeaks()
@@ -576,9 +606,9 @@ class MultiProFitTask(pipeBase.Task):
                 plt.show()
             return results, None, noiseReplaced
         except Exception as e:
+            if printTrace:
+                traceback.print_exc()
             if plot:
-                if printTrace:
-                    traceback.print_exc()
                 n_exposures = len(exposures)
                 if n_exposures > 1:
                     fig, axes = plt.subplots(1, n_exposures)
@@ -593,7 +623,7 @@ class MultiProFitTask(pipeBase.Task):
             return results, e, noiseReplaced
 
     def __getCatalog(self, filters, results, sources):
-        """Get a new catalog and a dict containing the keys of extra fields to enter for each row.
+        """Get a catalog and a dict containing the keys of extra fields to enter for each row.
 
         Parameters
         ----------
@@ -611,8 +641,29 @@ class MultiProFitTask(pipeBase.Task):
             A dict of dicts, keyed by the field type. The values may contain further nested dicts e.g. those
             keyed by filter for PSF fit-related fields.
         """
-        mapper = self._getMapper(sources.getSchema())
-        schema = mapper.getOutputSchema()
+        resume = self.config.resume
+        if resume:
+            catalog = afwTable.SourceCatalog.readFits(self.config.filenameOut)
+            schema = catalog.schema
+        else:
+            mapper = self._getMapper(sources.getSchema())
+        keys_extra = {
+            'runtimeKey': {'name': 'multiprofit_time_total', 'dtype': np.float64,
+                           'doc': 'Source fit CPU runtime'},#, 'unit': 'ms'},
+            'failFlagKey': {'name': 'multiprofit_fail_flag', 'dtype': 'Flag',
+                            'doc': 'MultiProFit general failure flag'},
+        }
+        fields_attr = {}
+        for name_attr, specs in keys_extra.items():
+            name_field = specs.get('name', f'multiprofit_{name_attr}')
+            self.__addExtraField(
+                fields_attr, schema if resume else mapper.editOutputSchema(),
+                prefix=None, name=name_field, doc=specs.get('doc', ''),
+                dtype=specs.get('dtype'), unit=specs.get('unit'), exists=resume)
+            setattr(self, name_attr, fields_attr[name_field])
+        if not resume:
+            schema = mapper.getOutputSchema()
+
         fields = {key: {} for key in ["base", "extra", "psf", "psf_extra", "measmodel"]}
         # Set up the fields for PSF fits, which are independent per filter
         for idxBand, band in enumerate(filters):
@@ -629,10 +680,13 @@ class MultiProFitTask(pipeBase.Task):
                     fullname, doc, unit = self.__getParamFieldInfo(
                         f'{nameParam}{"Frac" if nameParam is "flux" else ""}',
                         f'{prefix}_c{namesAdded[nameParam]}_')
-                    key = schema.addField(fullname, doc=doc, units=unit, type=np.float64)
+                    if resume:
+                        key = schema.find(fullname).key
+                    else:
+                        key = schema.addField(fullname, doc=doc, units=unit, type=np.float64)
                     keyList.append(key)
                 fields["psf"][band][name] = defaultdictNested()
-                self.__addExtraFields(fields["psf_extra"][band][name], schema, prefix)
+                self.__addExtraFields(fields["psf_extra"][band][name], schema, prefix, exists=resume)
         # Setup field names for source fits, which may have fluxes in multiple filters if run in multi-band.
         # Either way, flux parameters should contain a filter name.
         for name, result in results['fits']['galsim'].items():
@@ -647,18 +701,23 @@ class MultiProFitTask(pipeBase.Task):
                 namesAdded[nameParamFull] += 1
                 fullname, doc, unit = self.__getParamFieldInfo(
                     nameParam, f'{prefix}_c{namesAdded[nameParamFull]}_{postfix}')
-                key = schema.addField(fullname, doc=doc, units=unit, type=np.float64)
+                if resume:
+                    key = schema.find(fullname).key
+                else:
+                    key = schema.addField(fullname, doc=doc, units=unit, type=np.float64)
                 keyList.append(key)
             fields["base"][name] = keyList
             fields["extra"][name] = defaultdictNested()
-            self.__addExtraFields(fields["extra"][name], schema, prefix)
+            self.__addExtraFields(fields["extra"][name], schema, prefix, exists=resume)
 
         if self.config.computeMeasModelfitLikelihood:
             for name in self.meas_modelfit_models:
                 self.__addExtraField(fields["measmodel"], schema, "multiprofit_measmodel_like", name,
-                                     f'MultiProFit log-likelihood for meas_modelfit {name} model')
-        catalog = afwTable.SourceCatalog(schema)
-        catalog.extend(sources, mapper=mapper)
+                                     f'MultiProFit log-likelihood for meas_modelfit {name} model',
+                                     exists=resume)
+        if not resume:
+            catalog = afwTable.SourceCatalog(schema)
+            catalog.extend(sources, mapper=mapper)
         return catalog, fields
 
     @staticmethod
@@ -866,7 +925,7 @@ class MultiProFitTask(pipeBase.Task):
         row[self.runtimeKey] = runtime
 
     def fit(self, data, idx_begin=0, idx_end=np.Inf, logger=None, printTrace=False,
-            plot=False, path_cosmos_galsim=None, **kwargs):
+            plot=False, path_cosmos_galsim=None, sources=None, **kwargs):
         """Fit a catalog of sources with MultiProFit.
 
         Each source has its PSF fit with a configureable Gaussian mixture PSF model and then fits a
@@ -898,6 +957,9 @@ class MultiProFitTask(pipeBase.Task):
             A file path to a directory containing real_galaxy_catalog_25.2.fits and
             real_galaxy_PSF_images_25.2_n[1-88].fits; required if config.fitHstCosmos is True.
             See https://zenodo.org/record/3242143.
+        sources : `lsst.afw.table.SourceCatalog`, optional
+            A source catalog to override filter-specific catalogs provided in `data`, e.g. deepCoadd_ref.
+            Default None.
         **kwargs
             Additional keyword arguments to pass to `__fitSource`.
 
@@ -912,6 +974,10 @@ class MultiProFitTask(pipeBase.Task):
         # Set up a logger to suppress output for now
         if logger is None:
             logger = logging.getLogger(__name__)
+        filters = data.keys()
+        exposures = {band: data[band]['exposure'] for band in filters}
+        if sources is None:
+            sources = data[list(filters)[0]]['sources']
         if self.config.fitHstCosmos:
             if path_cosmos_galsim is None:
                 raise ValueError("Must specify path to COSMOS GalSim catalog if fitting HST images")
@@ -922,9 +988,6 @@ class MultiProFitTask(pipeBase.Task):
             filters = [extras[0].band]
         else:
             extras = [rebuildNoiseReplacer(datum['exposure'], datum['sources']) for datum in data.values()]
-            filters = data.keys()
-        sources = data[list(filters)[0]]['sources']
-        exposures = {band: data[band]['exposure'] for band in filters}
         timeInit = time.time()
         processTimeInit = time.process_time()
         addedFields = False
@@ -974,7 +1037,7 @@ class MultiProFitTask(pipeBase.Task):
                             self.config.useParentFootprint and is_child) else None
                     results, error, noiseReplaced = self.__fitSource(
                         src, exposures, extras, children=children, printTrace=printTrace, plot=plot,
-                        footprint=footprint, **kwargs)
+                        footprint=footprint, failOnLargeFootprint=is_parent, **kwargs)
                     failed = error is not None
                     runtime = (self.metadata["__fitSourceEndCpuTime"] -
                                self.metadata["__fitSourceStartCpuTime"])
@@ -986,9 +1049,9 @@ class MultiProFitTask(pipeBase.Task):
                 # If one of the models failed, we can't set up the catalog from it
                 if all(['fits' in x for x in results['fits']['galsim'].values()]):
                     catalog, fields = self.__getCatalog(filters, results, sources)
-                    for idxFailed, runtime in indicesFailed.items():
-                        catalog[idxFailed][self.failFlagKey] = True
-                        catalog[idxFailed][self.runtimeKey] = runtime
+                    for idx_failed, runtime_failed in indicesFailed.items():
+                        catalog[idx_failed][self.failFlagKey] = True
+                        catalog[idx_failed][self.runtimeKey] = runtime_failed
                     addedFields = True
                 else:
                     # Sadly this means that the successful models won't get written. Oh well.

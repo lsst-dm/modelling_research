@@ -27,6 +27,7 @@ from modelling_research.make_cutout import get_exposure_cutout_HST, get_exposure
 from modelling_research.multiprofit_task import MultiProFitTask
 from modelling_research.plotting import plotjoint_running_percentiles
 import numpy as np
+import os
 import seaborn as sns
 from timeit import default_timer as timer
 
@@ -113,7 +114,7 @@ class SeabornFig2Grid():
 
 # Read catalogs
 path_proj = "/project/dtaranu/cosmos/hsc/"
-files = np.sort(glob.glob(f"{path_proj}2019-11-[0-3][0-3]/hsc_iz/mpf_9813_[1-7],[1-7]_iz_mag.fits"))
+files = np.sort(glob.glob(f"{path_proj}2020-04-06/iz/mpf_cosmos-hsc_iz_9813_[1-7],[1-7]_mag.fits"))
 tables = []
 patches = []
 patch_rows = []
@@ -126,7 +127,7 @@ for file in files:
     tables.append(table)
     rows += len(table)
     patch_rows.append(rows)
-    patches.append(file.split('/')[-1].split('_')[2])
+    patches.append(os.path.split(file)[1].split('_')[4])
 cat = vstack(tables)
 
 
@@ -139,7 +140,7 @@ cat_hst = []
 for patch in patches:
     t_begin = timer()
     print(f'Loading file {file}')
-    cat_patch = SourceCatalog.readFits(f'{path_proj}/2019-11-12/hst/mpf_9813_{patch}_F814W.fits').asAstropy()
+    cat_patch = SourceCatalog.readFits(os.path.join(path_proj,'2020-01-15','hst_F814W_iso',f'mpf_F814W_iso_9813_{patch}.fits')).asAstropy()
     print(f'Loaded file {file} in {timer() - t_begin:.2f}s')
     if colnames_mpf is None:
         colnames = cat_patch.colnames
@@ -163,8 +164,11 @@ cat_hst = vstack(cat_hst)
 # Get a WCS from one of the calexps (i- and z-band should be virtually identical)
 col_extended = 'base_ClassificationExtendedness_value'
 
-sample = {'parent+iso.': cat['parent'] == 0}
-sample['isolated'] = sample['parent+iso.']*(cat['deblend_nChild'] == 0)
+def name_flux(is_hsc):
+    return 'instFlux' if is_hsc else 'flux'
+
+sample = {'parent+iso.': (cat['parent'] == 0) & cat['detect_isPatchInner']}
+sample['isolated'] = sample['parent+iso.'] & (cat['deblend_nChild'] == 0)
 sample_ext = {f'extended_{i}': cat[col_extended] == i for i in range(2)}
 sigma_min = 0.04
 sigma_max = 0.06
@@ -206,13 +210,14 @@ for mag_lo, mag_hi in mag_bins:
         flux_sample = []
         lims_sigma_sample_log10 = [-1.25, 0.75]
         for idx, (scale, sample_src) in enumerate([(0.03, cat_hst), (0.167, cat)]):
-            name_model = f'multiprofit_gausspx{"_no_psf" if idx == 0 else ""}'
+            is_hst = idx == 0
+            name_model = f'multiprofit_gausspx{"_no_psf" if is_hst else ""}'
             sample_src = sample_src[selection]
             sigma = {k: sample_src[f'{name_model}_c1_sigma_{k}'] for k in ['x', 'y']}
             sigma = scale*np.sqrt(0.5*(sigma['x']**2 + sigma['y']**2))
             sigma_sample.append(np.log10(sigma))
-            bands = ['F814W'] if idx == 0 else ['HSC-I', 'HSC-Z']
-            flux_band = {band: sample_src[f'{name_model}_c1_{band}_instFlux'] for band in bands}
+            bands = ['F814W'] if is_hst else ['HSC-I', 'HSC-Z']
+            flux_band = {band: sample_src[f'{name_model}_c1_{band}_{name_flux(is_hst)}'] for band in bands}
             flux = np.zeros_like(sigma)
             for flux_band in flux_band.values():
                 flux += flux_band
@@ -227,13 +232,13 @@ for mag_lo, mag_hi in mag_bins:
             title=f'{title_state}, N={len(x)}', **argspj)
         g.ax_marg_x.set_title(title_state)
         SeabornFig2Grid(g, fig_sizemass, gs_sizemass[2*idx_state])
-        limx, limy = (mag_lo, mag_hi), (0.5, 1.25)
+        limx, limy = (mag_lo, mag_hi), (2.25, 3.05)
         x = cat[selection]['base_PsfFlux_mag']
         good = np.isfinite(flux_sample[0]) & np.isfinite(flux_sample[1]) & np.isfinite(x)
         y = np.clip(flux_sample[1][good]-flux_sample[0][good], limy[0], limy[1])
         g = plotjoint_running_percentiles(
             x[good], y, limx=limx, limy=limy,
-            labelx='PSF mag [HSC-I]', labely='log10($instFlux_{HSC-[I+Z]}$/$flux_{F814W}$)',
+            labelx='PSF mag [HSC-I]', labely='log10($flux_{HSC-[I+Z]}$/$flux_{F814W}$)',
             title=f'{title_state}, N={len(y)}', **argspj)
         g.ax_marg_x.set_title(title_state)
         SeabornFig2Grid(g, fig_sizemass, gs_sizemass[2*idx_state+1])
@@ -270,38 +275,38 @@ flux_sample = []
 sigma_sample = []
 colour_sample = []
 title_state = f'{mag_lo}<HSC-I<{mag_hi} isolated unresolved'
-for idx, (scale, sample_src) in enumerate([(0.03, data_hst), (0.167, data)]):
-    name_model = f'multiprofit_gausspx{"_no_psf" if idx == 0 else ""}'
+for (scale, sample_src, is_hst) in [(0.03, data_hst, True), (0.167, data, False)]:
+    name_model = f'multiprofit_gausspx{"_no_psf" if is_hst else ""}'
     sigma = {k: sample_src[f'{name_model}_c1_sigma_{k}'] for k in ['x', 'y']}
     sigma = scale*np.sqrt(sigma['x']**2 + sigma['y']**2)
     sigma_sample.append(np.log10(sigma))
-    bands = ['F814W'] if idx == 0 else ['HSC-I', 'HSC-Z']
-    flux_band = {band: sample_src[f'{name_model}_c1_{band}_instFlux'] for band in bands}
+    bands = ['F814W'] if is_hst else ['HSC-I', 'HSC-Z']
+    flux_band = {band: sample_src[f'{name_model}_c1_{band}_{name_flux(is_hst)}'] for band in bands}
     flux = np.zeros_like(sigma)
     for flux_band in flux_band.values():
         flux += flux_band
     flux[~(flux > 0)] = 0
     flux_sample.append(np.log10(flux))
-    if len(bands) > 1:
+    if not is_hst and (len(bands) > 1):
         mag_band = {band: sample_src[f'{name_model}_c1_{band}_mag'] for band in bands}
         colour = mag_band[bands[0]] - mag_band[bands[1]]
     else:
         colour = None
     colour_sample.append(colour)
 within = sigma_sample[0] < sigma_max
-limy = (0.6, 1.2)
+limy = (2.25, 3.05)
 y = flux_sample[1][within]-flux_sample[0][within]
 g = plotjoint_running_percentiles(
     data[within]['base_PsfFlux_mag'], y,
     limx=(mag_lo, mag_hi), limy=limy,
-    labelx='PSF mag [HSC-I]', labely='log10($instFlux_{HSC-[I+Z]}$/$flux_{F814W}$)',
+    labelx='PSF mag [HSC-I]', labely='log10($flux_{HSC-[I+Z]}$/$flux_{F814W}$)',
     **argspj)
 g.ax_marg_x.set_title(title_state)
 limx=(-0.4, 1.1)
 g = plotjoint_running_percentiles(
     np.clip(colour_sample[1][within], limx[0], limx[1]), y,
     limx=limx, limy=limy,
-    labelx='Gauss. colour ([HSC-I] - [HSC-Z])', labely='log10($flux_{F814W}$/$instFlux_{HSC-[I+Z]}$)',
+    labelx='Gauss. colour ([HSC-I] - [HSC-Z])', labely='log10($flux_{F814W}$/$flux_{HSC-[I+Z]}$)',
     **argspj)
 g.ax_marg_x.set_title(title_state)
 
@@ -326,7 +331,7 @@ calexps = {}
 meas = {}
 
 
-# In[11]:
+# In[9]:
 
 
 # Show images of sources that should all be isolated stars
@@ -388,4 +393,10 @@ for mag_lo, mag_hi in [(14, 23)]:
 sns.set_style("darkgrid", {'axes.grid' : True})
                                   
 plt.show()
+
+
+# In[ ]:
+
+
+
 
