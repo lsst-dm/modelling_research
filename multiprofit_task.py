@@ -88,6 +88,8 @@ class MultiProFitConfig(pexConfig.Config):
     maxParentFootprintPixels = pexConfig.Field(dtype=int, default=1000000,
                                                doc="Maximum number of pixels in a parent footprint allowed "
                                                    "before failing or reverting to child footprint")
+    maxNChildParentFit = pexConfig.Field(dtype=int, default=25, doc="Maximum number of children allowed to "
+                                                                    "fit a parent footprint")
     outputChisqred = pexConfig.Field(dtype=bool, default=True, doc="Whether to save the reduced chi^2 of "
                                                                    "each model's best fit")
     outputLogLikelihood = pexConfig.Field(dtype=bool, default=True, doc="Whether to save the log likelihood "
@@ -1022,15 +1024,20 @@ class MultiProFitTask(pipeBase.Task):
             if failed:
                 error = f'Skipping because {[key for key, fail in flags_failed.items() if fail]} flag(s) set'
             else:
+                errors = []
                 id_parent = src['parent']
-                is_parent = src['deblend_nChild'] > 0
+                n_child = src['deblend_nChild']
+                is_parent = n_child > 0
                 is_child = src['parent'] != 0
                 isolated = not is_child and not is_parent
-                if self.config.isolatedOnly:
-                    failed = not isolated
-                    if failed:
-                        error = 'Skipping because not isolated'
-                if not failed:
+                if self.config.isolatedOnly and not isolated:
+                    errors.append('not isolated')
+                if is_parent and n_child > self.config.maxNChildParentFit:
+                    errors.append(f'is_parent and n_child={n_child} > max={self.config.maxNChildParentFit}')
+                if errors:
+                    failed = True
+                    error = ' & '.join(errors)
+                else:
                     children = None if not self.config.deblend or not is_parent else [
                         sources[int(x)] for x in np.where(sources['parent'] == src['id'])[0]]
                     footprint = sources.find(id_parent).getFootprint() if (
