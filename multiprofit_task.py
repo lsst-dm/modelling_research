@@ -135,76 +135,76 @@ class MultiProFitConfig(pexConfig.Config):
                 dict_self = self.toDict()
                 if (not dict_self[req]) and any([dict_self[dep] for dep in depends]):
                     self.update(**{req: True})
+        defaults = {
+            'psfmodel': namePsfModel,
+            'psfpixel': "T",
+        }
         if self.fitSersic:
             modelSpecs.append(
                 dict(name=f"{nameMG}sermpx", model=nameSersicModel, fixedparams='', initparams="nser=1",
-                     inittype="moments", psfmodel=namePsfModel, psfpixel="T")
+                     inittype="moments", **defaults)
             )
             if self.fitSersicAmplitude:
                 modelSpecs.append(
                     dict(name=f"{nameMG}serapx", model=nameSersicAmpModel, fixedparams=allParams,
-                         initparams="rho=inherit;rscale=modify", inittype=f"{nameMG}sermpx",
-                         psfmodel=namePsfModel, psfpixel="T")
+                         initparams="rho=inherit;rscale=modify", inittype=f"{nameMG}sermpx", **defaults)
                 )
         if self.fitCModel:
             modelSpecs.extend([
                 dict(name="gausspx", model=nameSersicModel, fixedparams='nser', initparams="nser=0.5",
-                     inittype="moments", psfmodel=namePsfModel, psfpixel="T"),
+                     inittype="moments", **defaults),
                 dict(name=f"{nameMG}expgpx", model=nameSersicModel, fixedparams='nser', initparams="nser=1",
-                     inittype="guessgauss2exp:gausspx", psfmodel=namePsfModel, psfpixel="T"),
+                     inittype="guessgauss2exp:gausspx", **defaults),
                 dict(name=f"{nameMG}devepx", model=nameSersicModel, fixedparams='nser', initparams="nser=4",
-                     inittype=f"guessexp2dev:{nameMG}expgpx", psfmodel=namePsfModel, psfpixel="T"),
+                     inittype=f"guessexp2dev:{nameMG}expgpx", **defaults),
                 dict(name=f"{nameMG}cmodelpx", model=f"{nameSersicPrefix}:2",
                      fixedparams="cenx;ceny;nser;sigma_x;sigma_y;rho", initparams="nser=4,1",
-                     inittype=f"{nameMG}devepx;{nameMG}expgpx", psfmodel=namePsfModel, psfpixel="T"),
+                     inittype=f"{nameMG}devepx;{nameMG}expgpx", **defaults),
             ])
             if self.fitSersicFromCModel:
                 modelSpecs.extend([
                     dict(name=f"{nameMG}sergpx", model=nameSersicModel, fixedparams='', initparams='',
-                         inittype="gausspx", psfmodel=namePsfModel, psfpixel="T"),
+                         inittype="gausspx", **defaults),
                     dict(name=f"{nameMG}serbpx", model=nameSersicModel, fixedparams='', initparams='',
-                         inittype="best", psfmodel=namePsfModel, psfpixel="T"),
+                         inittype="best", **defaults),
                 ])
                 if self.fitSersicFromCModelAmplitude:
                     modelSpecs.append(
                         dict(name=f"{nameMG}serbapx", model=nameSersicAmpModel, fixedparams=allParams,
                              initparams="rho=inherit;rscale=modify", inittype=f"{nameMG}sermpx",
-                             psfmodel=namePsfModel, psfpixel="T")
+                             **defaults)
                     )
                 if self.fitSersicX2FromSerExp:
                     modelSpecs.append(
                         dict(name=f"{nameMG}serx2sepx", model=nameSersicX2Model, fixedparams='',
-                             initparams='',
-                             inittype=f"{nameMG}serbpx;{nameMG}expgpx", psfmodel=namePsfModel,
-                             psfpixel="T")
+                             initparams='', inittype=f"{nameMG}serbpx;{nameMG}expgpx", **defaults)
                     )
                     if self.fitSersicX2SEAmplitude:
                         modelSpecs.append(
                             dict(name=f"{nameMG}serx2seapx", model=nameSersicX2AmpModel,
                                  fixedparams=allParams, initparams="rho=inherit;rscale=modify",
-                                 inittype=f"{nameMG}serx2sepx", psfmodel=namePsfModel, psfpixel="T")
+                                 inittype=f"{nameMG}serx2sepx", **defaults)
                         )
             if self.fitDevExpFromCModel:
                 modelSpecs.append(
                     dict(name=f"{nameMG}devexppx", model=nameSersicX2Model, fixedparams='nser',
-                         initparams='nser=4,1', inittype=f"{nameMG}devepx;{nameMG}expgpx",
-                         psfmodel=namePsfModel, psfpixel="T")
+                         initparams='nser=4,1', inittype=f"{nameMG}devepx;{nameMG}expgpx", **defaults)
                 )
                 if self.fitSersicX2FromDevExp:
                     modelSpecs.append(
                         dict(name=f"{nameMG}serx2px", model=nameSersicX2Model, fixedparams='', initparams='',
-                             inittype=f"{nameMG}devexppx", psfmodel=namePsfModel, psfpixel="T")
+                             inittype=f"{nameMG}devexppx", **defaults)
                     )
                     if self.fitSersicX2DEAmplitude:
                         modelSpecs.append(
                             dict(name=f"{nameMG}serx2apx", model=nameSersicX2AmpModel, fixedparams=allParams,
                                  initparams="rho=inherit;rscale=modify", inittype=f"{nameMG}serx2px",
-                                 psfmodel=namePsfModel, psfpixel="T")
+                                 **defaults)
                         )
         if self.fitCModelExp:
             modelSpecs.append(
                 dict(name=f"{nameMG}expcmpx", model=nameSersicModel, fixedparams='cenx;ceny;nser',
-                     initparams="nser=1", inittype="moments", psfmodel=namePsfModel, psfpixel="T")
+                     initparams="nser=1", inittype="moments", **defaults)
             )
         return modelSpecs
 
