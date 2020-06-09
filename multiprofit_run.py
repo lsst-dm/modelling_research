@@ -89,7 +89,7 @@ def get_flags():
     """
     # TODO: Figure out if there's a way to get help from docstrings (defaults can be read easily)
     flags = {
-        'repo': dict(type=str, nargs='?', default="/datasets/hsc/repo/rerun/RC/w_2019_38/DM-21386/",
+        'repo': dict(type=str, nargs='?', default="/datasets/hsc/repo/rerun/RC/w_2020_22/DM-25176/",
                      help="Path to Butler repository to read from"),
         'filenameOut': dict(type=str, nargs='?', default=None, help="Output catalog filename", kwarg=True),
         'radec': dict(type=float, nargs=2, default=None, help="RA/dec coordinate of source"),
