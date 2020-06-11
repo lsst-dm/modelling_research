@@ -11,9 +11,13 @@ import modelling_research.make_cutout as cutout
 import matplotlib.pyplot as plt
 import multiprofit.fitutils as mpfFit
 import multiprofit.objects as mpfObj
+from multiprofit.priors import get_hst_size_prior
 import numpy as np
 import time
 import traceback
+
+pixel_scale_hst = 0.03
+pixel_scale_hsc = 0.168
 
 
 class MultiProFitConfig(pexConfig.Config):
@@ -103,9 +107,12 @@ class MultiProFitConfig(pexConfig.Config):
     useSdssShape = pexConfig.Field(dtype=bool, default=False,
                                    doc="Whether to use the baseSdssShape* moments to initialize Gaussian "
                                        "fits")
+    priorCentroidSigma = pexConfig.Field(dtype=float, default=np.Inf, doc="Centroid prior sigma")
     useParentFootprint = pexConfig.Field(dtype=bool, default=False,
                                          doc="Whether to use the parent's footprint when fitting deblended "
                                              "children")
+    usePriorShapeDefault = pexConfig.Field(dtype=bool, default=False,
+                                           doc="Whether to use the default shape prior")
 
     def getModelSpecs(self):
         """Get a list of dicts of model specifications for MultiProFit/
@@ -474,7 +481,8 @@ class MultiProFitTask(pipeBase.Task):
 
     @pipeBase.timeMethod
     def __fitSource(self, source, exposures, extras, children=None, printTrace=False, plot=False,
-                    footprint=None, failOnLargeFootprint=False, **kwargs):
+                    footprint=None, failOnLargeFootprint=False,
+                    usePriorShapeDefault=False, priorCentroidSigma=np.Inf, mag_prior=None, **kwargs):
         """Fit a single deblended source with MultiProFit.
 
         Parameters
@@ -494,7 +502,13 @@ class MultiProFitTask(pipeBase.Task):
             The footprint to fit within. Default source.getFootprint().
         failOnLargeFootprint : `bool`, optional
             Whether to return a failure if the fallback (source) footprint dimensions also exceed
-            `self.config.maxParentFootprintPixels`; default False.
+            `self.config.maxParentFootprintPixels`.
+        usePriorShapeDefault : `bool`, optional
+            Whether to use the default MultiProFit shape prior.
+        priorCentroidSigma : `float`, optional
+            The sigma on the Gaussian centroid prior. Non-positive-finite values disable the prior.
+        mag_prior: `float`, optional
+            The magnitude for setting magnitude-dependent priors. A None value disables such priors.
 
         Returns
         -------
@@ -511,6 +525,7 @@ class MultiProFitTask(pipeBase.Task):
         if deblend and len(self.modelSpecs) > 0:
             raise RuntimeError("Can only deblend with gausspx_no_psf model")
         fit_hst = self.config.fitHstCosmos
+        pixel_scale = pixel_scale_hst if fit_hst else pixel_scale_hsc
         try:
             if footprint is not None:
                 if footprint.getBBox().getArea() > self.config.maxParentFootprintPixels:
@@ -561,7 +576,7 @@ class MultiProFitTask(pipeBase.Task):
                 if fit_hst and deblend:
                     # Use wcs_hst/src instead
                     # wcs_hst = exposure.meta['wcs']
-                    scale_x = 0.168 / 0.03
+                    scale_x = pixel_scale_hsc / pixel_scale_hst
                     scales = np.array([scale_x, scale_x])
                 sources = [{}]
                 if deblend or self.config.useSdssShape:
@@ -578,9 +593,34 @@ class MultiProFitTask(pipeBase.Task):
                         sources.append(ellipse)
 
             bands = [item[0].band for item in exposurePsfs]
+            params_prior = {}
+            if usePriorShapeDefault:
+                size_mean, size_stddev = get_hst_size_prior(mag_prior if np.isfinite(mag_prior) else np.Inf)
+                size_mean_stddev = (size_mean - np.log10(pixel_scale), size_stddev)
+                params_prior['shape'] = {
+                    True: {
+                        'size_mean_std': (0., 0.1),
+                        'size_log10': False,
+                        'axrat_params': (-0.1, 0.5, 1.1),
+                    },
+                    False: {
+                        'size_mean_std': size_mean_stddev,
+                        'size_log10': True,
+                        'axrat_params': (-0.3, 0.2, 1.2),
+                    }
+                }
+            if np.isfinite(priorCentroidSigma):
+                if not priorCentroidSigma > 0:
+                    raise ValueError(f'Invalid priorCentroidSigma={priorCentroidSigma} !>0')
+                for coord in ('cenx', 'ceny'):
+                    params_prior[coord] = {
+                        True: {'stddev': priorCentroidSigma},
+                        False: {'stddev': priorCentroidSigma},
+                    }
             results = mpfFit.fit_galaxy_exposures(
                 exposurePsfs, bands, self.modelSpecs, results=results, plot=plot, print_exception=True,
-                cenx=cens[0], ceny=cens[1], fit_background=self.config.fitBackground, **kwargs)
+                cenx=cens[0], ceny=cens[1], fit_background=self.config.fitBackground,
+                prior_specs=params_prior, **kwargs)
             if self.config.fitGaussian:
                 n_sources = len(sources)
                 name_model = 'gausspx_no_psf'
@@ -927,7 +967,7 @@ class MultiProFitTask(pipeBase.Task):
         row[self.runtimeKey] = runtime
 
     def fit(self, data, idx_begin=0, idx_end=np.Inf, logger=None, printTrace=False,
-            plot=False, path_cosmos_galsim=None, sources=None, **kwargs):
+            plot=False, path_cosmos_galsim=None, sources=None, mags_prior=None, **kwargs):
         """Fit a catalog of sources with MultiProFit.
 
         Each source has its PSF fit with a configureable Gaussian mixture PSF model and then fits a
@@ -962,6 +1002,8 @@ class MultiProFitTask(pipeBase.Task):
         sources : `lsst.afw.table.SourceCatalog`, optional
             A source catalog to override filter-specific catalogs provided in `data`, e.g. deepCoadd_ref.
             Default None.
+        mags_prior : array-like [`float`]
+            Magnitudes to pass to any magnitude-dependent priors.
         **kwargs
             Additional keyword arguments to pass to `__fitSource`.
 
@@ -1044,7 +1086,10 @@ class MultiProFitTask(pipeBase.Task):
                             self.config.useParentFootprint and is_child) else None
                     results, error, noiseReplaced = self.__fitSource(
                         src, exposures, extras, children=children, printTrace=printTrace, plot=plot,
-                        footprint=footprint, failOnLargeFootprint=is_parent, **kwargs)
+                        footprint=footprint, failOnLargeFootprint=is_parent,
+                        usePriorShapeDefault=self.config.usePriorShapeDefault,
+                        priorCentroidSigma=self.config.priorCentroidSigma,
+                        mag_prior=mags_prior[idx] if mags_prior is not None else None, **kwargs)
                     failed = error is not None
                     runtime = (self.metadata["__fitSourceEndCpuTime"] -
                                self.metadata["__fitSourceStartCpuTime"])

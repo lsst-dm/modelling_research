@@ -100,6 +100,8 @@ def get_flags():
         'idx_end': dict(type=int, nargs='?', default=np.Inf, help="Final row index to fit"),
         'img_multi_plot_max': dict(type=float, nargs='?', default=None,
                                    help="Max value for colour images in plots"),
+        'mag_prior_field': dict(type=str, nargs='?', default='base_PsfFlux_mag'),
+        'filter_prior': dict(type=str, nargs='?', default='HSC-I'),
         'weights_band': dict(type=float, nargs='*', default=None,
                              help="Weights per filter to rescale cdimages in multi-band plots"),
         'path_cosmos_galsim': dict(type=str, nargs='?',
@@ -151,12 +153,23 @@ def main():
     argsvars = vars(args)
     kwargs = {key: argsvars[key] for key in kwargs}
     config = MultiProFitTask.ConfigClass(**kwargs)
+
+    if config.usePriorShapeDefault:
+        field_prior = args.mag_prior_field
+        dataId_prior = {'tract': tract, 'patch': name_patch, 'filter': args.filter_prior}
+        cat_prior = butler.get("deepCoadd_meas", dataId_prior)
+        calib_prior = butler.get("deepCoadd_photoCalib", dataId_prior)
+        mags_prior = calib_prior.calibrateCatalog(cat_prior)[field_prior]
+    else:
+        mags_prior = None
+
     task = MultiProFitTask(config=config)
     data = get_data(butler, tract, name_patch=name_patch, filters=args.filters)
     catalog, results = task.fit(data, idx_begin=args.idx_begin, idx_end=args.idx_end,
                                 printTrace=args.printTrace, plot=args.plot,
                                 img_multi_plot_max=args.img_multi_plot_max, weights_band=args.weights_band,
-                                path_cosmos_galsim=args.path_cosmos_galsim, sources=sources)
+                                path_cosmos_galsim=args.path_cosmos_galsim, sources=sources,
+                                mags_prior=mags_prior)
     return catalog, results
 
 
