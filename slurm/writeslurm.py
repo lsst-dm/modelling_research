@@ -28,6 +28,19 @@ def get_slurm_headers(time='48:00:00', queue='normal', n_tasks=1):
     return headers
 
 
+def get_slurm_patches_dc2():
+    return [
+        list(itertools.chain(
+            (f'{x},{y}' for x in range(3) for y in range(7)),
+            (f'3,{y}' for y in range(3)),
+        )),
+        list(itertools.chain(
+            (f'3,{y}' for y in range(4, 7)),
+            (f'{x},{y}' for x in range(4, 7) for y in range(7)),
+        )),
+    ]
+
+
 def get_slurm_patches_cosmos_hsc():
     return [
         [f'{x},{y}' for x in range(2, 7) for y in range(2, 7) if not ((x == 4) and (x == y))],
