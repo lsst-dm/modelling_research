@@ -113,6 +113,11 @@ class MultiProFitConfig(pexConfig.Config):
                                              "children")
     usePriorShapeDefault = pexConfig.Field(dtype=bool, default=False,
                                            doc="Whether to use the default shape prior")
+    backgroundPriorMultiplier = pexConfig.Field(dtype=float, default=None,
+                                                doc="Multiplier for background level prior sigma")
+    usePriorBackgroundLocalEstimate = pexConfig.Field(
+        dtype=bool, default=False, doc="Whether to use a local estimate of the background level to set the"
+                                       " background prior mean/sigma; generally a bad idea")
 
     def getModelSpecs(self):
         """Get a list of dicts of model specifications for MultiProFit/
@@ -482,7 +487,8 @@ class MultiProFitTask(pipeBase.Task):
     @pipeBase.timeMethod
     def __fitSource(self, source, exposures, extras, children=None, printTrace=False, plot=False,
                     footprint=None, failOnLargeFootprint=False,
-                    usePriorShapeDefault=False, priorCentroidSigma=np.Inf, mag_prior=None, **kwargs):
+                    usePriorShapeDefault=False, priorCentroidSigma=np.Inf, mag_prior=None,
+                    backgroundPriors=None, **kwargs):
         """Fit a single deblended source with MultiProFit.
 
         Parameters
@@ -509,6 +515,8 @@ class MultiProFitTask(pipeBase.Task):
             The sigma on the Gaussian centroid prior. Non-positive-finite values disable the prior.
         mag_prior: `float`, optional
             The magnitude for setting magnitude-dependent priors. A None value disables such priors.
+        backgroundPriors: `dict` [`str`, `tuple`], optional
+            Dict by band of 2-element tuple containing background level prior mean and sigma.
 
         Returns
         -------
@@ -617,6 +625,20 @@ class MultiProFitTask(pipeBase.Task):
                         True: {'stddev': priorCentroidSigma},
                         False: {'stddev': priorCentroidSigma},
                     }
+            if backgroundPriors:
+                priors_background = {}
+                for idx_band, (band, (bg_mean, bg_sigma)) in enumerate(backgroundPriors.items()):
+                    if bg_sigma is None:
+                        exposure = exposurePsfs[idx_band][0]
+                        if exposure.band != band:
+                            raise RuntimeError(f'exposure.band={exposure.band}!=band={band} setting bg prior')
+                        err = exposure.error_inverse
+                        pix_good = err > 0
+                        bg_sigma = np.nanmedian(np.sqrt(1/err[pix_good]))/np.sqrt(np.sum(pix_good))
+                    if not bg_sigma > 0:
+                        raise ValueError(f'Non-positive bg_sigma={bg_sigma}')
+                    priors_background[band] = {'mean': bg_mean, 'stddev': bg_sigma}
+                params_prior['background'] = priors_background
             results = mpfFit.fit_galaxy_exposures(
                 exposurePsfs, bands, self.modelSpecs, results=results, plot=plot, print_exception=True,
                 cenx=cens[0], ceny=cens[1], fit_background=self.config.fitBackground,
@@ -967,7 +989,8 @@ class MultiProFitTask(pipeBase.Task):
         row[self.runtimeKey] = runtime
 
     def fit(self, data, idx_begin=0, idx_end=np.Inf, logger=None, printTrace=False,
-            plot=False, path_cosmos_galsim=None, sources=None, mags_prior=None, **kwargs):
+            plot=False, path_cosmos_galsim=None, sources=None, mags_prior=None,
+            field_localbg='base_LocalBackground_instFlux', **kwargs):
         """Fit a catalog of sources with MultiProFit.
 
         Each source has its PSF fit with a configureable Gaussian mixture PSF model and then fits a
@@ -1056,6 +1079,13 @@ class MultiProFitTask(pipeBase.Task):
         flags_failure = ['base_PixelFlags_flag_saturatedCenter']
         if self.config.skipDeblendTooManyPeaks:
             flags_failure.append('deblend_tooManyPeaks')
+        backgroundPriorMultiplier = self.config.backgroundPriorMultiplier
+        backgroundPriors = {}
+        if backgroundPriorMultiplier is not None and np.isfinite(backgroundPriorMultiplier):
+            if not backgroundPriorMultiplier > 0:
+                raise ValueError(f'Invalid backgroundPriorMultiplier={backgroundPriorMultiplier} !>0')
+            for band in data:
+                backgroundPriors[band] = None
         for idx in range(np.max([idx_begin, 0]), idx_end):
             src = sources[idx]
             results = None
@@ -1084,12 +1114,23 @@ class MultiProFitTask(pipeBase.Task):
                         sources[int(x)] for x in np.where(sources['parent'] == src['id'])[0]]
                     footprint = sources.find(id_parent).getFootprint() if (
                             self.config.useParentFootprint and is_child) else None
+                    for band in backgroundPriors:
+                        if self.config.usePriorBackgroundLocalEstimate:
+                            cat_band = data[band]['sources']
+                            bg_mean = 0. if cat_band[f'{field_localbg}_flag'] else \
+                                cat_band[f'{field_localbg}_instFlux']
+                            bg_sigma = backgroundPriorMultiplier * cat_band[f'{field_localbg}_instFluxErr']
+                        else:
+                            bg_mean, bg_sigma = 0, None
+                        backgroundPriors[band] = (bg_mean, bg_sigma)
                     results, error, noiseReplaced = self.__fitSource(
                         src, exposures, extras, children=children, printTrace=printTrace, plot=plot,
                         footprint=footprint, failOnLargeFootprint=is_parent,
                         usePriorShapeDefault=self.config.usePriorShapeDefault,
                         priorCentroidSigma=self.config.priorCentroidSigma,
-                        mag_prior=mags_prior[idx] if mags_prior is not None else None, **kwargs)
+                        mag_prior=mags_prior[idx] if mags_prior is not None else None,
+                        backgroundPriors=backgroundPriors,
+                        **kwargs)
                     failed = error is not None
                     runtime = (self.metadata["__fitSourceEndCpuTime"] -
                                self.metadata["__fitSourceStartCpuTime"])
