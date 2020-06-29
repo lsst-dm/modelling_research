@@ -467,8 +467,7 @@ class MultiProFitTask(pipeBase.Task):
         n_sources = len(sources)
         if n_sources == 1 and ('sigma_x' not in sources[0]):
             fluxes, sources[0], _, _, _ = mpfFit.get_init_from_moments(
-                (exposure for exposure, _ in exposurePsfs),
-                cenx=sources[0].get('cenx', 0), ceny=sources[0].get('ceny', 0))
+                exposurePsfs, cenx=sources[0].get('cenx', 0), ceny=sources[0].get('ceny', 0))
             sources[0]['flux'] = fluxes
         if n_sources != len(params_free):
             raise ValueError(f'len(sources)={n_sources} != len(model.sources)={len(model.sources)}')
@@ -566,17 +565,19 @@ class MultiProFitTask(pipeBase.Task):
                 for noiseReplacer, (band, exposure) in zip(extras, exposures.items()):
                     noiseReplacer.insertSource(source.getId())
                     bitmask = 0
+                    mask = exposure.mask.subset(bbox).array
                     for bitname in self.mask_names_zero:
                         bitval = exposure.mask.getPlaneBitMask(bitname)
                         bitmask |= bitval
-                    err = 1. / np.float64(exposure.variance.subset(bbox).array)
-                    err[exposure.mask.subset(bbox).array & bitmask != 0] = 0
-                    exposurePsfs.append((
-                        mpfObj.Exposure(
-                            band=band, image=np.float64(exposure.image.subset(bbox).array), error_inverse=err,
-                            is_error_sigma=False),
-                        mpfObj.PSF(band, image=exposure.getPsf().computeKernelImage(center), engine="galsim")
-                    ))
+
+                    err = np.sqrt(1. / np.float64(exposure.variance.subset(bbox).array))
+                    err[(mask & bitmask) != 0] = 0
+                    exposure_mpf = mpfObj.Exposure(
+                        band=band, image=np.float64(exposure.image.subset(bbox).array),
+                        error_inverse=err, is_error_sigma=True)
+                    psf_mpf = mpfObj.PSF(
+                        band, image=exposure.getPsf().computeKernelImage(center), engine="galsim")
+                    exposurePsfs.append((exposure_mpf, psf_mpf))
                 noiseReplaced = True
             cen_src = source.getCentroid()
             begin = bbox.getBegin()
