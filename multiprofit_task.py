@@ -118,6 +118,12 @@ class MultiProFitConfig(pexConfig.Config):
     usePriorBackgroundLocalEstimate = pexConfig.Field(
         dtype=bool, default=False, doc="Whether to use a local estimate of the background level to set the"
                                        " background prior mean/sigma; generally a bad idea")
+    psfHwhmShrink = pexConfig.Field(
+        dtype=float, default=0., doc="Length in pixels to subtract from PSF hwhm_{x,y} in quadrature "
+                                     "before fitting PSF-convolved models")
+    gaussianSizePriorSigma = pexConfig.Field(
+        dtype=float, default=0.2, doc="Std. dev. of the size (sigma) prior for the Gaussian model (pixels)"
+    )
 
     def getModelSpecs(self):
         """Get a list of dicts of model specifications for MultiProFit/
@@ -610,7 +616,7 @@ class MultiProFitTask(pipeBase.Task):
                 size_mean_stddev = (size_mean - np.log10(pixel_scale), size_stddev)
                 params_prior['shape'] = {
                     True: {
-                        'size_mean_std': (0., 0.1),
+                        'size_mean_std': (self.config.psfHwhmShrink, self.config.gaussianSizePriorSigma),
                         'size_log10': False,
                         'axrat_params': (-0.1, 0.5, 1.1),
                     },
@@ -645,7 +651,7 @@ class MultiProFitTask(pipeBase.Task):
             results = mpfFit.fit_galaxy_exposures(
                 exposurePsfs, bands, self.modelSpecs, results=results, plot=plot, print_exception=True,
                 cenx=cens[0], ceny=cens[1], fit_background=self.config.fitBackground,
-                prior_specs=params_prior, **kwargs)
+                psf_shrink=self.config.psfHwhmShrink, prior_specs=params_prior, **kwargs)
             if self.config.fitGaussian:
                 n_sources = len(sources)
                 name_model = 'gausspx_no_psf'
@@ -1131,6 +1137,7 @@ class MultiProFitTask(pipeBase.Task):
                         footprint=footprint, failOnLargeFootprint=is_parent,
                         usePriorShapeDefault=self.config.usePriorShapeDefault,
                         priorCentroidSigma=self.config.priorCentroidSigma,
+                        sigma_min=np.max((1e-2, self.config.psfHwhmShrink)),
                         mag_prior=mags_prior[idx] if mags_prior is not None else None,
                         backgroundPriors=backgroundPriors,
                         **kwargs)
