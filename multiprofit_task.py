@@ -545,6 +545,8 @@ class MultiProFitTask(pipeBase.Task):
             if failOnLargeFootprint and (area > self.config.maxParentFootprintPixels):
                 raise RuntimeError(f'Source footprint (fallback) area={area} pix exceeds '
                                    f'max={self.config.maxParentFootprintPixels}')
+            elif not (area > 0):
+                raise RuntimeError(f'Source bbox={bbox} has area={area} !>0')
             center = bbox.getCenter()
             # TODO: Implement multi-object fitting/deblending
             # peaks = footprint.getPeaks()
