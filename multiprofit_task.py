@@ -28,6 +28,8 @@ class MultiProFitConfig(pexConfig.Config):
     gaussianOrderSersic only has a limited number of valid values (those supported by multiprofit's
     MultiGaussianApproximationComponent).
     """
+    backgroundPriorMultiplier = pexConfig.Field(dtype=float, default=None,
+                                                doc="Multiplier for background level prior sigma")
     computeMeasModelfitLikelihood = pexConfig.Field(dtype=bool, default=False,
                                                     doc="Whether to compute the log-likelihood of best-fit "
                                                         "meas_modelfit parameters per model")
@@ -51,6 +53,8 @@ class MultiProFitConfig(pexConfig.Config):
     fitDevExpFromCModel = pexConfig.Field(dtype=bool, default=False,
                                           doc="Whether to perform a MG Sersic approximation Dev+Exp profile "
                                               "fit (initialized from previous exp./Dev. fits) per source")
+    fitPrereqs = pexConfig.Field(dtype=bool, default=False, doc="Set fit(Model) flags for necessary "
+                                                                "prerequisites even if not specified")
     fitSersic = pexConfig.Field(dtype=bool, default=True, doc="Whether to perform a MG Sersic approximation "
                                                               "profile fit per source")
     fitSersicFromCModel = pexConfig.Field(dtype=bool, default=False,
@@ -89,8 +93,8 @@ class MultiProFitConfig(pexConfig.Config):
     gaussianOrderPsf = pexConfig.Field(dtype=int, default=2, doc="Number of Gaussians components for the PSF")
     gaussianOrderSersic = pexConfig.Field(dtype=int, default=8, doc="Number of Gaussians components for the "
                                                                     "MG Sersic approximation galaxy profile")
-    fitPrereqs = pexConfig.Field(dtype=bool, default=False, doc="Set fit(Model) flags for necessary "
-                                                                "prerequisites even if not specified")
+    gaussianSizePriorSigma = pexConfig.Field(
+        dtype=float, default=0.2, doc="Std. dev. of the size (sigma) prior for the Gaussian model (pixels)")
     intervalOutput = pexConfig.Field(dtype=int, default=100, doc="Number of sources to fit before writing "
                                                                  "output")
     isolatedOnly = pexConfig.Field(dtype=bool, default=False, doc="Whether to fit only isolated sources")
@@ -105,6 +109,10 @@ class MultiProFitConfig(pexConfig.Config):
                                                                         "of each model's best fit")
     outputRuntime = pexConfig.Field(dtype=bool, default=True, doc="Whether to save the runtime of each "
                                                                   "model")
+    priorCentroidSigma = pexConfig.Field(dtype=float, default=np.Inf, doc="Centroid prior sigma")
+    psfHwhmShrink = pexConfig.Field(
+        dtype=float, default=0.,
+        doc="Length (pix) to subtract from PSF HWHM (x,y) in quadrature before fitting PSF-convolved models")
     resume = pexConfig.Field(dtype=bool, default=False, doc="Whether to resume from the previous output file")
     skipDeblendTooManyPeaks = pexConfig.Field(dtype=bool, default=False,
                                               doc="Whether to skip fitting sources with "
@@ -112,23 +120,14 @@ class MultiProFitConfig(pexConfig.Config):
     useSdssShape = pexConfig.Field(dtype=bool, default=False,
                                    doc="Whether to use the baseSdssShape* moments to initialize Gaussian "
                                        "fits")
-    priorCentroidSigma = pexConfig.Field(dtype=float, default=np.Inf, doc="Centroid prior sigma")
     useParentFootprint = pexConfig.Field(dtype=bool, default=False,
                                          doc="Whether to use the parent's footprint when fitting deblended "
                                              "children")
     usePriorShapeDefault = pexConfig.Field(dtype=bool, default=False,
                                            doc="Whether to use the default shape prior")
-    backgroundPriorMultiplier = pexConfig.Field(dtype=float, default=None,
-                                                doc="Multiplier for background level prior sigma")
     usePriorBackgroundLocalEstimate = pexConfig.Field(
         dtype=bool, default=False, doc="Whether to use a local estimate of the background level to set the"
                                        " background prior mean/sigma; generally a bad idea")
-    psfHwhmShrink = pexConfig.Field(
-        dtype=float, default=0., doc="Length in pixels to subtract from PSF hwhm_{x,y} in quadrature "
-                                     "before fitting PSF-convolved models")
-    gaussianSizePriorSigma = pexConfig.Field(
-        dtype=float, default=0.2, doc="Std. dev. of the size (sigma) prior for the Gaussian model (pixels)"
-    )
 
     def getModelSpecs(self):
         """Get a list of dicts of model specifications for MultiProFit/
@@ -1049,6 +1048,8 @@ class MultiProFitTask(pipeBase.Task):
             Default None.
         mags_prior : array-like [`float`]
             Magnitudes to pass to any magnitude-dependent priors.
+        field_localbg : `str`
+            The name (prefix to _instFlux) of the field to read the local background level from.
         **kwargs
             Additional keyword arguments to pass to `__fitSource`.
 
