@@ -44,6 +44,8 @@ class MultiProFitConfig(pexConfig.Config):
                                        "CModel does in meas_modelfit) per source")
     fitGaussian = pexConfig.Field(dtype=bool, default=False,
                                   doc="Whether to perform a single Gaussian fit without PSF convolution")
+    fitGaussianPsfConv = pexConfig.Field(dtype=bool, default=True,
+                                         doc="Whether to perform a PSF-convolved single Gaussian fit")
     fitHstCosmos = pexConfig.Field(dtype=bool, default=False,
                                    doc="Whether to fit COSMOS HST F814W images instead of repo images")
     fitDevExpFromCModel = pexConfig.Field(dtype=bool, default=False,
@@ -55,6 +57,9 @@ class MultiProFitConfig(pexConfig.Config):
                                           doc="Whether to perform a MG Sersic approximation profile fit "
                                               "(initalized from previous exp./dev. fits) per source;"
                                               " ignored if fitCModel is False")
+    fitSersicFromGauss = pexConfig.Field(dtype=bool, default=True,
+                                         doc="Whether to perform a MG Sersic approximation profile fit "
+                                             "(initalized from previous gauss fit) per source")
     fitSersicAmplitude = pexConfig.Field(dtype=bool, default=True,
                                          doc="Whether to perform a linear fit of the Gaussian"
                                              " amplitudes for the MG Sersic approximation profile fit per"
@@ -144,6 +149,7 @@ class MultiProFitConfig(pexConfig.Config):
         allParams = "cenx;ceny;nser;sigma_x;sigma_y;rscale;rho"
         if self.fitPrereqs:
             prereqs = {
+                'fitGaussianPsfConv': ['fitSersicFromGauss', 'fitCModel'],
                 'fitSersic': ['fitSersicAmplitude'],
                 'fitSersicFromCModel': ['fitSersicFromCModelAmplitude', 'fitSersicX2FromSerExp'],
                 'fitCModel': ['fitSersicFromCModel', 'fitDevExpFromCModel'],
@@ -159,6 +165,15 @@ class MultiProFitConfig(pexConfig.Config):
             'psfmodel': namePsfModel,
             'psfpixel': "T",
         }
+        if self.fitGaussianPsfConv:
+            modelSpecs.append(
+                dict(name="gausspx", model=nameSersicModel, fixedparams='nser', initparams="nser=0.5",
+                     inittype="moments", **defaults))
+        if self.fitSersicFromGauss:
+            modelSpecs.append(
+                dict(name=f"{nameMG}sergpx", model=nameSersicModel, fixedparams='', initparams="nser=1",
+                     inittype="guessgauss2exp:gausspx", **defaults)
+            )
         if self.fitSersic:
             modelSpecs.append(
                 dict(name=f"{nameMG}sermpx", model=nameSersicModel, fixedparams='', initparams="nser=1",
@@ -171,8 +186,6 @@ class MultiProFitConfig(pexConfig.Config):
                 )
         if self.fitCModel:
             modelSpecs.extend([
-                dict(name="gausspx", model=nameSersicModel, fixedparams='nser', initparams="nser=0.5",
-                     inittype="moments", **defaults),
                 dict(name=f"{nameMG}expgpx", model=nameSersicModel, fixedparams='nser', initparams="nser=1",
                      inittype="guessgauss2exp:gausspx", **defaults),
                 dict(name=f"{nameMG}devepx", model=nameSersicModel, fixedparams='nser', initparams="nser=4",
