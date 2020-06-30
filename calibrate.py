@@ -145,7 +145,7 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
             try:
                 cat = type_cat.readFits(file)
             except:
-                if retry == (n_retry_max - 1):
+                if retry == n_retry_max:
                     raise
                 elif retry_delay:
                     time.sleep(retry_delay)
