@@ -53,7 +53,7 @@ butler_ref = dc2.get_refcat(make=False)
 
 # Load the DC2 repo butlers: we'll need them later
 butlers_dc2 = {
-    '2.2i': Butler('/datasets/DC2/repoRun2.2i/rerun/w_2020_03/DM-22816/'),
+    '2.2i': Butler('/datasets/DC2/repoRun2.2i/rerun/w_2020_24/DM-25422/multi'),
 }
 
 
@@ -62,21 +62,22 @@ butlers_dc2 = {
 
 # Match with the refcat using astropy's matcher
 truth_path = dc2.get_truth_path()
-tracts = {3828: (f'{truth_path}2020-04-06-freebg/', '2.2i'),}
+tracts = {3828: (f'{truth_path}2020-06-29-priors_shape_cen_psfshrink_freebg/', '2.2i'),}
 filters_single = ('g', 'r', 'i')
-filters_multi = ('gri',)
+filters_multi = ('griz',)
 patch_max = 7
 # Calibrate catalogs: this only needs to be done once; get_cmodel_forced should only be true for single bands for reasons
 calibrate_cats = False
 get_ngmix = False
 get_cmodel_forced = False
 if calibrate_cats:
-    butler_ngmix_gri = Butler('/project/dtaranu/dc2/ngmix/gri') if get_ngmix else None
+    butler_ngmix_gri = Butler('/project/dtaranu/dc2/2020-06-29/ngmix/griz') if get_ngmix else None
     path = tracts[3828][0]
     for bands in filters_single + filters_multi:
         files = [f'{path}{bands}/mpf_dc2_{bands}_3828_{x},{y}.fits' for x in range(patch_max) for y in range (patch_max)]
         cats = calibrate_catalogs(files, butlers_dc2, is_dc2=True, files_ngmix=butler_ngmix_gri,
-                                  get_cmodel_forced=get_cmodel_forced and (len(bands) == 1))
+                                  get_cmodel_forced=get_cmodel_forced and (len(bands) == 1),
+                                  retry_delay=6, n_retry_max=3)
 cats = dc2.match_refcat_dc2(butler_ref, match_afw=False, tracts=tracts, butlers_dc2=butlers_dc2,
                             filters_single=filters_single, filters_multi=filters_multi)
 
@@ -93,16 +94,16 @@ cats = dc2.match_refcat_dc2(butler_ref, match_afw=False, tracts=tracts, butlers_
 # TODO: remove this offset when fixed in ngmix
 offset_ngmix = -3.4948500216800937
 model_specs = [
-    ('PSF', 'base_PsfFlux', 0),
-    ('stack CModel', 'modelfit_CModel', 0),
-    ('forced CModel', 'modelfit_forced_CModel', 0),
+    ('PSF', 'base_PsfFlux', 1),
+    ('Stack CModel', 'modelfit_CModel', 2),
+    ('Forced CModel', 'modelfit_forced_CModel', 2),
 ] if get_cmodel_forced else []
 model_specs.extend([
     ('MPF CModel', 'multiprofit_mg8cmodelpx', 2),
     ('MPF Sersic', 'multiprofit_mg8serbpx', 1),
     ('MPF Sersic Free Amp.', 'multiprofit_mg8serbapx', 8),
-    ('MPF Sersic x 2', 'multiprofit_mg8serx2sepx', 2),
-    ('MPF Sersic x 2 Free Amp.', 'multiprofit_mg8serx2seapx', 16),
+    #('MPF Sersic x 2', 'multiprofit_mg8serx2sepx', 2),
+    #('MPF Sersic x 2 Free Amp.', 'multiprofit_mg8serx2seapx', 16),
 ])
 if get_ngmix:
     model_specs.append(('ngmix bd', 'ngmix_bd', 0))
@@ -112,12 +113,13 @@ models = {
     for desc, field, n_comps in model_specs
 }
 
-models_stars = ['PSF', 'stack CModel'] if get_cmodel_forced else []
+models_stars = ['PSF', 'Stack CModel'] if get_cmodel_forced else []
 models_stars.extend(['MPF CModel', 'MPF Sersic'])
 if get_ngmix:
     models_stars.append('ngmix bd')
 
 models_stars = {model: models[model] for model in models_stars}
+models_stars["MPF Gauss"] = mrMeas.Model('MPF Sersic', 'multiprofit_gausspx', 1)
 
 args = dict(scatterleft=True, scatterright=True,)
 args_type = {
@@ -181,7 +183,7 @@ plot_matches(
 
 
 # Compare ngmix vs mpf g-r colours. They agree almost shockingly well for ~80-90% of sources.
-cat_mb = cats[3828]['meas']['gri']
+cat_mb = cats[3828]['meas']['griz']
 cat_good = cat_mb[cat_mb['detect_isPatchInner'] & cat_mb['detect_isPrimary']]
 if get_ngmix:
     models_gmr = ['ngmix bd', 'MPF Sersic']
@@ -208,7 +210,7 @@ if get_ngmix:
 # TODO: Get forced sizes somehow
 scale_pix = 0.2
 sizes_model = {
-    'stack CModel': np.log10(scale_pix*np.sqrt(0.5*(
+    'Stack CModel': np.log10(scale_pix*np.sqrt(0.5*(
         cat_good['modelfit_CModel_ellipse_xx'] + cat_good['modelfit_CModel_ellipse_yy'])))
 } if get_cmodel_forced else {}
 sizes_model['MPF Sersic'] = np.log10(
@@ -217,18 +219,20 @@ sizes_model['MPF Sersic'] = np.log10(
         + cat_good['multiprofit_mg8serbpx_c1_sigma_y']**2))
 )
 if get_ngmix:
-    sizes_model['ngmix bd']: np.log10(np.sqrt(0.5*cat_good['ngmix_bd_T']))
-for name_model, sizes in sizes_model.items():
-    is_ngmix = name_model.startswith('ngmix')
-    mag = models[name_model].get_mag_total(cat_good, 'r')
-    good = (mag < 24.5) & np.isfinite(sizes)
-    plotjoint_running_percentiles(
-        mag[good], sizes[good], limx=args_type['resolved']['limx'], limy=(-2.5, 2),
-        labelx='$r_{model}$', labely='log10($R_{eff}$/arcsec)' if not is_ngmix else 'log10($\sigma$/arcsec)',
-        title=f'DC2 3828 Size-Magnitude {name_model} ({band_multi}) N={np.sum(good)}',
-        **args,
-    )
-    plt.show()
+    sizes_model['ngmix bd'] = np.log10(np.sqrt(0.5*cat_good['ngmix_bd_T']))
+mag_min = args_type['resolved']['limx'][0]
+for mag_max in (22.5, 24.5):
+    for name_model, sizes in sizes_model.items():
+        is_ngmix = name_model.startswith('ngmix')
+        mag = models[name_model].get_mag_total(cat_good, 'r')
+        good = (mag < mag_max) & np.isfinite(sizes)
+        plotjoint_running_percentiles(
+            mag[good], sizes[good], limx=(mag_min, mag_max), limy=(-2.5, 2),
+            labelx='$r_{model}$', labely='log10($R_{eff}$/arcsec)' if not is_ngmix else 'log10($\sigma$/arcsec)',
+            title=f'DC2 3828 Size-Magnitude {name_model} ({band_multi}) N={np.sum(good)}',
+            **args,
+        )
+        plt.show()
 
 
 # In[12]:
@@ -237,22 +241,28 @@ for name_model, sizes in sizes_model.items():
 # Timing ngmix and MultiProFit
 cat_mb = cats[3828]['meas'][band_multi]
 times = {
-    'mpf sersic': np.log10(cat_mb['multiprofit_gausspx_time'] + cat_mb['multiprofit_mg8expgpx_time']
+    'MPF Sersic': np.log10(cat_mb['multiprofit_gausspx_time'] + cat_mb['multiprofit_mg8expgpx_time']
                        + cat_mb['multiprofit_mg8devepx_time'] + cat_mb['multiprofit_mg8serbpx_time']),
 }
 if get_ngmix:
     times['ngmix bd'] = np.log10(cat_mb['ngmix_time'])
 
-model_ref = 'stack cmodel'
+model_ref = 'Stack CModel'
 times_ref = None
+bands_done, bands_skipped = 0, 0
 for band in band_multi:
-    cat = cats[3828]['meas'][band]
-    times_cm = cat['modelfit_CModel_exp_time'] + cat['modelfit_CModel_dev_time'] + cat['modelfit_CModel_initial_time']
-    if times_ref is None:
-        times_ref = times_cm
+    cat = cats[3828]['meas'].get(band)
+    if cat is not None:
+        times_cm = cat['modelfit_CModel_exp_time'] + cat['modelfit_CModel_dev_time'] + cat['modelfit_CModel_initial_time']
+        if times_ref is None:
+            times_ref = times_cm
+        else:
+            times_ref += times_cm
+        bands_done += 1
     else:
-        times_ref += times_cm
-times[model_ref] = np.log10(times_cm)
+        bands_skipped += 1
+times_ref *= (bands_skipped + bands_done)/bands_done
+times[model_ref] = np.log10(times_ref)
 
 lim_time = (-3.2, 1.8)
 lim_y = (-2.1, 4.1)
