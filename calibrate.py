@@ -3,6 +3,7 @@ from lsst.afw.table import Schema, SchemaMapper, SourceCatalog
 from lsst.daf.persistence import Butler
 from . import meas_model as mm
 from . import tables
+import time
 from .timing import time_print
 from timeit import default_timer as timer
 
@@ -56,8 +57,8 @@ def calibrate_catalog(catalog, photoCalibs_filter, filter_ref=None, func_field=N
 
 def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cats=False, write=True,
                        files_ngmix=None, datasetType_ngmix=None, postfix='_mag.fits',
-                       type_cat=None, type_calib=None, get_cmodel_forced=False, func_field=None,
-                       log=True):
+                       type_cat=None, type_calib=None, get_cmodel_forced=False, log=True, n_retry_max=0,
+                       retry_delay=0, **kwargs):
     """Calibrate FITS source measurement catalogs derived from data in a given repo.
 
     Parameters
@@ -86,8 +87,14 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
         The type of calibration to use; default "deepCoadd_photoCalib".
     get_cmodel_forced: `bool`
         Whether to add cmodel forced photometry columns.
-    func_field : callable
-        A function to select fields; passed to `calibrate_catalog`.
+    log : `bool`
+        Whether to print progress updates.
+    n_retry_max : `int`
+        Number of times to retry failed catalog reads.
+    retry_delay : `float`
+        Delay time in seconds before retrying failed catalog reads. Ignored if not greater than zero.
+    **kwargs
+        Additional arguments to pass to `calibrate_catalog`.
 
     Returns
     -------
@@ -97,7 +104,12 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
     Notes
     -----
     CModel forced photometry has a fixed shape in each band but different amplitudes.
+
+    Retry arguments are useful for calibrating catalogs written by tasks that are still running, since they
+    writing may still be in progress when they're set to be read.
     """
+    if retry_delay is None or not (retry_delay > 0):
+        retry_delay = 0
     if func_dataId is None:
         func_dataId = parse_multiprofit_dataId
     if is_dc2:
@@ -129,7 +141,15 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
         if log:
             preprint = "Unknown" if (idx == 0) else f'{(time_now - time_init) * (n_files - idx) / idx:.1f}s'
             print(f'ETA={preprint}; Calibrating {file}... ', end='')
-        cat = type_cat.readFits(file)
+        for retry in range(1 + n_retry_max):
+            try:
+                cat = type_cat.readFits(file)
+            except:
+                if retry == n_retry_max:
+                    raise
+                elif retry_delay:
+                    time.sleep(retry_delay)
+                    continue
         if log:
             time_now = time_print(time_now, prefix='Read in ')
         filename = file.split('.fits')[0]
@@ -234,10 +254,14 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
         if n_columns > tables.n_columns_max:
             raise RuntimeError(f'pre-calib cat has {n_columns}>max={tables.n_columns_max}')
 
-        photoCalibs = {band: butler_cal.get(type_calib, set_dataId_band(dataId, band))
-                       for band in bands}
+        try:
+            photoCalibs = {band: butler_cal.get(type_calib, set_dataId_band(dataId, band))
+                           for band in bands}
+        except:
+            print(f'Failed generating photoCalibs of type={type_calib} with dataId={dataId}')
+            raise
 
-        cat_calib = calibrate_catalog(cat, photoCalibs, func_field=func_field)
+        cat_calib = calibrate_catalog(cat, photoCalibs, **kwargs)
         if return_cats:
             cats.append(cat_calib)
         if write:

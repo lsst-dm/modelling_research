@@ -59,26 +59,15 @@ argspj = dict(
 
 # Setup models and familiar names for parameters
 models = {
-    desc: mrMeas.Model(desc, field, n_comps)
-    for desc, field, n_comps in [
-        #('PSF', 'base_PsfFlux', 0),
-        #('stack CModel', 'modelfit_CModel', 0),
-        #('forced CModel', 'modelfit_forced_CModel', 0),
-        ('MPF CModel', 'mg8cmodelpx', 2),
-        ('MPF Sersic', 'mg8serbpx', 1),
-        ('MPF Sersic Free Amp.', 'mg8serbapx', 8),
-        ('MPF Sersic x 2', 'mg8serx2sepx', 2),
-        ('MPF Sersic x 2 Free Amp.', 'mg8serx2seapx', 16),
-    ]
-}
-models = {
     "psf": {
         "mpf": mrMeas.Model("MPF PSF", "multiprofit_psf", 2, is_psf=True),
         "mmf": mrMeas.Model("Stack PSF", "modelfit_DoubleShapeletPsfApprox", 2, is_psf=True),
     },
     "gauss": {
         "mpf": mrMeas.Model("MPF Gauss", "multiprofit_gausspx", 1),
-        "base": mrMeas.Model("Base Gauss", "base_GaussianFlux", 1),
+        # This isn't actually a PSF-convolved Gaussian model
+        # It seems to be configurable but nearly identical to base_SdssShape_instFlux in practice
+        #"base": mrMeas.Model("Base Gauss", "base_GaussianFlux", 1),
     },
     "gauss_no_psf": {
         "mpf": mrMeas.Model("MPF Gauss1", "multiprofit_gausspx_no_psf", 1),
@@ -98,6 +87,9 @@ models = {
     },
     "mg8serb": {
         "mpf": mrMeas.Model("MPF Sersic", "multiprofit_mg8serbpx", 1),
+    },
+    "mg8serg": {
+        "mpf": mrMeas.Model("MPF Sersic-G", "multiprofit_mg8sergpx", 1),
     },
     "mg8serm": {
         "mpf": mrMeas.Model("MPF Sersic-M", "multiprofit_mg8sermpx", 1),
@@ -248,16 +240,16 @@ def reduce_cat(cat, name_cat, scale_dist, is_single, field_flux='flux', has_mags
 
 
 # Read catalogs
-calibrate_cats = False
+calibrate_cats = True
 log = False
 scales = {'hsc': 0.168, 'hst': 0.03}
 
 postfix_calib = '_mag'
 extension = '.fits'
 path_proj = "/project/dtaranu/cosmos/hsc/"
-subdirs = {'hsc': f'{path_proj}/2020-04-06/', 'hst': f'{path_proj}/2020-01-15/'}
-prefixes = {'hsc': f'/mpf_cosmos-hsc_', 'hst': 'hst_F814W_iso/mpf_F814W_iso'}
-butler = Butler("/datasets/hsc/repo/rerun/RC/w_2019_38/DM-21386/")
+subdirs = {'hsc': f'{path_proj}/2020-06-29/', 'hst': f'{path_proj}/2020-06-05/'}
+prefixes = {'hsc': f'/mpf_cosmos-hsc_', 'hst': '-iso/mpf_cosmos-hst-iso_'}
+butler = Butler("/datasets/hsc/repo/rerun/RC/w_2020_22/DM-25176/")
 
 cats = {}
 bands_ref = 'iz'
@@ -307,7 +299,7 @@ for file in files:
     patches[patch] = [
         0,
         all(
-            os.path.isfile(f'{get_prefix_full(subdir, "", prefix_file)}{patch}{extension}')
+            os.path.isfile(f'{get_prefix_full(subdir, bands, prefix_file)}{patch}{extension}')
             for bands in bands_hst
         )
     ]
@@ -323,7 +315,7 @@ for survey, (bands_fit, has_mags) in bands_survey.items():
     subdir = subdirs[survey]
     prefix_file = prefixes[survey]
     for bands in bands_fit:
-        prefix_full = get_prefix_full(subdir, bands if has_mags else "", prefix_file)
+        prefix_full = get_prefix_full(subdir, bands, prefix_file)
         is_ref = bands == bands_ref
 
         if calibrate_cats and has_mags:
@@ -402,22 +394,30 @@ units = {
 
 labels = {
     "mag_i": 'i',
-    "reff": '$\log10(R_{eff})$',
+    "reff": '$\log10(R_{eff,maj})$',
 }
+
+mag_i_bright, mag_i_mid, mag_i_faint = 15.5, 24., 29.
+mag_i_lim = (mag_i_bright, mag_i_faint)
+mag_i_lim_bright = (mag_i_bright, mag_i_mid)
 
 columns_plot = {
     "loglike": dict(difference=True, limx=(0, 6e3), limy=(-25, 25), crop_x=True),
     "time": dict(log=True, ratio=True, limx=(-3., 0.5), limy=(-1.5, 2.5), plot_cumulative=True),
-    "mag_i": dict(difference=True, limx=(16.5, 29), limy=(-0.4, 0.2)),
-    "mag_i_bright": dict(difference=True, limx=(16.5, 24), limy=(-0.15, 0.15),
+    "mag_i": dict(difference=True, limx=mag_i_lim, limy=(-0.4, 0.2)),
+    "mag_i_bright": dict(difference=True, limx=mag_i_lim_bright, limy=(-0.15, 0.15),
                          crop_x=True, column="mag_i"),
 }
 columns_plot_size = columns_plot.copy()
-columns_plot_size["reff"] = dict(log=False, difference=True, limx=(-1.8, 1.7), limy=(-1, 1))
-columns_plot_size["mag_i_reff_mmf"] = dict(ratio=False, limx=(16, 28), limy=(-1.65, 1.35),
+columns_plot_size["reff"] = dict(log=False, difference=True, limx=(-2., 2.), limy=(-1, 1))
+columns_plot_size["mag_i_reff_mmf"] = dict(ratio=False, limx=mag_i_lim, limy=(-2.5, 1.5),
                                            column_x="mag_i", column_y="reff", datum_idx_y=0)
-columns_plot_size["mag_i_reff_mpf"] = dict(ratio=False, limx=(16, 28), limy=(-1.65, 1.35),
+columns_plot_size["mag_i_reff_mpf"] = dict(ratio=False, limx=mag_i_lim, limy=(-2.5, 1.5),
                                            column_x="mag_i", column_y="reff", datum_idx_x=1)
+columns_plot_size["mag_i_bright_reff_mmf"] = dict(ratio=False, limx=mag_i_lim_bright, limy=(-2.5, 1.5),
+                                                  column_x="mag_i", column_y="reff", datum_idx_y=0, crop_x=True)
+columns_plot_size["mag_i_bright_reff_mpf"] = dict(ratio=False, limx=mag_i_lim_bright, limy=(-2.5, 1.5),
+                                                  column_x="mag_i", column_y="reff", datum_idx_x=1, crop_x=True)
 
 
 # In[7]:
@@ -543,7 +543,7 @@ def plot_models(data, band, algos, columns_plot, columns_plot_size, models=None,
         data_algos = [data_model[algo] for algo in algos]
         data_cond = data_algos[0]
         cond = (data_cond[f'mag_i'] < 29) & (data_cond['good'])
-        title = f'N={np.count_nonzero(cond)}'
+        title = f'Tract 9813 N={np.count_nonzero(cond)}'
         for name_plot, column_info in (columns_plot_size if is_single_comp else columns_plot).items():
             print(f"Plotting model {model} plot {name_plot}")
             column_x, column_y, name_column_x, name_column_y, datum_idx_x, datum_idx_y, plot_cumulative =                 get_columns_info(column_info, name_plot, labels=labels)
@@ -630,13 +630,10 @@ def plot_models_algo(data, band, algo, models, columns_plot, columns_plot_size, 
 
 
 # Plot r-band MMF vs MPF, no PSF Gauss only (should be very consistent)
-columns_plot_gnpf = {
-    "mag_i": dict(difference=True, limx=(16.5, 29), limy=(-0.15, 0.1)),
-}
-columns_plot_size_gnpf = columns_plot_gnpf.copy()
-columns_plot_size_gnpf["reff"] = columns_plot_size["reff"].copy()
-columns_plot_size_gnpf["reff"].update(dict(limx=(-0.8, 0.2), limy=(-0.3, 0.2)))
-plot_models(data, "i", ("base", "mpf"), columns_plot_gnpf, columns_plot_size_gnpf, models=['gauss_no_psf'], labels=labels, argspj=argspj)
+limy = columns_plot_size["reff"]["limy"]
+columns_plot_size["reff"]["limy"] = (-0.3, 0.2)
+plot_models(data, "i", ("base", "mpf"), columns_plot, columns_plot_size, models=['gauss_no_psf'], labels=labels, argspj=argspj)
+columns_plot_size["reff"]["limy"] = limy
 
 
 # ### i-band MMF vs MPF, exp and deV
@@ -692,10 +689,10 @@ plot_models(data, "griz", ("mmf", "mpf"), columns_plot, columns_plot_size, label
 columns_plot['time']['limx'] = (-1.5, 2)
 columns_plot['time']['limy'] = (-0.2, 1.0)
 columns_plot_size_algo = columns_plot.copy()
-columns_plot_size_algo.update({
-    "reff": dict(log=False, difference=True, limx=(-1, 2), limy=(-1, 1)),
-    "mag_i_reff": dict(ratio=False, limx=(16, 28), limy=(-1.8, 1.7), column_x="mag_i", column_y="reff"),
-})
+columns_plot_size_algo["reff"] = dict(log=False, difference=True, limx=(-1, 2), limy=(-1, 1))
+for prefix in ("mag_i_reff", "mag_i_bright_reff"):
+    columns_plot_size_algo[prefix] = columns_plot_size[f"{prefix}_mpf"].copy()
+    del columns_plot_size_algo[prefix]["datum_idx_x"]
 
 
 # In[12]:
@@ -723,8 +720,9 @@ limy = columns_plot["loglike"]["limy"], columns_plot_size["reff"]["limy"]
 columns_plot["loglike"]["limy"] = (-3, 0.2)
 columns_plot_size_algo["reff"]["limy"] = (-0.7, 0.3)
 columns_plot_size_algo["time"] = columns_plot["time"]
-plot_models_algo(data, "griz", "mpf", ("mg8serb", "mg8serm"), {'loglike': columns_plot['loglike']},
-                 columns_plot_size_algo, labels=labels, argspj=argspj)
+for alt in ("mg8serm", "mg8serg"):
+    plot_models_algo(data, "griz", "mpf", ("mg8serb", alt), {'loglike': columns_plot['loglike']},
+                     columns_plot_size_algo, labels=labels, argspj=argspj)
 columns_plot["loglike"]["limy"], columns_plot_size["reff"]["limy"] = limy
 
 
@@ -783,7 +781,7 @@ def plot_mpf_model_hsc_vs_hst(model, model_reff=None, plot_only_size_mag=False, 
     plotjoint_running_percentiles(
         x_good, y, **argspj,
         labelx=label_x, labely='mag$_{HSC}$-mag$_{HST}$',
-        limx=lim_x, limy=(-1, 1), title=f'N={n_good}')
+        limx=lim_x, limy=(-1, 1), title=f'Tract 9813 N={n_good}')
     if is_single_comp:
         reff_hst = data_hst_reff["reff"][good]
         reff_hsc = data_hsc_reff["reff"][good]
