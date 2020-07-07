@@ -30,6 +30,9 @@ class MultiProFitConfig(pexConfig.Config):
     """
     backgroundPriorMultiplier = pexConfig.Field(dtype=float, default=None,
                                                 doc="Multiplier for background level prior sigma")
+    bandMeasCatToCopyFrom = pexConfig.Field(
+        dtype=str, default=None, doc="The band of the measurement catalog to copy data from, even if a "
+                                     "source cat is provided")
     computeMeasModelfitLikelihood = pexConfig.Field(dtype=bool, default=False,
                                                     doc="Whether to compute the log-likelihood of best-fit "
                                                         "meas_modelfit parameters per model")
@@ -1165,7 +1168,9 @@ class MultiProFitTask(pipeBase.Task):
             if not addedFields and not failed:
                 # If one of the models failed, we can't set up the catalog from it
                 if all(['fits' in x for x in results['fits']['galsim'].values()]):
-                    catalog, fields = self.__getCatalog(filters, results, sources)
+                    catalog_in = sources if self.config.bandMeasCatToCopyFrom is None else \
+                        data[self.config.bandMeasCatToCopyFrom]['sources']
+                    catalog, fields = self.__getCatalog(filters, results, catalog_in)
                     for idx_failed, runtime_failed in indicesFailed.items():
                         catalog[idx_failed][self.failFlagKey] = True
                         catalog[idx_failed][self.runtimeKey] = runtime_failed
