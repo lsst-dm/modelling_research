@@ -564,7 +564,7 @@ class MultiProFitTask(pipeBase.Task):
         noiseReplaced : `bool`
             Whether the method inserted the source using the provided noiseReplacers.
         """
-        noiseReplaced = False
+        noiseReplaced = children is not None
         deblend = children is not None
         if deblend and len(self.modelSpecs) > 0:
             raise RuntimeError("Can only deblend with gausspx-nopsf model")
@@ -598,7 +598,7 @@ class MultiProFitTask(pipeBase.Task):
                 if np.sum(exposure.image > 0) == 0:
                     raise RuntimeError('HST cutout has zero positive pixels')
                 exposurePsfs.append((exposure, psf))
-            else:
+            elif not noiseReplaced:
                 for noiseReplacer, (band, exposure) in zip(extras, exposures.items()):
                     noiseReplacer.insertSource(source.getId())
                     bitmask = 0
