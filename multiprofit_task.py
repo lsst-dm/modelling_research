@@ -38,7 +38,10 @@ class MultiProFitConfig(pexConfig.Config):
                                                         "meas_modelfit parameters per model")
     deblend = pexConfig.Field(dtype=bool, default=False, doc="Whether to fit parents simultaneously with "
                                                              "children")
-    filenameOut = pexConfig.Field(dtype=str, default=None, doc="Filename for output of FITS table")
+    estimateContiguousDenoisedMoments = pexConfig.Field(
+        dtype=bool, default=True, doc="Whether models initiated from moments should estimate within "
+                                      "contiguous positive pixels in a naively de-noised image")
+    filenameOut = pexConfig.Field(dtype=str, default="", doc="Filename for output of FITS table")
     fitBackground = pexConfig.Field(dtype=bool, default=False,
                                      doc="Whether to fit a flat background level for each band")
     fitCModel = pexConfig.Field(dtype=bool, default=True,
@@ -1157,6 +1160,9 @@ class MultiProFitTask(pipeBase.Task):
                         sigma_min=np.max((1e-2, self.config.psfHwhmShrink)),
                         mag_prior=mags_prior[idx] if mags_prior is not None else None,
                         backgroundPriors=backgroundPriors,
+                        denoise=self.config.estimateContiguousDenoisedMoments,
+                        contiguous=self.config.estimateContiguousDenoisedMoments,
+                        results=results,
                         **kwargs)
                     failed = error is not None
                     runtime = (self.metadata["__fitSourceEndCpuTime"] -
