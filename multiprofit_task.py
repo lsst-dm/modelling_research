@@ -1,6 +1,7 @@
 from collections import defaultdict, namedtuple
 import copy
 import logging
+import lsst.afw.image as afwImage
 import lsst.afw.table as afwTable
 from lsst.meas.base.measurementInvestigationLib import rebuildNoiseReplacer
 from lsst.meas.modelfit.display import buildCModelImages
@@ -126,6 +127,9 @@ class MultiProFitConfig(pexConfig.Config):
     skipDeblendTooManyPeaks = pexConfig.Field(dtype=bool, default=False,
                                               doc="Whether to skip fitting sources with "
                                                   "deblend_tooManyPeaks flag set")
+    useSpans = pexConfig.Field(dtype=bool, default=False,
+                               doc="Whether to use spans for source cutouts (i.e. the detected pixels) rather"
+                                   " than the whole box")
     useSdssShape = pexConfig.Field(dtype=bool, default=False,
                                    doc="Whether to use the baseSdssShape* moments to initialize Gaussian "
                                        "fits")
@@ -576,6 +580,8 @@ class MultiProFitTask(pipeBase.Task):
                     footprint = None
             if footprint is None:
                 footprint = source.getFootprint()
+            if self.config.useSpans:
+                spans = footprint.getSpans()
             bbox = footprint.getBBox()
             area = bbox.getArea()
             if failOnLargeFootprint and (area > self.config.maxParentFootprintPixels):
@@ -602,13 +608,18 @@ class MultiProFitTask(pipeBase.Task):
                 for noiseReplacer, (band, exposure) in zip(extras, exposures.items()):
                     noiseReplacer.insertSource(source.getId())
                     bitmask = 0
-                    mask = exposure.mask.subset(bbox).array
+                    mask = exposure.mask.subset(bbox)
                     for bitname in self.mask_names_zero:
-                        bitval = exposure.mask.getPlaneBitMask(bitname)
+                        bitval = mask.getPlaneBitMask(bitname)
                         bitmask |= bitval
 
                     err = np.sqrt(1. / np.float64(exposure.variance.subset(bbox).array))
-                    mask = (mask & bitmask) != 0
+                    mask = (mask.array & bitmask) != 0
+                    if self.config.useSpans:
+                        mask_span = afwImage.Mask(bbox)
+                        spans.setMask(mask_span, 2)
+                        mask |= (mask_span.array == 0)
+
                     err[mask] = 0
 
                     exposure_mpf = mpfObj.Exposure(
