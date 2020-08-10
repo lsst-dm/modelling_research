@@ -484,8 +484,9 @@ class MultiProFitTask(pipeBase.Task):
 
                 err[mask] = 0
 
+                img = np.float64(exposure.image.subset(bbox).array)
                 exposure_mpf = mpfObj.Exposure(
-                    band=band, image=np.float64(exposure.image.subset(bbox).array),
+                    band=band, image=img,
                     error_inverse=err, is_error_sigma=True, mask_inverse=~mask, use_mask_inverse=True
                 )
                 psf_mpf = mpfObj.PSF(
@@ -1003,6 +1004,7 @@ class MultiProFitTask(pipeBase.Task):
                     keyList.append(key)
                 fields["psf"][band][name] = keyList
                 self.__addExtraFields(fields["psf_extra"][band][name], schema, prefix, exists=resume)
+
         # Setup field names for source fits, which may have fluxes in multiple filters if run in multi-band.
         # Either way, flux parameters should contain a filter name.
         for name, result in results['fits']['galsim'].items():
@@ -1147,9 +1149,13 @@ class MultiProFitTask(pipeBase.Task):
         Returns
         -------
         fields_mpf: `dict` [`str`, `list` [`str`]]
-            A dictionary containing a list of parameters, keyed by type, as the `fields` returned by
-            `__getCatalog`.
+            A dictionary containing a list of parameter tuples, keyed by type. Each tuple contains:
+            - name [`str`] : the short field name
+            - key [] : the catalog (schema) field key
 
+        Notes
+        -----
+        The return value is similar to but not identical to that from __getCatalog.
         """
         fields_mpf = {f'{pre}{post}': defaultdict(list) for pre in ('base', 'psf') for post in ('', '_extra')}
         prefixes = (self.prefix, f'{self.prefix}{self.prefix_psf}')
