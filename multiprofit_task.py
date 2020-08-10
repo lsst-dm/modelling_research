@@ -388,7 +388,8 @@ class MultiProFitTask(pipeBase.Task):
         self.models = {}
         self.mask_names_zero = ['BAD', 'EDGE', 'SAT', 'NO_DATA']
 
-    def _getMapper(self, schema):
+    @staticmethod
+    def _getMapper(schema):
         """Return a suitably configured schema mapper.
 
         Parameters
@@ -961,7 +962,7 @@ class MultiProFitTask(pipeBase.Task):
         resume = self.config.resume
         schema = sources.schema
         if not resume:
-            mapper = self._getMapper(schema)
+            mapper = MultiProFitTask._getMapper(schema)
         keys_extra = {
             'runtimeKey': {'name': f'{self.prefix}{self.keynames["runtimeKey"]}', 'dtype': np.float64,
                            'doc': 'Source fit CPU runtime', 'unit': 's'},
