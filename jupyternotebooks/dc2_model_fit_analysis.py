@@ -53,7 +53,7 @@ butler_ref = dc2.get_refcat(make=False)
 
 # Load the DC2 repo butlers: we'll need them later
 butlers_dc2 = {
-    '2.2i': Butler('/datasets/DC2/repoRun2.2i/rerun/w_2020_24/DM-25422/multi'),
+    '2.2i': Butler('/datasets/DC2/repoRun2.2i/rerun/w_2020_28/DM-25915/multi'),
 }
 
 
@@ -62,21 +62,23 @@ butlers_dc2 = {
 
 # Match with the refcat using astropy's matcher
 truth_path = dc2.get_truth_path()
-tracts = {3828: (f'{truth_path}2020-06-29/', '2.2i'),}
-filters_single = ('g', 'r', 'i')
+tracts = {3828: (f'{truth_path}2020-07-27_priors-all/', '2.2i'),}
+filters_single = ('g', 'r', 'i', 'z')
 filters_multi = ('griz',)
 patch_max = 7
 # Calibrate catalogs: this only needs to be done once; get_cmodel_forced should only be true for single bands for reasons
-calibrate_cats = False
+calibrate_cats = True
 get_ngmix = True
 get_cmodel_forced = True
 if calibrate_cats:
-    butler_ngmix_gri = Butler('/project/dtaranu/dc2/2020-06-29/ngmix/griz') if get_ngmix else None
+    butler_ngmix_gri = Butler('/project/dtaranu/dc2/2020-07-27_priors-all/ngmix/griz') if get_ngmix else None
     path = tracts[3828][0]
     for bands in filters_single + filters_multi:
-        files = [f'{path}{bands}/mpf_dc2_{bands}_3828_{x},{y}.fits' for x in range(patch_max) for y in range (patch_max)]
+        is_single = len(bands) == 1
+        files = [f'{path}{bands}/mpf_dc2_{bands}_3828_{x},{y}.fits' for x in range(patch_max) for y in range(patch_max)]
         cats = calibrate_catalogs(files, butlers_dc2, is_dc2=True, files_ngmix=butler_ngmix_gri,
-                                  get_cmodel_forced=get_cmodel_forced and (len(bands) == 1),
+                                  get_cmodel_forced=get_cmodel_forced and is_single,
+                                  overwrite_band=bands if is_single else None,
                                   retry_delay=6, n_retry_max=3)
 cats = dc2.match_refcat_dc2(butler_ref, match_afw=False, tracts=tracts, butlers_dc2=butlers_dc2,
                             filters_single=filters_single, filters_multi=filters_multi)
@@ -99,6 +101,7 @@ model_specs = [
     ('Forced CModel', 'modelfit_forced_CModel', 2),
 ] if get_cmodel_forced else []
 model_specs.extend([
+    ('MPF Gauss', 'multiprofit_gausspx', 1),
     ('MPF CModel', 'multiprofit_mg8cmodelpx', 2),
     ('MPF Sersic', 'multiprofit_mg8serbpx', 1),
     ('MPF Sersic Free Amp.', 'multiprofit_mg8serbapx', 8),
@@ -114,12 +117,11 @@ models = {
 }
 
 models_stars = ['PSF', 'Stack CModel'] if get_cmodel_forced else []
-models_stars.extend(['MPF CModel', 'MPF Sersic'])
+models_stars.extend(['MPF Gauss', 'MPF CModel', 'MPF Sersic'])
 if get_ngmix:
     models_stars.append('ngmix bd')
 
 models_stars = {model: models[model] for model in models_stars}
-models_stars["MPF Gauss"] = mrMeas.Model('MPF Sersic', 'multiprofit_gausspx', 1)
 
 args = dict(scatterleft=True, scatterright=True,)
 args_type = {
@@ -287,4 +289,10 @@ for model, times_model in times.items():
             scatterleft=True, scatterright=True,
         )
         plt.show()
+
+
+# In[ ]:
+
+
+
 
