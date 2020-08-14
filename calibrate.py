@@ -57,8 +57,8 @@ def calibrate_catalog(catalog, photoCalibs_filter, filter_ref=None, func_field=N
 
 def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cats=False, write=True,
                        files_ngmix=None, datasetType_ngmix=None, postfix='_mag.fits',
-                       type_cat=None, type_calib=None, get_cmodel_forced=False, log=True, n_retry_max=0,
-                       retry_delay=0, **kwargs):
+                       type_cat=None, type_calib=None, get_cmodel_forced=False,
+                       overwrite_band=None, log=True, n_retry_max=0, retry_delay=0, **kwargs):
     """Calibrate FITS source measurement catalogs derived from data in a given repo.
 
     Parameters
@@ -87,6 +87,9 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
         The type of calibration to use; default "deepCoadd_photoCalib".
     get_cmodel_forced: `bool`
         Whether to add cmodel forced photometry columns.
+    overwrite_band: `str` or None
+        Filter to load measurement catalog to overwrite pre-existing (non-MultiProFit) fields with
+        (e.g. if MultiProFit used the reference "_ref" SourceCatalog but should contain "_meas" output).
     log : `bool`
         Whether to print progress updates.
     n_retry_max : `int`
@@ -220,15 +223,14 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
                     schema = forced.schema
                     for key in schema:
                         field = key.field
-                        if field.dtype != 'Flag':
-                            name_field = field.getName()
-                            if mm.is_field_modelfit(name_field):
-                                name_split = name_field.split('_')[1:]
-                                fields_out.append((
-                                    name_field,
-                                    f'modelfit_forced_{"_".join(name_split[:-1])}_',
-                                    f'_{name_split[-1]}'
-                                ))
+                        name_field = field.getName()
+                        if mm.is_field_modelfit(name_field):
+                            name_split = name_field.split('_')[1:]
+                            fields_out.append((
+                                name_field,
+                                f'modelfit_forced_{"_".join(name_split[:-1])}_',
+                                f'_{name_split[-1]}'
+                            ))
                 elif forced.schema != schema:
                     raise RuntimeError(f'Schema {forced.schema} for dataId {dataId} deepCoadd_forced_src '
                                        f'differs from filter {bands[0]} schema {schema}')
@@ -260,6 +262,15 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
         except:
             print(f'Failed generating photoCalibs of type={type_calib} with dataId={dataId}')
             raise
+
+        if overwrite_band is not None:
+            meas = butler_cal.get('deepCoadd_meas', set_dataId_band(dataId, overwrite_band))
+            for key in meas.schema:
+                field = key.field
+                # It's probably better to keep the original flag that MultiProFit used
+                if field.dtype != 'Flag':
+                    name_field = field.getName()
+                    cat[name_field] = meas[name_field]
 
         cat_calib = calibrate_catalog(cat, photoCalibs, **kwargs)
         if return_cats:
