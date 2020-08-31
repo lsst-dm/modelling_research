@@ -911,7 +911,7 @@ class MultiProFitTask(pipeBase.Task):
 
                             # Ensure no duplicate background sources added
                             for source_mpf in models[name_modeltype].sources:
-                                if isinstance(source_mpf, mpfObj.Background):
+                                if isinstance(source_mpf.modelphotometric.components[-1], mpfObj.Background):
                                     if not self.config.fitBackground:
                                         raise TypeError("Model should not have Background objects with "
                                                         "fitBackground=False")
