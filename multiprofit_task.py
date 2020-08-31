@@ -1049,9 +1049,13 @@ class MultiProFitTask(pipeBase.Task):
                 self.__addExtraField(fields["measmodel"], schema, f"{self.prefix}measmodel_like", name,
                                      f'MultiProFit log-likelihood for meas_modelfit {name} model',
                                      exists=resume)
-        if not resume:
+
+        if resume:
+            catalog = sources
+        else:
             catalog = afwTable.SourceCatalog(schema)
             catalog.extend(sources, mapper=mapper)
+
         return catalog, fields
 
     @staticmethod
