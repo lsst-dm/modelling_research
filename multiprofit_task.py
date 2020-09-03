@@ -1125,6 +1125,30 @@ class MultiProFitTask(pipeBase.Task):
             is_value_transformed=True
         )
 
+    @staticmethod
+    def _getSegmentationMap(bbox, sources):
+        """ Make an exposure segmentation map for each blend in a source catalog.
+
+        Parameters
+        ----------
+        bbox : `lsst.geom.Box2I`
+            A bounding box to build the segmentation map with.
+        sources : `lsst.afw.table.SourceCatalog`
+            The source catalog to fill segments for.
+
+        Returns
+        -------
+        mask : `lsst.afw.image.Mask`
+            A segmentation map where 0 = sky and each source from `sources` has its segment value as 1 + its row index
+            in `sources`.
+        """
+        mask = afwImage.Mask(bbox)
+        for idx, src in enumerate(sources):
+            if src['deblend_nChild'] > 0:
+                spans = src.getFootprint().getSpans()
+                spans.setMask(mask, idx + 1)
+        return mask
+
     def getNamePsfModel(self):
         return f'gaussian:{self.config.gaussianOrderPsf}_pixelated'
 
