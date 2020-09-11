@@ -37,6 +37,8 @@ class MultiProFitConfig(pexConfig.Config):
     bandMeasCatToCopyFrom = pexConfig.Field(
         dtype=str, default=None, doc="The band of the measurement catalog to copy data from, even if a "
                                      "source cat is provided")
+    bboxDilate = pexConfig.Field(dtype=int, default=0, doc="Number of pixels to dilate (expand) source bounding boxes "
+                                                             "and hence fitting regions by")
     computeMeasModelfitLikelihood = pexConfig.Field(dtype=bool, default=False,
                                                     doc="Whether to compute the log-likelihood of best-fit "
                                                         "meas_modelfit parameters per model")
@@ -388,6 +390,7 @@ class MultiProFitTask(pipeBase.Task):
         self.modeller = mpfObj.Modeller(None, 'scipy')
         self.models = {}
         self.mask_names_zero = ['BAD', 'EDGE', 'SAT', 'NO_DATA']
+        self.bbox_ref = None
 
     @staticmethod
     def _getMapper(schema):
@@ -407,6 +410,37 @@ class MultiProFitTask(pipeBase.Task):
         mapper.addMinimalSchema(schema, True)
         mapper.editOutputSchema().disconnectAliases()
         return mapper
+
+    def _getBBoxDilated(self, footprint):
+        """ Get a suitably dilated bounding box for a given footprint.
+
+        Parameters
+        ----------
+        footprint : `lsst.afw.detection.Footprint`
+            The footprint to optionally dilate and then return the bbox of.
+
+        Returns
+        -------
+        bbox : `lsst.geom.Box2I`
+            The bounding box of the footprint, dilated as per config specifications.
+        dilate : `int`
+            The number of pixels the footprint was actually dilated by.
+
+        Notes
+        -----
+        `footprint` is modified as long as dilation is possible, which it may not be if it is right at the edge of the
+         exposure. Dilation is always a fixed number of pixels in every direction (i.e. square, never rectangular).
+        """
+        bbox = footprint.getBBox()
+        dilate = int(self.config.bboxDilate > 0)
+        if dilate:
+            begin = bbox.getBegin() - self.bbox_ref.getBegin()
+            end = self.bbox_ref.getEnd() - bbox.getEnd()
+            dilate = np.min((np.min((begin, end)), self.config.bboxDilate))
+            if dilate > 0:
+                footprint.dilate(dilate)
+                bbox = footprint.getBBox()
+        return bbox, dilate
 
     def _getExposurePsfs(
             self, exposures, source, extras, footprint=None, failOnLargeFootprint=False
@@ -1461,7 +1495,20 @@ class MultiProFitTask(pipeBase.Task):
         if self.config.plotOnly and not self.config.resume:
             raise ValueError("Can't set plotOnly=True without resume=True")
         filters = data.keys()
-        exposures = {band: data[band]['exposure'] for band in filters}
+        exposures = {}
+        bbox_ref = None
+        for band in filters:
+            exposure = data[band]['exposure']
+            if bbox_ref is None:
+                bbox_ref = exposure.image.getBBox()
+            else:
+                bbox_compare = exposure.image.getBBox()
+                if bbox_compare != bbox_ref:
+                    raise ValueError(
+                        f"Non-matching bboxes: {band}={bbox_compare} != ref {filters[0]}:{bbox_ref}")
+            exposures[band] = exposure
+        self.bbox_ref = bbox_ref
+
         filenameOut = (self.config.filenameOut if not self.config.deblendFromDeblendedFits else
                        self.config.filenameOutDeblend)
 
