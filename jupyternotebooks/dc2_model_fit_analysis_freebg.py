@@ -53,7 +53,7 @@ butler_ref = dc2.get_refcat(make=False)
 
 # Load the DC2 repo butlers: we'll need them later
 butlers_dc2 = {
-    '2.2i': Butler('/datasets/DC2/repoRun2.2i/rerun/w_2020_24/DM-25422/multi'),
+    '2.2i': Butler('/datasets/DC2/repoRun2.2i/rerun/w_2020_28/DM-25915/multi'),
 }
 
 
@@ -62,16 +62,16 @@ butlers_dc2 = {
 
 # Match with the refcat using astropy's matcher
 truth_path = dc2.get_truth_path()
-tracts = {3828: (f'{truth_path}2020-06-29-priors_shape_cen_psfshrink_freebg/', '2.2i'),}
-filters_single = ('g', 'r', 'i')
+tracts = {3828: (f'{truth_path}2020-07-27_priors-all_freebg/', '2.2i'),}
+filters_single = ('g', 'r', 'i', 'z')
 filters_multi = ('griz',)
 patch_max = 7
 # Calibrate catalogs: this only needs to be done once; get_cmodel_forced should only be true for single bands for reasons
-calibrate_cats = False
+calibrate_cats = True
 get_ngmix = False
 get_cmodel_forced = False
 if calibrate_cats:
-    butler_ngmix_gri = Butler('/project/dtaranu/dc2/2020-06-29/ngmix/griz') if get_ngmix else None
+    butler_ngmix_gri = Butler('/project/dtaranu/dc2/2020-07-27_priors-all/ngmix/griz') if get_ngmix else None
     path = tracts[3828][0]
     for bands in filters_single + filters_multi:
         files = [f'{path}{bands}/mpf_dc2_{bands}_3828_{x},{y}.fits' for x in range(patch_max) for y in range (patch_max)]
