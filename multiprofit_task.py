@@ -667,7 +667,7 @@ class MultiProFitTask(pipeBase.Task):
                 if param.name.startswith('cen'):
                     param.limits.upper = exposurePsfs[0][0].image.shape[param.name[-1] == 'x']
                 if value is not None:
-                    param.set_value(value, transformed=False)
+                    param.set_value(value)
         result, _ = mpfFit.fit_model(model=model, modeller=modeller, **kwargs)
         return result
 
@@ -965,9 +965,8 @@ class MultiProFitTask(pipeBase.Task):
                                     if param.name.startswith('cen'):
                                         is_x = param.name[3] == 'x'
                                         param.limits.upper = bbox.width if is_x else bbox.height
-                                        value = param.get_value(transformed=False)
-                                        param.set_value(value + (offset_x if is_x else offset_y),
-                                                        transformed=False)
+                                        value = param.get_value()
+                                        param.set_value(value + (offset_x if is_x else offset_y))
                                     if not param.fixed:
                                         params_free_i.append(param)
                                 params_free[child_cat] = params_free_i
@@ -1004,7 +1003,7 @@ class MultiProFitTask(pipeBase.Task):
                                             f'len(fields_base_model={fields_base_model})={len(fields_base_model)}'
                                         )
                                     for param, (name, key) in zip(params_free_c, fields_base_model):
-                                        child[key] = param.get_value(transformed=False)
+                                        child[key] = param.get_value()
                     else:
                         result_model = None
                     results[name_model] = result_model
