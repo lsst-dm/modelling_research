@@ -6,13 +6,14 @@ import multiprofit.objects as mpfObj
 import cProfile
 import pstats
 
-butler = Butler("/datasets/hsc/repo/rerun/RC/w_2019_26/DM-19560/")
+butler = Butler("/datasets/hsc/repo/rerun/RC/w_2020_36/DM-26637/")
 filters = ['HSC-I']
-dataId = {"tract": 9813, "patch": "4,5", "filter": filters[0]}
+dataId = {"tract": 9813, "patch": "4,4", "filter": filters[0]}
 sources = butler.get("deepCoadd_meas", dataId)
 exposures = {band: butler.get("deepCoadd_calexp", dataId, filter=band) for band in filters}
 
-idx_source = 0
+# 1338 takes a while if you want to benchmark a source dominated by model evaluation time
+idx_source = 1337
 name_source = f"profile_{idx_source}"
 source = sources[idx_source]
 foot = source.getFootprint()
