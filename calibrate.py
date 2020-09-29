@@ -1,5 +1,5 @@
 from . import dc2
-from lsst.afw.table import Schema, SchemaMapper, SourceCatalog
+from lsst.afw.table import Field, Schema, SchemaMapper, SourceCatalog
 from lsst.daf.persistence import Butler
 from . import meas_model as mm
 from . import tables
@@ -55,10 +55,12 @@ def calibrate_catalog(catalog, photoCalibs_filter, filter_ref=None, func_field=N
     return catalog
 
 
-def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cats=False, write=True,
-                       files_ngmix=None, datasetType_ngmix=None, postfix='_mag.fits',
-                       type_cat=None, type_calib=None, get_cmodel_forced=False,
-                       overwrite_band=None, log=True, n_retry_max=0, retry_delay=0, **kwargs):
+def calibrate_catalogs(
+        files, butler, func_dataId=None, is_dc2=False, return_cats=False, write=True,
+        files_ngmix=None, datasetType_ngmix=None, butler_scarlet=None, datasetType_scarlet=None, fields_scarlet=None,
+        postfix='_mag.fits', type_cat=None, type_calib=None, get_cmodel_forced=False, overwrite_band=None, log=True,
+        n_retry_max=0, retry_delay=0, **kwargs
+):
     """Calibrate FITS source measurement catalogs derived from data in a given repo.
 
     Parameters
@@ -75,10 +77,16 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
         Whether to return the calibrate catalogs; they might be very large so the default is False.
     write : `bool`
         Whether to write the calibrated catalogs to disk, postfixed by `postfix.
-    files_ngmix : iterable of `str`
-        An iterable of paths to ngmix catalogs to calibrate. Must be same len as `files`.
+    files_ngmix : iterable of `str` or `lsst.daf.persistence.Butler`
+        An iterable of paths to ngmix catalogs to calibrate (must be same len as `files`) or a Butler thereof.
     datasetType_ngmix : `str`
         The butler dataset type to retrieve for ngmix files.
+    butler_scarlet : `lsst.daf.persistence.Butler`
+        A butler containing scarlet outputs.
+    fields_scarlet : iterable of `str`
+        List of scarlet field names to copy from `butler_scarlet`.
+    datasetType_scarlet : `str`
+        The butler dataset type to retrieve for scarlet columns; default 'deepCoadd_deblendedModel'.
     postfix : `str`
         The postfix to add to filenames when writing calibrate catalogs; default '_mag.fits'.
     type_cat: type
@@ -134,6 +142,11 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
         is_ngmix_butler = False
     if type_cat is None:
         type_cat = SourceCatalog
+    if butler_scarlet is not None:
+        if datasetType_scarlet is None:
+            datasetType_scarlet = 'deepCoadd_deblendedModel'
+        if fields_scarlet is None:
+            fields_scarlet = ["deblend_edgeFluxFlag", "deblend_scarletFlux"]
 
     time_init = timer()
     time_now = time_init
@@ -179,8 +192,9 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
             mapper.editOutputSchema().setAliasMap(cat.schema.getAliasMap())
 
         fields_cat_new = []
-        if files_ngmix:
-            cat_ngmix = files_ngmix.get(datasetType_ngmix, {'tract': tract, 'patch': patch}) if \
+
+        if files_ngmix is not None:
+            cat_ngmix = files_ngmix.get(datasetType_ngmix, dataId) if \
                 is_ngmix_butler else type_cat.readFits(files_ngmix[idx])
             schema_ngmix = cat_ngmix.schema
             names = cat.schema.getNames()
@@ -212,6 +226,24 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
                         fields_new[name] = name_new
                         mapper.editOutputSchema().addField(field.copyRenamed(name_new))
             fields_cat_new.append((fields_new, cat_ngmix))
+
+        if butler_scarlet is not None:
+            cats_scarlet = {}
+            for band in bands:
+                cat_scarlet = butler_scarlet.get(datasetType_scarlet, set_dataId_band(dataId, band))
+                cats_scarlet[band] = cat_scarlet
+                schema_scarlet = cat_scarlet.schema
+                fields_new = {}
+                for field in fields_scarlet:
+                    is_flux = field == "deblend_scarletFlux"
+                    name_new = f'scarlet_{band}_{field if not is_flux else "instFlux"}'
+                    fields_new[field] = name_new
+                    key = schema_scarlet.find(field)
+                    if is_flux:
+                        mapper.editOutputSchema().addField(Field(dtype='D', name=name_new, doc=key.field.getDoc()))
+                    else:
+                        mapper.editOutputSchema().addField(key.field.copyRenamed(name_new))
+                fields_cat_new.append((fields_new, cat_scarlet))
 
         if get_cmodel_forced:
             schema = None
@@ -268,7 +300,7 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
             for key in meas.schema:
                 field = key.field
                 # It's probably better to keep the original flag that MultiProFit used
-                if field.dtype != 'Flag':
+                if field.dtype != 'Flag' and field.dtype != 'String':
                     name_field = field.getName()
                     cat[name_field] = meas[name_field]
 
