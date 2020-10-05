@@ -134,6 +134,9 @@ class MultiProFitConfig(pexConfig.Config):
     psfHwhmShrink = pexConfig.Field(
         dtype=float, default=0.,
         doc="Length (pix) to subtract from PSF HWHM (x,y) in quadrature before fitting PSF-convolved models")
+    replaceDataByModel = pexConfig.Field(
+        dtype=bool, default=False, doc="Whether to replace the actual data to fit with a noisy realization of each "
+                                       "model (using its initial parameters)")
     resume = pexConfig.Field(dtype=bool, default=False, doc="Whether to resume from the previous output file")
     skipDeblendTooManyPeaks = pexConfig.Field(dtype=bool, default=False,
                                               doc="Whether to skip fitting sources with "
@@ -817,7 +820,8 @@ class MultiProFitTask(pipeBase.Task):
                     psf_shrink=self.config.psfHwhmShrink, prior_specs=params_prior,
                     skip_fit=skip_fit, skip_fit_psf=skip_fit, background_sigma_add=(
                         self.config.backgroundSigmaAdd if self.config.fitBackground else None),
-                    **kwargs
+                    replace_data_by_model = self.config.replaceDataByModel,
+                    **kwargs,
                 )
                 if (not self.config.plotOnly) and self.config.fitGaussian:
                     n_sources = len(sources)
@@ -848,7 +852,10 @@ class MultiProFitTask(pipeBase.Task):
                     results['models']['gaussian:1'] = model
             else:
                 results = {}
-                kwargs_fit = {'do_linear_only': n_children > self.config.deblendNonlinearMaxSources}
+                kwargs_fit = {
+                    'do_linear_only': n_children > self.config.deblendNonlinearMaxSources,
+                    'replace_data_by_model': self.config.replaceDataByModel,
+                }
                 skip_fit_psf = True
                 # Check if any PSF fit failed (e.g. because a large blend was skipped entirely) and redo if so
                 values_init_psf = self.modelSpecs[0]['values_init_psf']
@@ -993,7 +1000,7 @@ class MultiProFitTask(pipeBase.Task):
                                 model.evaluate(plot=True)
                         else:
                             result_model, _ = mpfFit.fit_model(model, plot=plot, kwargs_fit=kwargs_fit)
-                            self.__setExtraFields(fields["base_extra`"][name_model], source, result_model)
+                            self.__setExtraFields(fields["base_extra"][name_model], source, result_model)
 
                             for child, params_free_c in params_free.items():
                                 if params_free_c is not None:
