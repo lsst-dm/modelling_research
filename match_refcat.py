@@ -184,9 +184,9 @@ def match_refcat(
 
                 if not has_match:
                     assert (band == filter_ref)
-                    is_primary[patch] = butler_data.get(
-                        'deepCoadd_ref', {'tract': tract, 'patch': patch}
-                    )['detect_isPrimary']
+                    primary_cat = butler_data.get('deepCoadd_ref', {'tract': tract, 'patch': patch})
+                    # Scarlet flags failed deblends as primary, at least until DM-27208
+                    is_primary[patch] = primary_cat['detect_isPrimary'] * ~primary_cat['deblend_tooManyPeaks']
                 cat = cat[is_primary[patch]]
                 if not has_match:
                     if match_afw:
