@@ -41,7 +41,7 @@ class Model:
     def get_cen(self, cat, axis, comp=None):
         if self.is_multiprofit:
             return cat[f'{get_prefix_comp_multiprofit(self.name, comp)}_cen{axis}']
-        return None
+        return cat[f'base_SdssCentroid_{axis}']
 
     def get_color_total(self, cat, band1, band2):
         """Return a single total color.
