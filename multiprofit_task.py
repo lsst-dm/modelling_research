@@ -1741,7 +1741,7 @@ class MultiProFitTask(pipeBase.Task):
                 if toWrite and addedFields and (nFit % self.config.intervalOutput) == 0:
                     catalog.writeFits(filenameOut)
         if not self.config.plotOnly:
-            if toWrite and addedFields and (nFit % self.config.intervalOutput) != 0:
+            if toWrite and addedFields:
                 catalog.writeFits(filenameOut)
             # Return the exposures to their original state
             if not self.config.fitHstCosmos and not self.config.deblendFromDeblendedFits:
