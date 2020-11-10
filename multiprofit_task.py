@@ -304,6 +304,20 @@ def joinFilter(separator, items, exclusion=None):
     return separator.join(filter(exclusion, items))
 
 
+# TODO: Allow addition to existing image
+def get_spanned_image(footprint, bbox=None):
+    spans = footprint.getSpans()
+    if bbox is None:
+        bbox = footprint.getBBox()
+    if not bbox.getArea() > 0:
+        return None, bbox
+    img = afwImage.Image(bbox, dtype='D')
+    spans.setImage(img, 1)
+    img = img.array
+    img[img == 1] = footprint.getImageArray()
+    return img, bbox
+
+
 class MultiProFitTask(pipeBase.Task):
     """A task to run the MultiProFit source modelling code on a catalog with detections and heavy footprints,
     returning additional measurements in a new SourceCatalog.
