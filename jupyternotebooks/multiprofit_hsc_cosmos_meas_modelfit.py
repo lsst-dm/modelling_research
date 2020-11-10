@@ -70,7 +70,7 @@ models = {
         #"base": mrMeas.Model("Base Gauss", "base_GaussianFlux", 1),
     },
     "gauss_no_psf": {
-        "mpf": mrMeas.Model("MPF Gauss1", "multiprofit_gausspx_no_psf", 1),
+        "mpf": mrMeas.Model("MPF Gauss1", "multiprofit_gausspx-nopsf", 1),
         "base": mrMeas.Model("Base Gauss1", "base_SdssShape", 1),
     },
     "exp": {
@@ -247,7 +247,7 @@ scales = {'hsc': 0.168, 'hst': 0.03}
 postfix_calib = '_mag'
 extension = '.fits'
 path_proj = "/project/dtaranu/cosmos/hsc/"
-subdirs = {'hsc': f'{path_proj}/2020-06-29/', 'hst': f'{path_proj}/2020-06-05/'}
+subdirs = {'hsc': f'{path_proj}/2020-10-16_mpf/', 'hst': f'{path_proj}/2020-10-16_mpf/'}
 prefixes = {'hsc': f'/mpf_cosmos-hsc_', 'hst': '-iso/mpf_cosmos-hst-iso_'}
 butler = Butler("/datasets/hsc/repo/rerun/RC/w_2020_22/DM-25176/")
 

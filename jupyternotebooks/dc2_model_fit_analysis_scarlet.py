@@ -62,11 +62,13 @@ butlers_dc2 = {
 
 # Match with the refcat using astropy's matcher
 truth_path = dc2.get_truth_path()
-tracts = {3828: (f'{truth_path}scarlet/2020-09-28_mpf/', '2.2i'),}
+tracts = {3828: (f'{truth_path}scarlet/2020-10-28_mpf/', '2.2i'),}
 filters_single = ('g', 'r', 'i', 'z')
 filters_multi = ('griz',)
 band_multi = filters_multi[0]
-patch_max = 7
+patch_min, patch_max = 0, 6
+patches_regex = f"[{patch_min}-{patch_max}]"
+patches_regex = f"{patches_regex},{patches_regex}"
 # Calibrate catalogs: this only needs to be done once; get_cmodel_forced should only be true for single bands for reasons
 calibrate_cats = True
 get_multiprofit = True
@@ -79,22 +81,26 @@ if calibrate_cats:
     for bands in filters_single + filters_multi:
         butler_ngmix = Butler(f'/project/dtaranu/dc2/scarlet/2020-09-16_ngmix/{bands}') if get_ngmix else None
         is_single = len(bands) == 1
-        files = [f'{path}{bands}/mpf_dc2_{bands}_3828_{x},{y}.fits' for x in range(patch_max) for y in range(patch_max)]
-        cats = calibrate_catalogs(files, butlers_dc2, is_dc2=True,
-                                  files_ngmix=butler_ngmix,
-                                  butler_scarlet=butler_scarlet,
-                                  get_cmodel_forced=get_cmodel_forced and is_single,
-                                  overwrite_band=None,
-                                  retry_delay=6, n_retry_max=3)
-cats = dc2.match_refcat_dc2(butler_ref, match_afw=False, tracts=tracts, butlers_dc2=butlers_dc2,
-                            filters_single=filters_single, filters_multi=filters_multi)
+        files = [
+            f'{path}{bands}/mpf_dc2_{bands}_3828_{x},{y}.fits'
+            for x in range(patch_min, patch_max+1) for y in range(patch_min, patch_max+1)
+        ]
+        calibrate_catalogs(
+            files, butlers_dc2, is_dc2=True, files_ngmix=butler_ngmix,
+            butler_scarlet=butler_scarlet, get_cmodel_forced=get_cmodel_forced and is_single,
+            overwrite_band=None, retry_delay=10, n_retry_max=3
+        )
+cats = dc2.match_refcat_dc2(
+    butler_ref, match_afw=False, tracts=tracts, butlers_dc2=butlers_dc2,
+    filters_single=filters_single, filters_multi=filters_multi
+)
 
 
 # ## Crossmatch against reference catalog
 # 
 # All of the plots in this notebook compare stack measurements of sources measured by the LSST Science Pipelines cross-matched against a reference catalog that is part of the Science Pipelines repository. This reference catalog contains all sources brighter than 23 mags in r, and was generated through some kind of Task that must have read the original DC2 truth tables (more on that below).
 
-# In[14]:
+# In[7]:
 
 
 # Model plot setup
@@ -104,8 +110,9 @@ offset_ngmix = -3.4948500216800937
 model_specs = [
     ('PSF', 'base_PsfFlux', 1),
     ('Stack CModel', 'modelfit_CModel', 2),
-    ('Forced CModel', 'modelfit_forced_CModel', 2),
-] if get_cmodel_forced else []
+]
+if get_cmodel_forced:
+    model_specs.append(('Forced CModel', 'modelfit_forced_CModel', 2))
 if get_scarlet:
     model_specs.append(('Scarlet', 'scarlet', 0))
 if get_multiprofit:
@@ -181,7 +188,7 @@ plot_matches(
 # 
 # There's not much to say here, other than that the stars look basically fine up to the saturation limit of ~16 and the choice of PSF/source model and single- vs multi-band fitting makes little difference. Someone more versed in stellar photometry might have more to say about the small biases in the medians, outliers, etc.
 
-# In[15]:
+# In[9]:
 
 
 # Stars
@@ -192,12 +199,13 @@ plot_matches(
 )
 
 
-# In[10]:
+# In[27]:
 
 
 # Compare ngmix vs mpf g-r colours. They agree almost shockingly well for ~80-90% of sources.
 cat_mb = cats[3828]['meas'][band_multi]
-cat_good = cat_mb[cat_mb['detect_isPatchInner'] & cat_mb['detect_isPrimary']]
+is_good = cat_mb['detect_isPatchInner'] & cat_mb['detect_isTractInner'] & (cat_mb['parent'] != 0) & ~cat['merge_footprint_sky']
+cat_good = cat_mb[is_good]
 if get_ngmix:
     models_gmr = ['ngmix bd', 'MPF Sersic']
     gmr = {model: models[model].get_color_total(cat_good, 'g', 'r') for model in models_gmr}
@@ -215,15 +223,16 @@ if get_ngmix:
     )
 
 
-# In[11]:
+# In[34]:
 
 
 # r-band size mass for all objects
 # TODO: Implement getting sizes from model objects
 # TODO: Get forced sizes somehow
+band = 'r'
 scale_pix = 0.2
 sizes_model = {
-    'Stack CModel': np.log10(scale_pix*np.sqrt(0.5*(
+    'Forced CModel': np.log10(scale_pix*np.sqrt(0.5*(
         cat_good['modelfit_CModel_ellipse_xx'] + cat_good['modelfit_CModel_ellipse_yy'])))
 } if get_cmodel_forced else {}
 sizes_model['MPF Sersic'] = np.log10(
@@ -234,14 +243,17 @@ sizes_model['MPF Sersic'] = np.log10(
 if get_ngmix:
     sizes_model['ngmix bd'] = np.log10(np.sqrt(0.5*cat_good['ngmix_bd_T']))
 mag_min = args_type['resolved']['limx'][0]
+
 for mag_max in (22.5, 24.5):
     for name_model, sizes in sizes_model.items():
         is_ngmix = name_model.startswith('ngmix')
-        mag = models[name_model].get_mag_total(cat_good, 'r')
+        cat_mag = cat_good if name_model != 'Forced CModel' else cats[3828]['meas'][band][is_good]
+        mag = models[name_model].get_mag_total(cat_mag, band)
         good = (mag < mag_max) & np.isfinite(sizes)
         plotjoint_running_percentiles(
             mag[good], sizes[good], limx=(mag_min, mag_max), limy=(-2.5, 2),
-            labelx='$r_{model}$', labely='log10($R_{eff}$/arcsec)' if not is_ngmix else 'log10($\sigma$/arcsec)',
+            labelx=f'${band}_{{{name_model}}}$',
+            labely='log10($R_{eff}$/arcsec)' if not is_ngmix else 'log10($\sigma$/arcsec)',
             title=f'DC2 3828 Size-Magnitude {name_model} ({band_multi}) N={np.sum(good)}',
             **args,
         )
@@ -300,10 +312,4 @@ for model, times_model in times.items():
             scatterleft=True, scatterright=True,
         )
         plt.show()
-
-
-# In[ ]:
-
-
-
 
