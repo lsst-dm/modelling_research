@@ -186,7 +186,7 @@ def calibrate_catalogs(
         else:
             butler_cal = butler
 
-        if files_ngmix or get_cmodel_forced:
+        if files_ngmix or get_cmodel_forced or (butler_scarlet is not None):
             mapper = SchemaMapper(cat.schema)
             mapper.addMinimalSchema(cat.schema, True)
             mapper.editOutputSchema().setAliasMap(cat.schema.getAliasMap())
