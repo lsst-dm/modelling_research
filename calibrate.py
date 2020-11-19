@@ -1,7 +1,8 @@
 from . import dc2
-from lsst.afw.table import Schema, SchemaMapper, SourceCatalog
+from lsst.afw.table import Field, Schema, SchemaMapper, SourceCatalog
 from lsst.daf.persistence import Butler
 from . import meas_model as mm
+import os
 from . import tables
 import time
 from .timing import time_print
@@ -55,10 +56,12 @@ def calibrate_catalog(catalog, photoCalibs_filter, filter_ref=None, func_field=N
     return catalog
 
 
-def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cats=False, write=True,
-                       files_ngmix=None, datasetType_ngmix=None, postfix='_mag.fits',
-                       type_cat=None, type_calib=None, get_cmodel_forced=False,
-                       overwrite_band=None, log=True, n_retry_max=0, retry_delay=0, **kwargs):
+def calibrate_catalogs(
+        files, butler, func_dataId=None, is_dc2=False, return_cats=False, write=True,
+        files_ngmix=None, datasetType_ngmix=None, butler_scarlet=None, datasetType_scarlet=None, fields_scarlet=None,
+        postfix='_mag.fits', type_cat=None, type_calib=None, get_cmodel_forced=False, overwrite_band=None, log=True,
+        n_retry_max=0, retry_delay=0, skip_newer=True, **kwargs
+):
     """Calibrate FITS source measurement catalogs derived from data in a given repo.
 
     Parameters
@@ -75,10 +78,16 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
         Whether to return the calibrate catalogs; they might be very large so the default is False.
     write : `bool`
         Whether to write the calibrated catalogs to disk, postfixed by `postfix.
-    files_ngmix : iterable of `str`
-        An iterable of paths to ngmix catalogs to calibrate. Must be same len as `files`.
+    files_ngmix : iterable of `str` or `lsst.daf.persistence.Butler`
+        An iterable of paths to ngmix catalogs to calibrate (must be same len as `files`) or a Butler thereof.
     datasetType_ngmix : `str`
         The butler dataset type to retrieve for ngmix files.
+    butler_scarlet : `lsst.daf.persistence.Butler`
+        A butler containing scarlet outputs.
+    fields_scarlet : iterable of `str`
+        List of scarlet field names to copy from `butler_scarlet`.
+    datasetType_scarlet : `str`
+        The butler dataset type to retrieve for scarlet columns; default 'deepCoadd_deblendedModel'.
     postfix : `str`
         The postfix to add to filenames when writing calibrate catalogs; default '_mag.fits'.
     type_cat: type
@@ -96,6 +105,8 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
         Number of times to retry failed catalog reads.
     retry_delay : `float`
         Delay time in seconds before retrying failed catalog reads. Ignored if not greater than zero.
+    skip_newer : `bool`
+        Whether to skip calibrating catalogs where the output file exists and is newer than the input.
     **kwargs
         Additional arguments to pass to `calibrate_catalog`.
 
@@ -134,6 +145,11 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
         is_ngmix_butler = False
     if type_cat is None:
         type_cat = SourceCatalog
+    if butler_scarlet is not None:
+        if datasetType_scarlet is None:
+            datasetType_scarlet = 'deepCoadd_deblendedModel'
+        if fields_scarlet is None:
+            fields_scarlet = ["deblend_edgeFluxFlag", "deblend_scarletFlux"]
 
     time_init = timer()
     time_now = time_init
@@ -141,150 +157,173 @@ def calibrate_catalogs(files, butler, func_dataId=None, is_dc2=False, return_cat
     cats = []
 
     for idx, file in enumerate(files):
-        if log:
-            preprint = "Unknown" if (idx == 0) else f'{(time_now - time_init) * (n_files - idx) / idx:.1f}s'
-            print(f'ETA={preprint}; Calibrating {file}... ', end='')
-        for retry in range(1 + n_retry_max):
-            try:
-                cat = type_cat.readFits(file)
-            except:
-                if retry == n_retry_max:
-                    raise
-                elif retry_delay:
-                    time.sleep(retry_delay)
-                    continue
-        if log:
-            time_now = time_print(time_now, prefix='Read in ')
         filename = file.split('.fits')[0]
-        bands, tract, patch = func_dataId(filename)
-        dataId = {'tract': tract, 'patch': patch}
-
-        if is_dc2:
-            version = tracts_dc2[tract][1]
-            if version not in butler:
-                path = repos[version]
-                print(f'DC2 butler {path} for {tract} not found; loading...')
-                butler[version] = Butler(path)
-                # Ignore the time spent reading butlers for the ETA
-                time_init -= time_now
-                time_print(time_now, prefix=f'Loaded butler in ')
-                time_init += time_now
-            butler_cal = butler[version]
+        filename_out = f'{filename}{postfix}'
+        if skip_newer and os.path.isfile(filename_out) and (os.path.getmtime(filename_out) > os.path.getmtime(file)):
+            print(f'Skipping {file} because output file {filename_out} exists and is newer')
         else:
-            butler_cal = butler
-
-        if files_ngmix or get_cmodel_forced:
-            mapper = SchemaMapper(cat.schema)
-            mapper.addMinimalSchema(cat.schema, True)
-            mapper.editOutputSchema().setAliasMap(cat.schema.getAliasMap())
-
-        fields_cat_new = []
-        if files_ngmix:
-            cat_ngmix = files_ngmix.get(datasetType_ngmix, {'tract': tract, 'patch': patch}) if \
-                is_ngmix_butler else type_cat.readFits(files_ngmix[idx])
-            schema_ngmix = cat_ngmix.schema
-            names = cat.schema.getNames()
-            fields_new = {}
-            for key in schema_ngmix:
-                field = key.field
-                name = field.getName()
-                if name not in names:
-                    name_split = name.split('_')
-                    n_split = len(name_split)
-                    is_flux = name_split[-2] == "flux"
-                    is_flux_err = (n_split > 2) and (name_split[-3] == 'flux') and (name_split[-2] == 'err')
-                    is_psf = name_split[1] == 'psf'
-                    if is_flux:
-                        band = name_split[-1]
-                        name_new = f'{"_".join(name_split[:-2])}_{band}_instFlux' if band in bands else None
-                    elif is_flux_err:
-                        band = name_split[-1]
-                        name_new = f'{"_".join(name_split[:-3])}_{band}_instFluxErr'\
-                            if band in bands else None
-                    elif is_psf and not (
-                            ((n_split > 3) and (name_split[3] == 'mean')) or (
-                            (n_split > 2) and (name_split[2] == 'flags'))):
-                        band = name_split[2]
-                        name_new = name if band in bands else None
-                    else:
-                        name_new = name
-                    if name_new is not None:
-                        fields_new[name] = name_new
-                        mapper.editOutputSchema().addField(field.copyRenamed(name_new))
-            fields_cat_new.append((fields_new, cat_ngmix))
-
-        if get_cmodel_forced:
-            schema = None
-            fields_out = []
-            for band in bands:
-                forced = butler_cal.get('deepCoadd_forced_src', set_dataId_band(dataId, band))
-
-                if schema is None:
-                    schema = forced.schema
-                    for key in schema:
-                        field = key.field
-                        name_field = field.getName()
-                        if mm.is_field_modelfit(name_field):
-                            name_split = name_field.split('_')[1:]
-                            fields_out.append((
-                                name_field,
-                                f'modelfit_forced_{"_".join(name_split[:-1])}_',
-                                f'_{name_split[-1]}'
-                            ))
-                elif forced.schema != schema:
-                    raise RuntimeError(f'Schema {forced.schema} for dataId {dataId} deepCoadd_forced_src '
-                                       f'differs from filter {bands[0]} schema {schema}')
-
-                fields_new = {}
-                for field_in, prefix_field, postfix_field in fields_out:
-                    name_new = f'{prefix_field}{band}{postfix_field}'
-                    fields_new[field_in] = name_new
-                    mapper.editOutputSchema().addField(
-                        forced.schema.find(field_in).field.copyRenamed(name_new))
-                fields_cat_new.append((fields_new, forced))
-
-        if fields_cat_new:
-            cat_new = SourceCatalog(mapper.getOutputSchema())
-            cat_new.reserve(len(cat))
-            cat_new.extend(cat, mapper)
-            for fields_new, cat_in in fields_cat_new:
-                for field_in, field_out in fields_new.items():
-                    cat_new[field_out] = cat_in[field_in]
-            cat = cat_new
-
-        n_columns = len(cat.schema.getNames())
-        if n_columns > tables.n_columns_max:
-            raise RuntimeError(f'pre-calib cat has {n_columns}>max={tables.n_columns_max}')
-
-        try:
-            photoCalibs = {band: butler_cal.get(type_calib, set_dataId_band(dataId, band))
-                           for band in bands}
-        except:
-            print(f'Failed generating photoCalibs of type={type_calib} with dataId={dataId}')
-            raise
-
-        if overwrite_band is not None:
-            meas = butler_cal.get('deepCoadd_meas', set_dataId_band(dataId, overwrite_band))
-            for key in meas.schema:
-                field = key.field
-                # It's probably better to keep the original flag that MultiProFit used
-                if field.dtype != 'Flag':
-                    name_field = field.getName()
-                    cat[name_field] = meas[name_field]
-
-        cat_calib = calibrate_catalog(cat, photoCalibs, **kwargs)
-        if return_cats:
-            cats.append(cat_calib)
-        if write:
-            filename_out = f'{filename}{postfix}'
-            n_columns = len(cat_calib.schema.getNames())
-            if n_columns > tables.n_columns_max:
-                tables.write_split_cat_fits(filename_out, cat, cat_calib)
-            else:
-                cat_calib.writeFits(filename_out)
             if log:
-                info = f'{filename_out} ' if write else ''
-                time_now = time_print(time_now, prefix=f"Calibrated {info}in ")
+                preprint = "Unknown" if (idx == 0) else f'{(time_now - time_init) * (n_files - idx) / idx:.1f}s'
+                print(f'ETA={preprint}; Calibrating {file}... ', end='')
+            for retry in range(1 + n_retry_max):
+                try:
+                    cat = type_cat.readFits(file)
+                except:
+                    if retry == n_retry_max:
+                        raise
+                    elif retry_delay:
+                        time.sleep(retry_delay)
+                        continue
+            if log:
+                time_now = time_print(time_now, prefix='Read in ')
+
+            bands, tract, patch = func_dataId(filename)
+            dataId = {'tract': tract, 'patch': patch}
+
+            if is_dc2:
+                version = tracts_dc2[tract][1]
+                if version not in butler:
+                    path = repos[version]
+                    print(f'DC2 butler {path} for {tract} not found; loading...')
+                    butler[version] = Butler(path)
+                    # Ignore the time spent reading butlers for the ETA
+                    time_init -= time_now
+                    time_print(time_now, prefix=f'Loaded butler in ')
+                    time_init += time_now
+                butler_cal = butler[version]
+            else:
+                butler_cal = butler
+
+            if files_ngmix or get_cmodel_forced or (butler_scarlet is not None):
+                mapper = SchemaMapper(cat.schema)
+                mapper.addMinimalSchema(cat.schema, True)
+                mapper.editOutputSchema().setAliasMap(cat.schema.getAliasMap())
+
+            fields_cat_new = []
+
+            if files_ngmix is not None:
+                cat_ngmix = files_ngmix.get(datasetType_ngmix, dataId) if \
+                    is_ngmix_butler else type_cat.readFits(files_ngmix[idx])
+                schema_ngmix = cat_ngmix.schema
+                names = cat.schema.getNames()
+                fields_new = {}
+                for key in schema_ngmix:
+                    field = key.field
+                    name = field.getName()
+                    if name not in names:
+                        name_split = name.split('_')
+                        n_split = len(name_split)
+                        is_flux = name_split[-2] == "flux"
+                        is_flux_err = (n_split > 2) and (name_split[-3] == 'flux') and (name_split[-2] == 'err')
+                        is_psf = name_split[1] == 'psf'
+                        if is_flux:
+                            band = name_split[-1]
+                            name_new = f'{"_".join(name_split[:-2])}_{band}_instFlux' if band in bands else None
+                        elif is_flux_err:
+                            band = name_split[-1]
+                            name_new = f'{"_".join(name_split[:-3])}_{band}_instFluxErr'\
+                                if band in bands else None
+                        elif is_psf and not (
+                                ((n_split > 3) and (name_split[3] == 'mean')) or (
+                                (n_split > 2) and (name_split[2] == 'flags'))):
+                            band = name_split[2]
+                            name_new = name if band in bands else None
+                        else:
+                            name_new = name
+                        if name_new is not None:
+                            fields_new[name] = name_new
+                            mapper.editOutputSchema().addField(field.copyRenamed(name_new))
+                fields_cat_new.append((fields_new, cat_ngmix))
+
+            if butler_scarlet is not None:
+                cats_scarlet = {}
+                for band in bands:
+                    cat_scarlet = butler_scarlet.get(datasetType_scarlet, set_dataId_band(dataId, band))
+                    cats_scarlet[band] = cat_scarlet
+                    schema_scarlet = cat_scarlet.schema
+                    fields_new = {}
+                    for field in fields_scarlet:
+                        is_flux = field == "deblend_scarletFlux"
+                        name_new = f'scarlet_{band}_{field if not is_flux else "instFlux"}'
+                        fields_new[field] = name_new
+                        key = schema_scarlet.find(field)
+                        if is_flux:
+                            mapper.editOutputSchema().addField(Field(dtype='D', name=name_new, doc=key.field.getDoc()))
+                        else:
+                            mapper.editOutputSchema().addField(key.field.copyRenamed(name_new))
+                    fields_cat_new.append((fields_new, cat_scarlet))
+
+            if get_cmodel_forced:
+                schema = None
+                fields_out = []
+                for band in bands:
+                    forced = butler_cal.get('deepCoadd_forced_src', set_dataId_band(dataId, band))
+
+                    if schema is None:
+                        schema = forced.schema
+                        for key in schema:
+                            field = key.field
+                            name_field = field.getName()
+                            if mm.is_field_modelfit(name_field):
+                                name_split = name_field.split('_')[1:]
+                                fields_out.append((
+                                    name_field,
+                                    f'modelfit_forced_{"_".join(name_split[:-1])}_',
+                                    f'_{name_split[-1]}'
+                                ))
+                    elif forced.schema != schema:
+                        raise RuntimeError(f'Schema {forced.schema} for dataId {dataId} deepCoadd_forced_src '
+                                           f'differs from filter {bands[0]} schema {schema}')
+
+                    fields_new = {}
+                    for field_in, prefix_field, postfix_field in fields_out:
+                        name_new = f'{prefix_field}{band}{postfix_field}'
+                        fields_new[field_in] = name_new
+                        mapper.editOutputSchema().addField(
+                            forced.schema.find(field_in).field.copyRenamed(name_new))
+                    fields_cat_new.append((fields_new, forced))
+
+            if fields_cat_new:
+                cat_new = SourceCatalog(mapper.getOutputSchema())
+                cat_new.reserve(len(cat))
+                cat_new.extend(cat, mapper)
+                for fields_new, cat_in in fields_cat_new:
+                    for field_in, field_out in fields_new.items():
+                        cat_new[field_out] = cat_in[field_in]
+                cat = cat_new
+
+            n_columns = len(cat.schema.getNames())
+            if n_columns > tables.n_columns_max:
+                raise RuntimeError(f'pre-calib cat has {n_columns}>max={tables.n_columns_max}')
+
+            try:
+                photoCalibs = {band: butler_cal.get(type_calib, set_dataId_band(dataId, band))
+                               for band in bands}
+            except:
+                print(f'Failed generating photoCalibs of type={type_calib} with dataId={dataId}')
+                raise
+
+            if overwrite_band is not None:
+                meas = butler_cal.get('deepCoadd_meas', set_dataId_band(dataId, overwrite_band))
+                for key in meas.schema:
+                    field = key.field
+                    # It's probably better to keep the original flag that MultiProFit used
+                    if field.dtype != 'Flag' and field.dtype != 'String':
+                        name_field = field.getName()
+                        cat[name_field] = meas[name_field]
+
+            cat_calib = calibrate_catalog(cat, photoCalibs, **kwargs)
+            if return_cats:
+                cats.append(cat_calib)
+            if write:
+                n_columns = len(cat_calib.schema.getNames())
+                if n_columns > tables.n_columns_max:
+                    tables.write_split_cat_fits(filename_out, cat, cat_calib)
+                else:
+                    cat_calib.writeFits(filename_out)
+                if log:
+                    info = f'{filename_out} ' if write else ''
+                    time_now = time_print(time_now, prefix=f"Calibrated {info}in ")
     if return_cats:
         return cats
 

@@ -8,7 +8,7 @@ def get_prefix_comp_multiprofit(prefix, comp):
 
 
 def is_field_fit(field):
-    return is_field_modelfit(field) or is_field_multiprofit(field) or is_field_ngmix(field)
+    return is_field_modelfit(field) or is_field_multiprofit(field) or is_field_ngmix(field) or is_field_scarlet(field)
 
 
 def is_field_instFlux(field):
@@ -31,13 +31,17 @@ def is_field_ngmix(field):
     return field.startswith('ngmix_')
 
 
+def is_field_scarlet(field):
+    return field.startswith('scarlet')
+
+
 class Model:
     """A class for models used to measure sources in MultiProFit catalogs.
     """
     def get_cen(self, cat, axis, comp=None):
         if self.is_multiprofit:
             return cat[f'{get_prefix_comp_multiprofit(self.name, comp)}_cen{axis}']
-        return None
+        return cat[f'base_SdssCentroid_{axis}']
 
     def get_color_total(self, cat, band1, band2):
         """Return a single total color.
@@ -96,7 +100,7 @@ class Model:
 
         """
         prefix = self.name
-        if (self.is_psf and self.is_multiprofit) or self.is_ngmix or self.is_modelfit_forced:
+        if (self.is_psf and self.is_multiprofit) or self.is_ngmix or self.is_modelfit_forced or self.is_scarlet:
             prefix = f'{prefix}_{band}'
         if comp is not None:
             return self.get_prefix_comp(prefix, comp)
@@ -266,6 +270,7 @@ class Model:
         self.is_modelfit_forced = is_field_modelfit_forced(name)
         self.is_multiprofit = is_field_multiprofit(name)
         self.is_ngmix = is_field_ngmix(name)
-        self.multiband = self.is_multiprofit or self.is_ngmix
+        self.is_scarlet = is_field_scarlet(name)
+        self.multiband = self.is_multiprofit or self.is_ngmix or self.is_scarlet
         self.prefix_ellipse = 'ellipse_' if self.is_modelfit_model else ''
         self.mag_offset = mag_offset

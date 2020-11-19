@@ -60,6 +60,7 @@ def _get_refcat_bbox(task, bbox, wcs, filterName=None, cat_corner=None):
 def match_refcat(
         butler_refcat, butler_data, tracts, filter_ref, func_path, match_afw=True, skymap=None,
         prefix_flux_match=None, prefix_file_path=None, filters_single=None, filters_multi=None, config=None,
+        *args, **kwargs
 ):
     """Match catalogs to a reference catalog.
 
@@ -150,7 +151,7 @@ def match_refcat(
         is_primary = {}
         for band in filters_order:
             print(f'Loading tract {tract} band {band}')
-            files = func_path(prefix_file_path, band, tract)
+            files = func_path(prefix_file_path, band, tract, *args, **kwargs)
             cat_full = None
             n_files = len(files)
 
@@ -183,9 +184,9 @@ def match_refcat(
 
                 if not has_match:
                     assert (band == filter_ref)
-                    is_primary[patch] = butler_data.get(
-                        'deepCoadd_ref', {'tract': tract, 'patch': patch}
-                    )['detect_isPrimary']
+                    primary_cat = butler_data.get('deepCoadd_ref', {'tract': tract, 'patch': patch})
+                    # Scarlet flags failed deblends as primary, at least until DM-27208
+                    is_primary[patch] = primary_cat['detect_isPrimary'] * ~primary_cat['deblend_tooManyPeaks']
                 cat = cat[is_primary[patch]]
                 if not has_match:
                     if match_afw:

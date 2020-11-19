@@ -1,3 +1,5 @@
+import decimal
+import math
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,6 +14,15 @@ def _getname(name, prefix, postfix, separator=None):
     name = separator.join([prefix, name]) if prefix is not None else name
     name = separator.join([name, postfix]) if postfix is not None else name
     return name
+
+
+def _ceil_decimal(x):
+    return float(
+        decimal.Decimal(x).quantize(
+            decimal.Decimal(f'1e{math.floor(math.log10(x))}'),
+            rounding=decimal.ROUND_CEILING
+        ).real
+    )
 
 
 def colorbarinset(jointplot, label='', ticks=None, ticklabels=None, labelsize='x-small',
@@ -44,6 +55,19 @@ def colorbarinset(jointplot, label='', ticks=None, ticklabels=None, labelsize='x
         cbar.ax.tick_params(labelsize=ticklabelsize)
         return cbar
     return None
+
+
+def plot_marg_hist(ax_marg, x, orient_x=True, limit_ceiling=True, tick_spacing=None, **kwargs):
+    ax_marg.hist(x, **kwargs)
+    plt.setp(ax_marg.get_yticklabels() if orient_x else ax_marg.get_xticklabels(), visible=True)
+    axis_y = ax_marg.yaxis if orient_x else ax_marg.xaxis
+    if tick_spacing is not None:
+        axis_y.set_major_locator(mpl.ticker.MultipleLocator(tick_spacing))
+    if limit_ceiling:
+        (ax_marg.set_ylim if orient_x else ax_marg.set_xlim)(
+            0., _ceil_decimal(ax_marg.dataLim.y1 if orient_x else ax_marg.dataLim.x1))
+    if not orient_x:
+        axis_y.set_ticks_position('top')
 
 
 def plotjoint(tab, columns, labels=None, columncolor=None, colorbaropts=None,
@@ -153,7 +177,7 @@ def plotjoint(tab, columns, labels=None, columncolor=None, colorbaropts=None,
 
 def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None, limx=None, limy=None,
                                   ndivisions=None, nbinspan=None, labelx=None, labely=None, title=None,
-                                  histtickspacingxmaj=None, histtickspacingymaj=None,
+                                  histtickspacingxmaj=None, histtickspacingymaj=None, marginal_hist_limit_ceiling=True,
                                   scatterleft=False, scatterright=False, drawzeroline=True):
     """
 
@@ -170,6 +194,7 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
     :param title: String; title.
     :param histtickspacingxmaj: Float; spacing for major ticks on the x-axis marginal histogram's y-axis.
     :param histtickspacingymaj: Float; spacing for major ticks on the y-axis marginal histogram's y-axis.
+    :param marginal_hist_limit_ceil: Bool; increase the marginal histogram limit maximum by applying a decimal ceiling?
     :param scatterleft: Bool; scatter plot points leftwards of the leftmost bin center?
     :param scatterright: Bool; scatter plot points rightwards of the rightmost bin center?
     :param drawzeroline: Bool; draw line at y=0?
@@ -272,17 +297,14 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
         cond = (y > ybins[0][idxbin]) & (y < ybins[-1][idxbin])
         cond = cond & ((x < xbins[idxbin]) if (idxbin == 0) else (x > xbins[idxbin]))
         plt.scatter(x[cond], y[cond], s=1, marker='+', color='k')
-    p.ax_marg_x.hist(x, bins=ndivisions * 2, weights=np.repeat(1.0 / len(x), len(x)),
-                     histtype='stepfilled', linewidth=0)
-    plt.setp(p.ax_marg_x.get_yticklabels(), visible=True)
-    if histtickspacingxmaj is not None:
-        p.ax_marg_x.yaxis.set_major_locator(mpl.ticker.MultipleLocator(histtickspacingxmaj))
-    p.ax_marg_y.hist(y, orientation='horizontal', bins=ndivisions * 4,
-                     weights=np.repeat(1.0 / len(y), len(y)), histtype='stepfilled', linewidth=0)
-    p.ax_marg_y.xaxis.set_ticks_position('top')
-    plt.setp(p.ax_marg_y.get_xticklabels(), visible=True)
-    if histtickspacingymaj is not None:
-        p.ax_marg_y.xaxis.set_major_locator(mpl.ticker.MultipleLocator(histtickspacingymaj))
+    plot_marg_hist(
+        p.ax_marg_x, x, tick_spacing=histtickspacingxmaj,
+        bins=ndivisions * 2, weights=np.repeat(1.0 / len(x), len(x)), histtype='stepfilled', linewidth=0
+    )
+    plot_marg_hist(
+        p.ax_marg_y, y, tick_spacing=histtickspacingymaj, orient_x=False, orientation='horizontal',
+        bins=ndivisions*4, weights=np.repeat(1.0 / len(y), len(y)), histtype='stepfilled', linewidth=0
+    )
     if title is not None:
         p.fig.suptitle(title, y=1., verticalalignment='bottom')
     return p
