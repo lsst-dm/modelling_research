@@ -1,8 +1,150 @@
+from astropy.visualization import make_lupton_rgb
+import matplotlib.pyplot as plt
 from multiprofit.gaussutils import covar_to_ellipse
 from multiprofit.utils import flux_to_mag, mag_to_flux
+from collections import namedtuple
 import numpy as np
 
 
+# Classes for row-wise measurements
+Centroid = namedtuple('Centroid', ['x', 'y'])
+Shape = namedtuple('Shape', ['r_maj', 'r_min', 'ang'])
+Ellipse = namedtuple('Ellipse', ['centroid', 'shape'])
+Measurement = namedtuple('Measurement', ['mag', 'ellipse'])
+Source = namedtuple('Source', ['idx_row', 'measurements'])
+BlendDatum = namedtuple('BlendDatum', ['img', 'siginv', 'models'])
+
+
+class Blend:
+    def make_plots(
+        self, name_model, bands_weights, plot_sig=False, data_residual_factor=1, bands=None,
+        sources_true=None, sources=None, measmodels=None, chi_clip=3, residual_scale=1,
+        label_data=None, label_model=None, offsetxy_texts=None, color_true=None, show=True,
+        **kwargs
+    ):
+        if bands is None:
+            bands = 'irg'
+        if sources is None:
+            sources = []
+        if label_data is None:
+            label_data = ""
+        if label_model is None:
+            label_model = ""
+        if offsetxy_texts is None:
+            offsetxy_texts = [(1, 1), (1, -1), (-1, -1), (-1, 1)]
+        if color_true is None:
+            color_true = 'pink'
+        img_rgb = make_lupton_rgb(*(self.data[b].img * bands_weights.get(b) for b in bands), **kwargs)
+        img_model_rgb = make_lupton_rgb(
+            *(self.data[b].models[name_model] * bands_weights.get(b) for b in bands), **kwargs)
+        fig, ax = plt.subplots(ncols=2)
+        ax[0].imshow(img_rgb)
+        bands = list(bands_weights.keys())
+        label_bands = ''.join(bands)
+        ax[0].set_title(f'{label_bands} {label_data} data')
+        ax[1].imshow(img_model_rgb)
+        n_y, n_x, n_c = img_rgb.shape
+        cxs, cys, mags, ellipses = [], [], [], []
+        for source in (sources_true if sources_true is not None else []):
+            measure = source.measurements[0]
+            cxs.append(measure.ellipse.centroid[0])
+            cys.append(measure.ellipse.centroid[1])
+            mags.append(measure.mag)
+        for cx, cy, mag in zip(cxs, cys, mags):
+            for ax_i in ax:
+                ax_i.annotate(f'{mag:.1f}', (cx, cy), color=color_true, fontsize=5, ha='right', va='top')
+        for ax_i in ax:
+            ax_i.scatter(cxs, cys, marker='o', color=color_true, s=0.5)
+
+        for idx_model, (model, specs) in enumerate(measmodels.items()):
+            cxs, cys, mags, ellipses = [], [], [], []
+            offsets = specs.get('offset', (0, 0))
+            offsetxy_text = offsetxy_texts[idx_model]
+            for source in sources:
+                measure = source.measurements.get(model)
+                if measure is not None:
+                    ellipse = measure.ellipse
+                    cx, cy = ellipse.centroid
+                    cx += offsets[0]
+                    cy += offsets[1]
+                    if (cx > 0) & (cx < n_x) & (cy > 0) & (cy < n_y):
+                        cxs.append(cx)
+                        cys.append(cy)
+                        mags.append(measure.mag)
+                        shape = ellipse.shape
+                        if shape is not None:
+                            ellipses.append(((cx, cy), shape.r_maj, shape.r_min, shape.ang))
+            for ax_i in ax:
+                scatter_opts = specs.get('scatter_opts', {})
+                ax_i.scatter(cxs, cys, **scatter_opts)
+                for spec in ('color', 'edgecolors', 'facecolors'):
+                    color = scatter_opts.get(spec)
+                    if color is not None:
+                        break
+                if color is None:
+                    color = 'white'
+                for cx, cy, mag in zip(cxs, cys, mags):
+                    ax_i.annotate(f'{mag:.1f}', (cx + offsetxy_text[0], cy + offsetxy_text[1]), color=color,
+                                  fontsize=5)
+            for ellipse in ellipses:
+                for ax_i in ax:
+                    ell_patch = patches.Ellipse(*ellipse, fill=False)
+                    ax_i.add_patch(ell_patch)
+        ax[1].set_title(f'{label_bands} {label_model} (neighb.*{data_residual_factor:.1f})')
+
+        if plot_sig:
+            fig, ax = plt.subplots(ncols=2)
+            chi_rgb = np.zeros_like(img_rgb)
+            res_rgb = np.zeros_like(img_rgb)
+
+            for idx, band in enumerate(bands):
+                residual = self.data[band].models[name_model] - data_residual_factor * self.data[band].img
+                chi = residual * self.data[band].siginv
+                chi_rgb[:, :, idx] = 256 * np.clip(chi / (2 * chi_clip) + 0.5, 0, 1)
+                res_rgb[:, :, idx] = 256 * np.clip(residual / (2 * residual_scale) + 0.5, 0, 1)
+            ax[0].imshow(res_rgb)
+            ax[0].set_title(f'{label_bands} Residuals (clipped +/- {residual_scale:.2f})')
+            ax[1].imshow(chi_rgb)
+            ax[1].set_title(f'{label_bands} Chi (clipped +/- {chi_clip:.2f})')
+        if show:
+            plt.show()
+
+    def __init__(self, blenddata, cat_ref, idx_parent):
+        data = {}
+        parent = cat_ref[idx_parent]
+        bbox = parent.getFootprint().getBBox()
+        for band, blenddatum in blenddata:
+            img = blenddatum.img
+
+
+def get_sources_meas(cat_meas, cat_ref, band_ref, idx_children, models_meas):
+    sources = []
+    for idx, idx_row in enumerate(idx_children):
+        child = cat_meas[idx_row]
+        child_ref = cat_ref[idx_row]
+        measures = {}
+        cxo, cyo = child_ref.getFootprint().getBBox().getBegin()
+        for name_model, model in models_meas.items():
+            is_mpf = name_model.startswith('MPF')
+            cen = Centroid(
+                x=model.get_cen(child, 'x', comp=1) + (cxo if is_mpf else 0),
+                y=model.get_cen(child, 'y', comp=1) + (cyo if is_mpf else 0),
+            )
+            mag = model.get_mag_total(child, band=band_ref)
+            # This is stupid, I know, but necessary for now... sorry
+            if model.n_comps > 0:
+                # It can't be a single child but must be a table for some reason
+                r_maj, axrat, ang = model.get_ellipse_terms(cat_meas[idx_row:(idx_row+1)], comp=1)
+                shape = Shape(r_maj=r_maj[0], r_min=r_maj[0]*axrat[0], ang=ang[0])
+            else:
+                shape = None
+            measures[name_model] = Measurement(mag=mag, ellipse=Ellipse(centroid=cen, shape=shape))
+
+        sources.append(Source(idx_row=idx_row, measurements=measures))
+    return sources
+
+
+# Classes for column-wise measurements
 def get_prefix_comp_multiprofit(prefix, comp):
     return f'{prefix}_c{comp}'
 

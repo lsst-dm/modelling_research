@@ -234,6 +234,7 @@ def plot_matches(
         cats, resolved, models, bands=None, band_ref=None, band_multi=None, band_ref_multi=None,
         colors=None, mag_max=None, mag_max_compure=None, match_dist_asec=None, mag_bin_complete=0.1,
         rematch=False, models_purity=None, plot_compure=True, plot_diffs=True, compare_mags_psf_lim=None,
+        return_select_truth=False,
         **kwargs
 ):
     """ Make plots of completeness, purity and delta mag/colour for sources in two matched catalogs.
@@ -272,12 +273,15 @@ def plot_matches(
         Whether to plot delta mag/colour vs mag in addition to compurity.
     compare_mags_psf_lim : `float`
         The y-axis (delta mag) limit for delta mag plots accompanying purity.
+    return_select_truth : `bool`
+        Whether to return the truth selection array.
     **kwargs
         Additional keyword arguments to pass to `plotjoint_running_percentiles`.
 
     Returns
     -------
-    None; only produces plots.
+    select_truths : `dict`
+        Dict of truth selection by tract, filled only if `return_select_truth` is True.
     """
     if mag_max is None:
         mag_max = np.Inf
@@ -289,6 +293,7 @@ def plot_matches(
     has_multi = band_multi is not None
     obj_type = 'Resolved' if resolved else 'Unresolved'
     is_afw = match_dist_asec is None
+    select_truths = {}
 
     for tract, cats_type in cats.items():
         cat_truth, cats_meas = cats_type['truth'], cats_type['meas']
@@ -418,6 +423,9 @@ def plot_matches(
                         labelx=f'${bx}_{{true}}$', labely=f'${band}_{{model-true}}$',
                         **kwargs)
                     plt.show()
+        if return_select_truth:
+            select_truths[tract] = select_truth
+    return select_truths
 
 
 def _source_is_type(cat, resolved, include_nan=False, threshold=0.5):
