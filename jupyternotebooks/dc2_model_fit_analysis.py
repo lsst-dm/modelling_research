@@ -76,7 +76,7 @@ get_cmodel_forced = True
 get_ngmix = True
 get_scarlet = False
 if calibrate_cats:
-    butler_scarlet = Butler(f'/project/dtaranu/dc2/scarlet/2020-09-16/{band_multi}') if get_scarlet else None
+    butler_scarlet = Butler(f'/project/dtaranu/dc2/scarlet/2020-11-16/ugrizy') if get_scarlet else None
     path = tracts[3828][0]
     for bands in filters_single + filters_multi:
         butler_ngmix = Butler(f'{truth_path}/2020-11-16_ngmix/{bands}') if get_ngmix else None

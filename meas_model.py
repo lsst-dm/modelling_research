@@ -1,42 +1,120 @@
 from astropy.visualization import make_lupton_rgb
+import dataclasses as dc
+import lsst.afw.image as afwImage
+import lsst.afw.table as afwTable
+import lsst.geom as geom
+import matplotlib.patches as patches
+import matplotlib.patheffects as pathfx
 import matplotlib.pyplot as plt
 from multiprofit.gaussutils import covar_to_ellipse
 from multiprofit.utils import flux_to_mag, mag_to_flux
-from collections import namedtuple
+from typing import Dict, NamedTuple, Sequence
 import numpy as np
 
 
 # Classes for row-wise measurements
-Centroid = namedtuple('Centroid', ['x', 'y'])
-Shape = namedtuple('Shape', ['r_maj', 'r_min', 'ang'])
-Ellipse = namedtuple('Ellipse', ['centroid', 'shape'])
-Measurement = namedtuple('Measurement', ['mag', 'ellipse'])
-Source = namedtuple('Source', ['idx_row', 'measurements'])
-BlendDatum = namedtuple('BlendDatum', ['img', 'siginv', 'models'])
+Centroid = NamedTuple('Centroid', [('x', float), ('y', float)])
+Shape = NamedTuple('Shape', [('r_maj', float), ('r_min', float), ('ang', float)])
+Ellipse = NamedTuple('Ellipse', [('centroid', Centroid), ('shape', Shape)])
+Measurement = NamedTuple('Measurement', [('mag', float), ('ellipse', Ellipse)])
+Source = NamedTuple('Source', [('idx_row', int), ('measurements', Sequence[Measurement])])
+CatExp = NamedTuple('CatExp', [
+    ('band', str),
+    ('cat', afwTable.SourceCatalog),
+    ('img', afwImage.Image),
+    ('model', afwImage.Image),
+    ('siginv', afwImage.Image),
+])
 
 
-class Blend:
-    def make_plots(
-        self, name_model, bands_weights, plot_sig=False, data_residual_factor=1, bands=None,
-        sources_true=None, sources=None, measmodels=None, chi_clip=3, residual_scale=1,
-        label_data=None, label_model=None, offsetxy_texts=None, color_true=None, show=True,
+def get_source_points(sources=None):
+    cxs, cys, mags = [], [], []
+    if sources:
+        for source in sources:
+            measure = source.measurements[0]
+            cxs.append(measure.ellipse.centroid[0])
+            cys.append(measure.ellipse.centroid[1])
+            mags.append(measure.mag)
+    return cxs, cys, mags
+
+
+# TODO: Allow addition to existing image
+def get_spanned_image(footprint, bbox=None):
+    spans = footprint.getSpans()
+    if bbox is None:
+        bbox = footprint.getBBox()
+    if not (bbox.getHeight() > 0 and bbox.getWidth() > 0):
+        return None, bbox
+    img = afwImage.Image(bbox, dtype='D')
+    spans.setImage(img, 1)
+    img = img.array
+    img[img == 1] = footprint.getImageArray()
+    return img, bbox
+
+
+def plot_sources(ax, cxs, cys, mags, kwargs_annotate=None, kwargs_scatter=None, path_effects=None):
+    if kwargs_annotate is None:
+        kwargs_annotate = {}
+    if kwargs_scatter is None:
+        kwargs_scatter = {}
+    for cx, cy, mag in zip(cxs, cys, mags):
+        for ax_i in ax:
+            text = ax_i.annotate(f'{mag:.1f}', (cx, cy), **kwargs_annotate)
+            if path_effects is not None:
+                text.set_path_effects(path_effects)
+    for ax_i in ax:
+        ax_i.scatter(cxs, cys, **kwargs_scatter)
+
+
+@dc.dataclass
+class Deblend:
+    cat_ref: afwTable.SourceCatalog
+    children: afwTable.SourceCatalog = dc.field(init=False, repr=False)
+    data: Dict[str, CatExp]
+    idx_children: np.ndarray = dc.field(init=False, repr=False)
+    idx_parent: int
+    is_child: np.ndarray = dc.field(init=False, repr=False)
+    parent: afwTable.SourceRecord = dc.field(init=False, repr=False)
+    name_deblender: str
+
+    def plot(
+        self, bands_weights, bbox=None, plot_sig=False, data_residual_factor=1, bands=None,
+        sources=None, sources_true=None, sources_sig=None, measmodels=None, chi_clip=3, residual_scale=1,
+        label_data=None, label_model=None, offsetxy_texts=None, color_true=None, show=True, idx_children_sub=None,
         **kwargs
     ):
         if bands is None:
-            bands = 'irg'
+            if len(bands_weights) == 3:
+                bands = bands_weights.keys()
+            else:
+                bands = 'irg'
         if sources is None:
             sources = []
         if label_data is None:
             label_data = ""
         if label_model is None:
-            label_model = ""
+            label_model = self.name_deblender
         if offsetxy_texts is None:
             offsetxy_texts = [(1, 1), (1, -1), (-1, -1), (-1, 1)]
         if color_true is None:
             color_true = 'pink'
-        img_rgb = make_lupton_rgb(*(self.data[b].img * bands_weights.get(b) for b in bands), **kwargs)
-        img_model_rgb = make_lupton_rgb(
-            *(self.data[b].models[name_model] * bands_weights.get(b) for b in bands), **kwargs)
+        imgs, models = {}, {}
+        for b in bands:
+            datum = self.data[b]
+            weight = bands_weights.get(b, 1.)
+            img, model = (
+                (x.subset(bbox) if bbox is not None else x)
+                for x in (img, datum.model)
+            )
+            if idx_children_sub is not None:
+                cat = self.data[band].cat
+                for idx_child in idx_children_sub:
+                    model_child, bbox_extra = get_spanned_image(child.getFootprint())
+                    model.subset(bbox_extra).array -= model_child
+            imgs[b] = weight * img.array
+            models[b] = weight * model.arraay
+        img_rgb = make_lupton_rgb(*(imgs.values()), **kwargs)
+        img_model_rgb = make_lupton_rgb(*(models.values()), **kwargs)
         fig, ax = plt.subplots(ncols=2)
         ax[0].imshow(img_rgb)
         bands = list(bands_weights.keys())
@@ -44,17 +122,12 @@ class Blend:
         ax[0].set_title(f'{label_bands} {label_data} data')
         ax[1].imshow(img_model_rgb)
         n_y, n_x, n_c = img_rgb.shape
-        cxs, cys, mags, ellipses = [], [], [], []
-        for source in (sources_true if sources_true is not None else []):
-            measure = source.measurements[0]
-            cxs.append(measure.ellipse.centroid[0])
-            cys.append(measure.ellipse.centroid[1])
-            mags.append(measure.mag)
-        for cx, cy, mag in zip(cxs, cys, mags):
-            for ax_i in ax:
-                ax_i.annotate(f'{mag:.1f}', (cx, cy), color=color_true, fontsize=5, ha='right', va='top')
-        for ax_i in ax:
-            ax_i.scatter(cxs, cys, marker='o', color=color_true, s=0.5)
+        if sources_true is not None:
+            plot_sources(
+                ax, *get_source_points(sources_true),
+                kwargs_annotate=dict(color=color_true, fontsize=5, ha='right', va='top'),
+                kwargs_scatter=dict(marker='o', color=color_true, s=0.5)
+            )
 
         for idx_model, (model, specs) in enumerate(measmodels.items()):
             cxs, cys, mags, ellipses = [], [], [], []
@@ -98,23 +171,74 @@ class Blend:
             res_rgb = np.zeros_like(img_rgb)
 
             for idx, band in enumerate(bands):
-                residual = self.data[band].models[name_model] - data_residual_factor * self.data[band].img
-                chi = residual * self.data[band].siginv
+                residual = self.data[band].model.array - data_residual_factor * self.data[band].img.array
+                chi = residual * self.data[band].siginv.array
                 chi_rgb[:, :, idx] = 256 * np.clip(chi / (2 * chi_clip) + 0.5, 0, 1)
                 res_rgb[:, :, idx] = 256 * np.clip(residual / (2 * residual_scale) + 0.5, 0, 1)
             ax[0].imshow(res_rgb)
             ax[0].set_title(f'{label_bands} Residuals (clipped +/- {residual_scale:.2f})')
             ax[1].imshow(chi_rgb)
             ax[1].set_title(f'{label_bands} Chi (clipped +/- {chi_clip:.2f})')
+
+            if sources_sig is not None:
+                plot_sources(
+                    ax, *self._get_points(sources_sig),
+                    # Can also try bbox=dict(facecolor='black', pad=1) but I find that it obscures the image too much
+                    kwargs_annotate=dict(color='w', fontsize=4.5, ha='right', va='top'),
+                    #kwargs_scatter=dict(marker='o', facecolor='w', edgecolor='k', s=9),
+                    kwargs_scatter=dict(marker='o', facecolor='none', edgecolor='none', s=0),
+                    path_effects=[pathfx.withStroke(linewidth=1.5, foreground='k')],
+                )
         if show:
             plt.show()
 
-    def __init__(self, blenddata, cat_ref, idx_parent):
+    def __post_init__(self):
+        self.parent = self.cat_ref[self.idx_parent]
+        self.is_child = self.cat_ref['parent'] == self.parent['id']
+        self.idx_children = np.nonzero(self.is_child)[0]
+        self.idx_children.dtype = np.int16
+        self.children = self.cat_ref[self.is_child]
+
+
+class Blend:
+    def __init__(self, deblends: Sequence[Deblend]):
+        maxs = np.iinfo(np.int32)
+        mins = np.array((maxs.max, maxs.max))
+        maxs = np.array((maxs.min, maxs.min))
+
+        for deblend in deblends:
+            for band, datum in deblend.data.items():
+                if band != 'ref':
+                    bbox = datum.cat[deblend.idx_parent].getFootprint().getBBox()
+                    np.minimum(mins, bbox.getBegin(), out=mins)
+                    np.maximum(maxs, bbox.getEnd(), out=maxs)
+
+        bbox = geom.Box2I(minimum=geom.Point2I(mins), maximum=geom.Point2I(maxs))
+
         data = {}
-        parent = cat_ref[idx_parent]
-        bbox = parent.getFootprint().getBBox()
-        for band, blenddatum in blenddata:
-            img = blenddatum.img
+        for deblend_in in deblends:
+            data_d = {}
+            for band, catexp in deblend_in.data.items():
+                cat = catexp.cat[deblend_in.is_child]
+                img_model = afwImage.Image(bbox, dtype='F')
+                for child in cat:
+                    model_child, bbox_extra = get_spanned_image(child.getFootprint())
+                    if model_child is not None:
+                        img_model.subset(bbox_extra).array += model_child
+                data_d[band] = CatExp(
+                    band=band,
+                    img=catexp.img.subset(bbox),
+                    model=img_model,
+                    siginv=catexp.siginv.subset(bbox),
+                    cat=cat,
+                )
+            data[deblend_in.name_deblender] = Deblend(
+                cat_ref=deblend_in.cat_ref, data=data_d, idx_parent=deblend_in.idx_parent,
+                name_deblender=deblend_in.name_deblender,
+            )
+
+        self.bbox = bbox
+        self.data = data
 
 
 def get_sources_meas(cat_meas, cat_ref, band_ref, idx_children, models_meas):

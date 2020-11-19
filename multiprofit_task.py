@@ -8,7 +8,8 @@ from lsst.meas.modelfit.display import buildCModelImages
 from lsst.meas.modelfit.cmodel.cmodelContinued import CModelConfig
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
-import modelling_research.make_cutout as cutout
+import modelling_research.meas_model as mrMeas
+import modelling_research.make_cutout as mrCutout
 import matplotlib.pyplot as plt
 import multiprofit.fitutils as mpfFit
 import multiprofit.objects as mpfObj
@@ -38,7 +39,7 @@ class MultiProFitConfig(pexConfig.Config):
         dtype=str, default=None, doc="The band of the measurement catalog to copy data from, even if a "
                                      "source cat is provided")
     bboxDilate = pexConfig.Field(dtype=int, default=0, doc="Number of pixels to dilate (expand) source bounding boxes "
-                                                             "and hence fitting regions by")
+                                                            "and hence fitting regions by")
     computeMeasModelfitLikelihood = pexConfig.Field(dtype=bool, default=False,
                                                     doc="Whether to compute the log-likelihood of best-fit "
                                                         "meas_modelfit parameters per model")
@@ -307,20 +308,6 @@ def joinFilter(separator, items, exclusion=None):
     return separator.join(filter(exclusion, items))
 
 
-# TODO: Allow addition to existing image
-def get_spanned_image(footprint, bbox=None):
-    spans = footprint.getSpans()
-    if bbox is None:
-        bbox = footprint.getBBox()
-    if not bbox.getArea() > 0:
-        return None, bbox
-    img = afwImage.Image(bbox, dtype='D')
-    spans.setImage(img, 1)
-    img = img.array
-    img[img == 1] = footprint.getImageArray()
-    return img, bbox
-
-
 class MultiProFitTask(pipeBase.Task):
     """A task to run the MultiProFit source modelling code on a catalog with detections and heavy footprints,
     returning additional measurements in a new SourceCatalog.
@@ -524,8 +511,8 @@ class MultiProFitTask(pipeBase.Task):
         # TODO: Check total flux first
         if fit_hst:
             wcs_src = next(iter(exposures.values())).getWcs()
-            corners, cens = cutout.get_corners_src(source, wcs_src)
-            exposure, cen_hst, psf = cutout.get_exposure_cutout_HST(
+            corners, cens = mrCutout.get_corners_src(source, wcs_src)
+            exposure, cen_hst, psf = mrCutout.get_exposure_cutout_HST(
                 corners, cens, extras, get_inv_var=True, get_psf=True)
             if np.sum(exposure.image > 0) == 0:
                 raise RuntimeError('HST cutout has zero positive pixels')
@@ -556,7 +543,9 @@ class MultiProFitTask(pipeBase.Task):
                         if idx_extras:
                             addition = afwImage.Image(bbox, dtype='F')
                             for idx_extra in idx_extras:
-                                img_extra, bbox_extra = get_spanned_image(sources_extra[idx_extra].getFootprint())
+                                img_extra, bbox_extra = mrMeas.get_spanned_image(
+                                    sources_extra[idx_extra].getFootprint()
+                                )
                                 addition.subset(bbox_extra).array += img_extra
                             addition = addition.array
                         # Unnecessary as long as images are copies, as they are below
@@ -1604,9 +1593,9 @@ class MultiProFitTask(pipeBase.Task):
         if self.config.fitHstCosmos:
             if path_cosmos_galsim is None:
                 raise ValueError("Must specify path to COSMOS GalSim catalog if fitting HST images")
-            tiles = cutout.get_tiles_HST_COSMOS()
-            ra_corner, dec_corner = cutout.get_corners_exposure(next(iter(data.values()))['exposure'])
-            extras = cutout.get_exposures_HST_COSMOS(ra_corner, dec_corner, tiles, path_cosmos_galsim)
+            tiles = mrCutout.get_tiles_HST_COSMOS()
+            ra_corner, dec_corner = mrCutout.get_corners_exposure(next(iter(data.values()))['exposure'])
+            extras = mrCutout.get_exposures_HST_COSMOS(ra_corner, dec_corner, tiles, path_cosmos_galsim)
             # TODO: Generalize this for e.g. CANDELS
             filters = [extras[0].band]
         elif not self.config.deblendFromDeblendedFits:
@@ -1629,7 +1618,7 @@ class MultiProFitTask(pipeBase.Task):
                             ]
                         )
                         if has_parent and is_blended:
-                            img_deblend, bbox_src = get_spanned_image(source_extra.getFootprint())
+                            img_deblend, bbox_src = mrMeas.get_spanned_image(source_extra.getFootprint())
                             # Can happen if something is wrong with the footprint, e.g. zero-area bbox
                             if img_deblend is None:
                                 idx_add[idx_extra] = []
