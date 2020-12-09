@@ -9,6 +9,32 @@ import subprocess
 def find_copy_single_file(
         path_in, path_out, filename_glob_in, func_filename_out=None, write=True, overwrite=False, link=False, **kwargs
 ):
+    """ Find via glob and copy or link a single file to a new destination.
+
+    Parameters
+    ----------
+    path_in : `str`
+        A valid directory path to search in.
+    path_out : `str`
+        A valid directory path to output to.
+    filename_glob_in : `str`
+        The filename glob to search for within `path_in`.
+    func_filename_out : `function`
+        A function that takes an input filename and kwargs and returns an output filename.
+    write : `bool`
+        Whether to actually write (copy or symlink) the target file at the destination.
+    overwrite : `bool`
+        Whether to overwrite a file if it already exists at the destination.
+    link : `bool`
+        Whether to create a symlink at the destination instead of copying.
+    kwargs : `dict`
+        Additional arguments to pass to `func_filename_out`.
+
+    Returns
+    -------
+    filename : `str`
+        The full path of the output file.
+    """
     if not os.path.isdir(path_in) and os.path.isdir(path_out):
         raise FileNotFoundError(f'path_in={path_in} and/or path_out={path_out} are not directories')
     filename_in = glob.glob(os.path.join(path_in, filename_glob_in))
