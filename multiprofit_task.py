@@ -49,6 +49,9 @@ class MultiProFitConfig(pexConfig.Config):
                                        "fits to deblended children")
     deblendNonlinearMaxSources = pexConfig.Field(
         dtype=int, default=0, doc="Maximum children in blend to allow simultaneous non-linear fit")
+    disableNoiseReplacer = pexConfig.Field(
+        dtype=bool, default=False, doc="Whether to disable replacement of nearby sources with noise when fitting "
+                                       "deblended single sources")
     estimateContiguousDenoisedMoments = pexConfig.Field(
         dtype=bool, default=True, doc="Whether models initiated from moments should estimate within "
                                       "contiguous positive pixels in a naively de-noised image")
@@ -460,7 +463,7 @@ class MultiProFitTask(pipeBase.Task):
         return bbox, dilate
 
     def _getExposurePsfs(
-            self, exposures, source, extras, footprint=None, failOnLargeFootprint=False, idx_mask=None
+            self, exposures, source, extras, footprint=None, failOnLargeFootprint=False, idx_src=None, idx_mask=None
     ):
         """ Get exposure-PSF pairs as required by various MultiProFit fitutils functions.
 
@@ -480,6 +483,8 @@ class MultiProFitTask(pipeBase.Task):
         failOnLargeFootprint : `bool`, optional
             Whether to return a failure if the fallback (source) footprint dimensions also exceed
             `self.config.maxParentFootprintPixels`.
+        idx_src : `int`, optional
+            The index of the source in the original catalog.
         idx_mask : `int`, optional
             The index of the parent (blend) in the segmentation mask, if any.
 
@@ -499,10 +504,11 @@ class MultiProFitTask(pipeBase.Task):
                 footprint = None
         if footprint is None:
             footprint = source.getFootprint()
+        if idx_mask is None:
+            idx_mask = idx_src
         fit_hst = self.config.fitHstCosmos
         bbox, dilate = self._getBBoxDilated(footprint)
-        if self.config.useSpans:
-            spans = footprint.getSpans()
+        spans = None
         area = bbox.getArea()
         if failOnLargeFootprint and (area > self.config.maxParentFootprintPixels):
             raise RuntimeError(f'Source footprint (fallback) area={area} pix exceeds '
@@ -525,13 +531,17 @@ class MultiProFitTask(pipeBase.Task):
                 raise RuntimeError('HST cutout has zero positive pixels')
             exposurePsfs.append((exposure, psf))
         else:
-            for extra, (band, exposure) in zip(extras, exposures.items()):
+            # Try to get all PSFs first, in case it fails
+            img_psfs = [exposure.getPsf().computeKernelImage(center) for exposure in exposures.values()]
+            for extra, (band, exposure), img_psf in zip(extras, exposures.items(), img_psfs):
                 bitmask = 0
                 mask = exposure.mask.subset(bbox)
                 for bitname in self.mask_names_zero:
                     bitval = mask.getPlaneBitMask(bitname)
                     bitmask |= bitval
                 mask = (mask.array & bitmask) != 0
+
+                addition = None
                 if self.config.deblendFromDeblendedFits:
                     # To avoid using the noiseReplacer when deblending within dilated bboxes/footprints,
                     # we need to use the segmentation map to ensure that pixels from other blends are
@@ -540,23 +550,41 @@ class MultiProFitTask(pipeBase.Task):
                         segmap = extra.subset(bbox)
                         mask &= (segmap == 0) | (segmap == idx_mask)
                 else:
-                    extra.insertSource(source.getId())
-
+                    if self.config.disableNoiseReplacer:
+                        sources_extra, meta_extra = extra[1], extra[2]
+                        idx_extras = meta_extra['idx_add'][idx_src]
+                        if idx_extras:
+                            addition = afwImage.Image(bbox, dtype='F')
+                            for idx_extra in idx_extras:
+                                img_extra, bbox_extra = get_spanned_image(sources_extra[idx_extra].getFootprint())
+                                addition.subset(bbox_extra).array += img_extra
+                            addition = addition.array
+                        # Unnecessary as long as images are copies, as they are below
+                        #    meta_extra['img_bbox'] = (addition, bbox)
+                        #else:
+                        #    meta_extra['img_bbox'] = (None, None)
+                    else:
+                        extra.insertSource(source.getId())
+                # TODO: Reassess whether this is necessary (the float cast to copy, not the subset(bbox).array)
+                img = np.float64(exposure.image.subset(bbox).array)
+                if addition is not None:
+                    img += addition
                 err = np.sqrt(1. / np.float64(exposure.variance.subset(bbox).array))
                 if self.config.useSpans:
                     mask_span = afwImage.Mask(bbox)
+                    if spans is None:
+                        spans = footprint.getSpans()
                     spans.setMask(mask_span, 2)
                     mask |= (mask_span.array == 0)
 
                 err[mask] = 0
 
-                img = np.float64(exposure.image.subset(bbox).array)
                 exposure_mpf = mpfObj.Exposure(
                     band=band, image=img,
                     error_inverse=err, is_error_sigma=True, mask_inverse=~mask, use_mask_inverse=True
                 )
                 psf_mpf = mpfObj.PSF(
-                    band, image=exposure.getPsf().computeKernelImage(center), engine="galsim")
+                    band, image=img_psf, engine="galsim")
                 exposurePsfs.append((exposure_mpf, psf_mpf))
 
         return exposurePsfs, footprint, bbox, cen_hst if fit_hst else None
@@ -690,7 +718,7 @@ class MultiProFitTask(pipeBase.Task):
 
     @pipeBase.timeMethod
     def __fitSource(self, source, exposures, extras, children_cat=None, printTrace=False, plot=False,
-                    footprint=None, failOnLargeFootprint=False,
+                    footprint=None, failOnLargeFootprint=False, row=None,
                     usePriorShapeDefault=False, priorCentroidSigma=np.Inf, mag_prior=None,
                     backgroundPriors=None, fields=None, idx_src=None, children_src=None, **kwargs):
         """Fit a single deblended source with MultiProFit.
@@ -734,7 +762,7 @@ class MultiProFitTask(pipeBase.Task):
             The results returned by multiprofit.fitutils.fit_galaxy_exposures, if no error occurs.
         error : `Exception`
             The first exception encountered while fitting, if any.
-        noiseReplaced : `bool`
+        deblended : `bool`
             Whether the method inserted the source using the provided noiseReplacers.
 
         Notes
@@ -750,17 +778,17 @@ class MultiProFitTask(pipeBase.Task):
             raise RuntimeError("Can only deblend with gausspx-nopsf model")
         fit_hst = self.config.fitHstCosmos
         pixel_scale = pixel_scale_hst if fit_hst else pixel_scale_hsc
-        noiseReplaced = False
+        deblended = False
         if children_src is None:
             children_src = children_cat
 
         try:
             exposurePsfs, footprint, bbox, cen_hst = self._getExposurePsfs(
                 exposures, source, extras, footprint=footprint, failOnLargeFootprint=failOnLargeFootprint,
-                idx_mask=idx_src,
+                idx_src=idx_src,
             )
-            if not self.config.deblendFromDeblendedFits:
-                noiseReplaced = True
+            if not self.config.deblendFromDeblendedFits and not self.config.fitHstCosmos:
+                deblended = True
             cen_src = source.getCentroid()
             begin = bbox.getBegin()
             cens = cen_hst if fit_hst else cen_src - begin
@@ -834,7 +862,7 @@ class MultiProFitTask(pipeBase.Task):
                     psf_shrink=self.config.psfHwhmShrink, prior_specs=params_prior,
                     skip_fit=skip_fit, skip_fit_psf=skip_fit, background_sigma_add=(
                         self.config.backgroundSigmaAdd if self.config.fitBackground else None),
-                    replace_data_by_model = self.config.replaceDataByModel,
+                    replace_data_by_model=self.config.replaceDataByModel,
                     **kwargs,
                 )
                 if (not self.config.plotOnly) and self.config.fitGaussian:
@@ -909,8 +937,7 @@ class MultiProFitTask(pipeBase.Task):
                 filters = [x[0].band for x in exposurePsfs]
                 if not skip_fit_psf:
                     self.__setFieldsPsf(
-                        results_parent, fields["psf"], fields["psf_extra"], source, filters,
-                        key_index=1
+                        results_parent, fields["psf"], fields["psf_extra"], row, filters, key_index=1,
                     )
                 fields_base = fields["base"]
                 values_init = {}
@@ -985,9 +1012,11 @@ class MultiProFitTask(pipeBase.Task):
                                 for param in params_all:
                                     if param.name.startswith('cen'):
                                         is_x = param.name[3] == 'x'
-                                        param.limits.upper = bbox.width if is_x else bbox.height
-                                        value = param.get_value()
-                                        param.set_value(value + (offset_x if is_x else offset_y))
+                                        offset = offset_x if is_x else offset_y
+                                        if offset != 0:
+                                            param.limits.upper = bbox.width if is_x else bbox.height
+                                            value = param.get_value()
+                                            param.set_value(value + offset)
                                     if not param.fixed:
                                         params_free_i.append(param)
                                 params_free[child_cat] = params_free_i
@@ -1003,7 +1032,7 @@ class MultiProFitTask(pipeBase.Task):
                                 else:
                                     model.sources.append(source_mpf)
                         else:
-                            params_free[child] = None
+                            params_free[child_cat] = None
 
                     # Only proceed if at least one child actually has good (all finite) parameter values
                     # (maybe should be n_good > 1)...
@@ -1031,7 +1060,7 @@ class MultiProFitTask(pipeBase.Task):
                 results = {'fits': {'galsim': results}}
             if plot:
                 plt.show()
-            return results, None, noiseReplaced
+            return results, None, deblended
         except Exception as e:
             if printTrace:
                 traceback.print_exc()
@@ -1047,7 +1076,7 @@ class MultiProFitTask(pipeBase.Task):
                     band, exposure = list(exposures.items())[0]
                     plt.imshow(exposure.image)
                     plt.title(band)
-            return None, e, noiseReplaced
+            return None, e, False
 
     def __getCatalog(self, filters, results, sources):
         """Get a catalog and a dict containing the keys of extra fields to enter for each row.
@@ -1581,7 +1610,33 @@ class MultiProFitTask(pipeBase.Task):
             # TODO: Generalize this for e.g. CANDELS
             filters = [extras[0].band]
         elif not self.config.deblendFromDeblendedFits:
-            extras = [rebuildNoiseReplacer(datum['exposure'], datum['sources']) for datum in data.values()]
+            if self.config.disableNoiseReplacer:
+                extras = tuple(
+                    (datum['exposure'], datum['sources'], {'idx_add': [None]*len(sources)})
+                    for datum in data.values()
+                )
+                for exposure_extra, sources_extra, meta_extra in extras:
+                    idx_add = meta_extra['idx_add']
+                    for idx_extra, source_extra in enumerate(sources_extra):
+                        parent_extra = sources[idx_extra]['parent']
+                        has_parent = parent_extra > 0
+                        is_blended = (sources.find(parent_extra) if has_parent else source_extra)['deblend_nChild'] >= 1
+                        # Add parents back in when fitting, except if they have only one child
+                        # Parents with one child don't need to be subtracted or added back in since they're not blended
+                        idx_add[idx_extra] = [] if not is_blended else (
+                            [idx_extra] if has_parent else [
+                                int(idx_child) for idx_child in np.where(sources['parent'] == source_extra['id'])[0]
+                            ]
+                        )
+                        if has_parent and is_blended:
+                            img_deblend, bbox_src = get_spanned_image(source_extra.getFootprint())
+                            # Can happen if something is wrong with the footprint, e.g. zero-area bbox
+                            if img_deblend is None:
+                                idx_add[idx_extra] = []
+                            else:
+                                exposure_extra.image.subset(bbox_src).array -= img_deblend
+            else:
+                extras = tuple(rebuildNoiseReplacer(datum['exposure'], datum['sources']) for datum in data.values())
         else:
             if self.config.bboxDilate > 0:
                 extras = []
@@ -1639,7 +1694,7 @@ class MultiProFitTask(pipeBase.Task):
             n_child = src['deblend_nChild']
             is_parent = n_child > 0
             runtime = 0
-            noiseReplaced = False
+            deblended = False
             skipped, succeeded = False, False
             if self.config.deblendFromDeblendedFits and not is_parent:
                 skipped = True
@@ -1651,8 +1706,10 @@ class MultiProFitTask(pipeBase.Task):
                     error = f'{[key for key, fail in flags_failed.items() if fail]} flag(s) set'
             if not skipped:
                 errors = []
-                is_child = src['parent'] != 0
-                isolated = not is_child and not is_parent
+                is_child = id_parent != 0
+                id_src = src['id']
+                # Scarlet/meas_extensions_scarlet has isolated children; meas_deblender does not
+                isolated = (sources.find(id_parent)['deblend_nChild'] == 1) if is_child else not is_parent
 
                 if self.config.isolatedOnly and not isolated:
                     errors.append('not isolated')
@@ -1665,7 +1722,7 @@ class MultiProFitTask(pipeBase.Task):
                     if not is_parent or not deblend:
                         children_cat, children_src = (None, None)
                     else:
-                        children_idx = [int(x) for x in np.where(sources['parent'] == src['id'])[0]]
+                        children_idx = [int(x) for x in np.where(sources['parent'] == id_src)[0]]
                         children_cat, children_src = (
                             [catalog[x] for x in children_idx], [sources[x] for x in children_idx]
                         )
@@ -1697,9 +1754,10 @@ class MultiProFitTask(pipeBase.Task):
                             ]
                             modelspec['values_init_psf'] = values_init_psf
 
-                    results, error, noiseReplaced = self.__fitSource(
+                    results, error, deblended = self.__fitSource(
                         src, exposures, extras, children_cat=children_cat, printTrace=printTrace, plot=plot,
                         footprint=footprint, failOnLargeFootprint=is_parent,
+                        row=catalog[idx] if self.config.deblendFromDeblendedFits else None,
                         usePriorShapeDefault=self.config.usePriorShapeDefault,
                         priorCentroidSigma=self.config.priorCentroidSigma,
                         sigma_min=np.max((1e-2, self.config.psfHwhmShrink)),
@@ -1737,11 +1795,18 @@ class MultiProFitTask(pipeBase.Task):
                     row[self.runtimeKey] = runtime
                 else:
                     indicesFailed[idx] = runtime
-            id_src = src.getId()
+
             # Returns the image to pure noise
-            if noiseReplaced:
-                for noiseReplacer in extras:
-                    noiseReplacer.removeSource(id_src)
+            if deblended:
+                if self.config.disableNoiseReplacer:
+                    # This isn't actually necessary as long as the exposures are float64 copies, as they are now
+                    for exposure_extra, _, meta_extra in extras if False else []:
+                        img_added, bbox_added = meta_extra['img_bbox']
+                        if img_added is not None:
+                            exposure_extra.image.subset(bbox_added).array -= img_added
+                else:
+                    for noiseReplacer in extras:
+                        noiseReplacer.removeSource(id_src)
             errorMsg = '' if succeeded else f" {'skipped' if skipped else 'failed'}: {error}"
             # Log with a priority just above info, since MultiProFit itself will generate a lot of info
             #  logs per source.
@@ -1758,7 +1823,8 @@ class MultiProFitTask(pipeBase.Task):
             if toWrite and addedFields:
                 catalog.writeFits(filenameOut)
             # Return the exposures to their original state
-            if not self.config.fitHstCosmos and not self.config.deblendFromDeblendedFits:
+            if (not self.config.fitHstCosmos and not self.config.deblendFromDeblendedFits
+                    and not self.config.disableNoiseReplacer):
                 for noiseReplacer in extras:
                     noiseReplacer.end()
         return catalog, resultsReturn
