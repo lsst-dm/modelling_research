@@ -210,15 +210,25 @@ def match_refcat_dc2(
         A list of tract numbers.
     butlers_dc2 : `dict` [`str`, `lsst.daf.persistence.Butler`]
         A dict of butlers keyed by DC2 run name.
-    filter_ref :
-    match_afw :
-    filters_single :
-    filters_multi :
-    func_path :
+    filter_ref : `str`
+        The name of the reference filter to match on.
+    match_afw : `bool`
+        Whether to use afw's DirectMatchTask to match or not
+    filters_single : iterable [`str`]
+        A list of filters to load single-band catalogs for. Default ('g', 'r', 'i').
+    filters_multi : iterable [`str`]
+        A list of names to load multi-band catalogs for. Default empty.
+    func_path : callable
+        A function that takes `prefix_file_path`, filter name and tract number as arguments and returns
+        filenames of catalogs in that path. See `get_path_cats` for an example.
 
     Returns
     -------
+    See `modelling_research.match_refcat.match_refcat` for return value.
 
+    Notes
+    -----
+    Many of the input arguments are passed unchanged to `modelling_research.match_refcat.match_refcat` and are listed 
     """
     # Load MultiProFit catalogs and concat them. Note 3828/9 = 2.2i, 3832 et al. = 2.1.1i
     if tracts is None:
@@ -230,9 +240,9 @@ def match_refcat_dc2(
     if filter_ref is None:
         filter_ref = get_filter_ref()
     if filters_single is None:
-        filters_single = ('g', 'r', 'i')
+        filters_single = ('g', 'r', 'i', 'z')
     if filters_multi is None:
-        filters_multi = ('gri',)
+        filters_multi = ('griz',)
     if func_path is None:
         func_path = get_path_cats
 

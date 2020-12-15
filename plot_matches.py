@@ -266,7 +266,7 @@ def plot_matches(
     mag_bin_complete : `float`
         The width of the magnitude bin to plot.
     rematch : `bool`
-        Whether to attemp to rematch multiple matches to their nearest neighbour, if still unmatched.
+        Whether to attempt to rematch multiple matches to their nearest neighbour, if still unmatched.
     models_purity : iterable of `str`
         A list of models to plot compurity for. Must all be in `models`.
     plot_diffs : `bool`
