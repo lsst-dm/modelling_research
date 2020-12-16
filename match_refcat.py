@@ -1,10 +1,11 @@
 import astropy.coordinates as coord
 import astropy.units as u
-from .tables import read_split_cat_fits
+import glob
 import lsst.afw.table as afwTable
 from lsst.geom import Box2D
 from lsst.meas.astrom import DirectMatchTask, DirectMatchConfig
 import numpy as np
+from .tables import read_split_cat_fits
 from timeit import default_timer as timer
 from .timing import time_print
 
@@ -57,10 +58,27 @@ def _get_refcat_bbox(task, bbox, wcs, filterName=None, cat_corner=None):
     return refcat[(ra > ra_min) & (ra < ra_max) & (dec > dec_min) & (dec < dec_max)]
 
 
+def get_path_cats_butlerg2(prefix, band, tract, patches_regex=None):
+    if patches_regex is None:
+        patches_regex = "[0-7],[0-7]"
+    path = f'{prefix}/deepCoadd-results/{band}/{tract}/{patches_regex}/meas-{band}-{tract}-{patches_regex}.fits'
+    files = glob.glob(path)
+    print(f'Loading {len(files)} files from path={path}')
+    return np.sort(files)
+
+
+def func_patch_butlerg2(filename):
+    return filename.split('-')[-1][:-5]
+
+
+def func_patch_multiprofit(filename):
+    return filename.split('_')[-2]
+
+
 def match_refcat(
         butler_refcat, butler_data, tracts, filter_ref, func_path, match_afw=True, skymap=None,
         prefix_flux_match=None, prefix_file_path=None, filters_single=None, filters_multi=None, config=None,
-        *args, **kwargs
+        func_patch=None, *args, **kwargs
 ):
     """Match catalogs to a reference catalog.
 
@@ -76,7 +94,7 @@ def match_refcat(
         A reference filter to match on.
     func_path : callable
         A function that takes `prefix_file_path`, filter name and tract number as arguments and returns
-        filenames of catalogs in that path. See `modelling_research.dc2.get_path_cats` for an example.
+        filenames of catalogs in that path. See `get_path_cats_butlerg2` for an example.
     match_afw : `bool`
         Whether to match using `lsst.meas.astrom.DirectMatchTask`; otherwise,
         `astropy.coordinates.match_coordinates_sky` is used.
@@ -92,6 +110,8 @@ def match_refcat(
         A list of names to load multi-band catalogs for. Default empty.
     config : `lsst.meas.astrom.DirectMatchConfig`
         Configuration for `lsst.meas.astrom.DirectMatchTask`. Ignored if not `match_afw`.
+    func_patch : callable
+        A function that takes a filename and returns the patch name.
 
     Returns
     -------
@@ -127,6 +147,8 @@ def match_refcat(
         prefix_flux_match = 'lsst_'
     if prefix_file_path is None:
         prefix_file_path = ''
+    if func_patch is None:
+        func_patch = func_patch_multiprofit
 
     flux_match = f'{prefix_flux_match}{filter_ref}'
     filters_all = filters_single + filters_multi
@@ -159,7 +181,7 @@ def match_refcat(
             for idx, file in enumerate(files):
                 # This entire bit of aggravating code is a tedious way to get matched catalogs
                 # in different bands all matched on the same reference band
-                patch = file.split('_')[-2]
+                patch = func_patch(file)
                 matches = matched_ids_src.get(patch, None)
                 has_match = matches is not None
                 cat = read_split_cat_fits(file)
