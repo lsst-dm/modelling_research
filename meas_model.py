@@ -41,15 +41,18 @@ def get_source_points(sources=None):
 # TODO: Allow addition to existing image
 def get_spanned_image(footprint, bbox=None):
     spans = footprint.getSpans()
-    if bbox is None:
+    bbox_is_none = bbox is None
+    if bbox_is_none:
         bbox = footprint.getBBox()
     if not (bbox.getHeight() > 0 and bbox.getWidth() > 0):
         return None, bbox
-    img = afwImage.Image(bbox, dtype='D')
+    bbox_fp = bbox if bbox_is_none else footprint.getBBox()
+    img = afwImage.Image(bbox_fp, dtype='D')
     spans.setImage(img, 1)
-    img = img.array
-    img[img == 1] = footprint.getImageArray()
-    return img, bbox
+    img.array[img.array == 1] = footprint.getImageArray()
+    if not bbox_is_none:
+        img = img.subset(bbox)
+    return img.array, bbox
 
 
 def plot_sources(ax, cxs, cys, mags, kwargs_annotate=None, kwargs_scatter=None, path_effects=None):
