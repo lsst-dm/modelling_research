@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# # Fitting DC2 v2 Simulation Data with MultiProFit
+# # Fitting DC2 v2 Simulation Data with MultiProFit - Scarlet Edition
 # 
 # This notebook plots results from fitting sources from the Vera Rubin Observatory/LSST Dark Energy Science Collaboration (DESC, https://lsstdesc.org/) DC2 simulations (http://lsstdesc.org/DC2-production/) using MultiProFit (https://github.com/lsst-dm/multiprofit, 'MPF'). Specifically, it reads the results of using a Task to fit exposures given an existing catalog with fits from meas_modelfit (https://github.com/lsst/meas_modelfit, 'MMF'). MMF implements a variant of the SDSS CModel algorithm (https://www.sdss.org/dr12/algorithms/magnitudes/#cmodel). In additional to CModel, MultiProFit allows for multi-band fitting, as well as fitting of Sersic profiles, multi-Gaussian approximations thereof ('MG' Sersic), and non-parametric radial profiles (Gaussian mixtures model with shared ellipse parameters, effectively having a Gaussian mixture radial profile). Thus, the main results are comparisons of the two codes doing basically the same thing (single-band exponential, de Vaucouleurs, and CModel linear combination fits), followed by plots highlighting Sersic vs CModel fits, more complicated double Sersic/free-amplitude models, and MultiProFit's multi-band fits.
 
@@ -9,6 +9,7 @@
 
 
 # Import requirements
+import functools
 from lsst.daf.persistence import Butler
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -16,7 +17,7 @@ import modelling_research.dc2 as dc2
 import modelling_research.meas_model as mrMeas
 from modelling_research.calibrate import calibrate_catalogs
 from modelling_research.plotting import plotjoint_running_percentiles
-from modelling_research.plot_matches import plot_matches
+import modelling_research.plot_matches as mrPlotMatches
 import numpy as np
 import seaborn as sns
 from timeit import default_timer as timer
@@ -53,7 +54,7 @@ butler_ref = dc2.get_refcat(make=False)
 
 # Load the DC2 repo butlers: we'll need them later
 butlers_dc2 = {
-    '2.2i': Butler('/project/dtaranu/dc2/scarlet/2020-09-16/griz'),
+    '2.2i': Butler('/project/dtaranu/dc2/scarlet/2020-12-17/ugrizy'),
 }
 
 
@@ -62,24 +63,26 @@ butlers_dc2 = {
 
 # Match with the refcat using astropy's matcher
 truth_path = dc2.get_truth_path()
-tracts = {3828: (f'{truth_path}scarlet/2020-11-04_mpf-noiseReplacer/', '2.2i'),}
+tracts = {3828: (f'{truth_path}scarlet/2020-12-17_mpf-noiseReplacer/', '2.2i'),}
 filters_single = ('g', 'r', 'i', 'z')
 filters_multi = ('griz',)
 band_multi = filters_multi[0]
 patch_min, patch_max = 0, 6
 patches_regex = f"[{patch_min}-{patch_max}]"
 patches_regex = f"{patches_regex},{patches_regex}"
+get_path_cats = functools.partial(dc2.get_path_cats, patches_regex=patches_regex)
 # Calibrate catalogs: this only needs to be done once; get_cmodel_forced should only be true for single bands for reasons
 calibrate_cats = True
 get_multiprofit = True
-get_cmodel_forced = True
-get_ngmix = True
-get_scarlet = True
+# These were done in the base (siblingSub) notebook
+get_cmodel_forced = False
+get_ngmix = False
+get_scarlet = False
 if calibrate_cats:
-    butler_scarlet = Butler(f'/project/dtaranu/dc2/scarlet/2020-09-16/{band_multi}') if get_scarlet else None
+    butler_scarlet = Butler(f'/project/dtaranu/dc2/scarlet/2020-12-17/ugrizy') if get_scarlet else None
     path = tracts[3828][0]
     for bands in filters_single + filters_multi:
-        butler_ngmix = Butler(f'/project/dtaranu/dc2/scarlet/2020-09-16_ngmix/{bands}') if get_ngmix else None
+        butler_ngmix = Butler(f'/project/dtaranu/dc2/scarlet/2020-12-17_ngmix/{bands}') if get_ngmix else None
         is_single = len(bands) == 1
         files = [
             f'{path}{bands}/mpf_dc2_{bands}_3828_{x},{y}.fits'
@@ -88,11 +91,11 @@ if calibrate_cats:
         calibrate_catalogs(
             files, butlers_dc2, is_dc2=True, files_ngmix=butler_ngmix,
             butler_scarlet=butler_scarlet, get_cmodel_forced=get_cmodel_forced and is_single,
-            overwrite_band=None, retry_delay=10, n_retry_max=3
+            overwrite_band=None, retry_delay=15, n_retry_max=3
         )
 cats = dc2.match_refcat_dc2(
     butler_ref, match_afw=False, tracts=tracts, butlers_dc2=butlers_dc2,
-    filters_single=filters_single, filters_multi=filters_multi
+    filters_single=filters_single, filters_multi=filters_multi, func_path=get_path_cats,
 )
 
 
@@ -146,11 +149,11 @@ args = dict(scatterleft=True, scatterright=True,)
 args_type = {
     'resolved': {
         'limx': (14.5, 24.5),
-        'limy': (-0.6, 0.4),
+        'limy': (-0.5, 0.5),
     },
     'unresolved': {
         'limx': (16, 23),
-        'limy': (-0.08, 0.06),
+        'limy': (-0.08, 0.08),
     },
 }
 mpl.rcParams['axes.labelsize'] = 15
@@ -177,10 +180,10 @@ mpl.rcParams['axes.labelsize'] = 15
 
 
 # Galaxies
-plot_matches(
+mrPlotMatches.plot_matches(
     cats, True, models, filters_single, band_ref=band_ref, band_multi=band_multi,
     band_ref_multi=band_ref, mag_max=24.5, match_dist_asec=0.168,
-    plot_compure=False, rematch=True, **args_type['resolved'], **args
+    plot_compure=False, rematch=True, return_select_truth=True, **args_type['resolved'], **args
 )
 
 
@@ -192,14 +195,14 @@ plot_matches(
 
 
 # Stars
-plot_matches(
+mrPlotMatches.plot_matches(
     cats, False, models_stars, filters_single, band_ref=band_ref, band_multi=band_multi,
     band_ref_multi=band_ref, mag_max=23, match_dist_asec=0.168,
     plot_compure=False, rematch=True, **args_type['unresolved'], **args
 )
 
 
-# In[11]:
+# In[10]:
 
 
 # Compare ngmix vs mpf g-r colours. They agree almost shockingly well for ~80-90% of sources.
@@ -223,7 +226,7 @@ if get_ngmix:
     )
 
 
-# In[12]:
+# In[11]:
 
 
 # r-band size mass for all objects
@@ -260,7 +263,7 @@ for mag_max in (22.5, 24.5):
         plt.show()
 
 
-# In[13]:
+# In[12]:
 
 
 # Timing ngmix and MultiProFit

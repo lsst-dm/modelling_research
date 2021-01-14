@@ -9,6 +9,7 @@
 
 
 # Import requirements
+import functools
 from lsst.daf.persistence import Butler
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -53,7 +54,7 @@ butler_ref = dc2.get_refcat(make=False)
 
 # Load the DC2 repo butlers: we'll need them later
 butlers_dc2 = {
-    '2.2i': Butler('/project/dtaranu/dc2/scarlet/2020-09-16/griz'),
+    '2.2i': Butler('/project/dtaranu/dc2/scarlet/2020-12-17/ugrizy'),
 }
 
 
@@ -62,13 +63,14 @@ butlers_dc2 = {
 
 # Match with the refcat using astropy's matcher
 truth_path = dc2.get_truth_path()
-tracts = {3828: (f'{truth_path}scarlet/2020-10-28_mpf/', '2.2i'),}
+tracts = {3828: (f'{truth_path}scarlet/2020-12-17_mpf-siblingSub/', '2.2i'),}
 filters_single = ('g', 'r', 'i', 'z')
 filters_multi = ('griz',)
 band_multi = filters_multi[0]
 patch_min, patch_max = 0, 6
 patches_regex = f"[{patch_min}-{patch_max}]"
 patches_regex = f"{patches_regex},{patches_regex}"
+get_path_cats = functools.partial(dc2.get_path_cats, patches_regex=patches_regex)
 # Calibrate catalogs: this only needs to be done once; get_cmodel_forced should only be true for single bands for reasons
 calibrate_cats = True
 get_multiprofit = True
@@ -76,10 +78,10 @@ get_cmodel_forced = True
 get_ngmix = True
 get_scarlet = True
 if calibrate_cats:
-    butler_scarlet = Butler(f'/project/dtaranu/dc2/scarlet/2020-09-16/{band_multi}') if get_scarlet else None
+    butler_scarlet = Butler(f'/project/dtaranu/dc2/scarlet/2020-12-17/ugrizy') if get_scarlet else None
     path = tracts[3828][0]
     for bands in filters_single + filters_multi:
-        butler_ngmix = Butler(f'/project/dtaranu/dc2/scarlet/2020-09-16_ngmix/{bands}') if get_ngmix else None
+        butler_ngmix = Butler(f'/project/dtaranu/dc2/scarlet/2020-12-17_ngmix/{bands}') if get_ngmix else None
         is_single = len(bands) == 1
         files = [
             f'{path}{bands}/mpf_dc2_{bands}_3828_{x},{y}.fits'
@@ -92,7 +94,7 @@ if calibrate_cats:
         )
 cats = dc2.match_refcat_dc2(
     butler_ref, match_afw=False, tracts=tracts, butlers_dc2=butlers_dc2,
-    filters_single=filters_single, filters_multi=filters_multi
+    filters_single=filters_single, filters_multi=filters_multi, func_path=get_path_cats,
 )
 
 
@@ -146,11 +148,11 @@ args = dict(scatterleft=True, scatterright=True,)
 args_type = {
     'resolved': {
         'limx': (14.5, 24.5),
-        'limy': (-0.6, 0.4),
+        'limy': (-0.5, 0.5),
     },
     'unresolved': {
         'limx': (16, 23),
-        'limy': (-0.08, 0.06),
+        'limy': (-0.08, 0.08),
     },
 }
 mpl.rcParams['axes.labelsize'] = 15
@@ -199,12 +201,12 @@ plot_matches(
 )
 
 
-# In[27]:
+# In[10]:
 
 
 # Compare ngmix vs mpf g-r colours. They agree almost shockingly well for ~80-90% of sources.
 cat_mb = cats[3828]['meas'][band_multi]
-is_good = cat_mb['detect_isPatchInner'] & cat_mb['detect_isTractInner'] & (cat_mb['parent'] != 0) & ~cat['merge_footprint_sky']
+is_good = cat_mb['detect_isPatchInner'] & cat_mb['detect_isTractInner'] & (cat_mb['parent'] != 0) & ~cat_mb['merge_footprint_sky']
 cat_good = cat_mb[is_good]
 if get_ngmix:
     models_gmr = ['ngmix bd', 'MPF Sersic']
@@ -223,7 +225,7 @@ if get_ngmix:
     )
 
 
-# In[34]:
+# In[11]:
 
 
 # r-band size mass for all objects

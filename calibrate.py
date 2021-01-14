@@ -173,7 +173,6 @@ def calibrate_catalogs(
                         raise
                     elif retry_delay:
                         time.sleep(retry_delay)
-                        continue
             if log:
                 time_now = time_print(time_now, prefix='Read in ')
 
