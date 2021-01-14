@@ -5,7 +5,7 @@
 # 
 # This notebook plots results from fitting sources from the Vera Rubin Observatory/LSST Dark Energy Science Collaboration (DESC, https://lsstdesc.org/) DC2 simulations (http://lsstdesc.org/DC2-production/) using MultiProFit (https://github.com/lsst-dm/multiprofit, 'MPF'). Specifically, it reads the results of using a Task to fit exposures given an existing catalog with fits from meas_modelfit (https://github.com/lsst/meas_modelfit, 'MMF'). MMF implements a variant of the SDSS CModel algorithm (https://www.sdss.org/dr12/algorithms/magnitudes/#cmodel). In additional to CModel, MultiProFit allows for multi-band fitting, as well as fitting of Sersic profiles, multi-Gaussian approximations thereof ('MG' Sersic), and non-parametric radial profiles (Gaussian mixtures model with shared ellipse parameters, effectively having a Gaussian mixture radial profile). Thus, the main results are comparisons of the two codes doing basically the same thing (single-band exponential, de Vaucouleurs, and CModel linear combination fits), followed by plots highlighting Sersic vs CModel fits, more complicated double Sersic/free-amplitude models, and MultiProFit's multi-band fits.
 
-# In[15]:
+# In[1]:
 
 
 # Import requirements
@@ -54,7 +54,7 @@ butler_ref = dc2.get_refcat(make=False)
 
 # Load the DC2 repo butlers: we'll need them later
 butlers_dc2 = {
-    '2.2i': Butler('/project/dtaranu/dc2/scarlet/2020-12-01/ugrizy'),
+    '2.2i': Butler('/project/dtaranu/dc2/scarlet/2020-12-17/ugrizy'),
 }
 
 
@@ -63,25 +63,26 @@ butlers_dc2 = {
 
 # Match with the refcat using astropy's matcher
 truth_path = dc2.get_truth_path()
-tracts = {3828: (f'{truth_path}scarlet/2020-12-01_mpf-noiseReplacer/', '2.2i'),}
+tracts = {3828: (f'{truth_path}scarlet/2020-12-17_mpf-noiseReplacer/', '2.2i'),}
 filters_single = ('g', 'r', 'i', 'z')
 filters_multi = ('griz',)
 band_multi = filters_multi[0]
-patch_min, patch_max = 2, 3
+patch_min, patch_max = 0, 6
 patches_regex = f"[{patch_min}-{patch_max}]"
 patches_regex = f"{patches_regex},{patches_regex}"
 get_path_cats = functools.partial(dc2.get_path_cats, patches_regex=patches_regex)
 # Calibrate catalogs: this only needs to be done once; get_cmodel_forced should only be true for single bands for reasons
 calibrate_cats = True
 get_multiprofit = True
-get_cmodel_forced = True
-get_ngmix = True
-get_scarlet = True
+# These were done in the base (siblingSub) notebook
+get_cmodel_forced = False
+get_ngmix = False
+get_scarlet = False
 if calibrate_cats:
-    butler_scarlet = Butler(f'/project/dtaranu/dc2/scarlet/2020-12-01/ugrizy') if get_scarlet else None
+    butler_scarlet = Butler(f'/project/dtaranu/dc2/scarlet/2020-12-17/ugrizy') if get_scarlet else None
     path = tracts[3828][0]
     for bands in filters_single + filters_multi:
-        butler_ngmix = Butler(f'/project/dtaranu/dc2/scarlet/2020-12-01_ngmix/{bands}') if get_ngmix else None
+        butler_ngmix = Butler(f'/project/dtaranu/dc2/scarlet/2020-12-17_ngmix/{bands}') if get_ngmix else None
         is_single = len(bands) == 1
         files = [
             f'{path}{bands}/mpf_dc2_{bands}_3828_{x},{y}.fits'
@@ -102,7 +103,7 @@ cats = dc2.match_refcat_dc2(
 # 
 # All of the plots in this notebook compare stack measurements of sources measured by the LSST Science Pipelines cross-matched against a reference catalog that is part of the Science Pipelines repository. This reference catalog contains all sources brighter than 23 mags in r, and was generated through some kind of Task that must have read the original DC2 truth tables (more on that below).
 
-# In[13]:
+# In[7]:
 
 
 # Model plot setup
@@ -148,11 +149,11 @@ args = dict(scatterleft=True, scatterright=True,)
 args_type = {
     'resolved': {
         'limx': (14.5, 24.5),
-        'limy': (-0.6, 1.4),
+        'limy': (-0.5, 0.5),
     },
     'unresolved': {
         'limx': (16, 23),
-        'limy': (-0.08, 0.06),
+        'limy': (-0.08, 0.08),
     },
 }
 mpl.rcParams['axes.labelsize'] = 15
@@ -175,63 +176,15 @@ mpl.rcParams['axes.labelsize'] = 15
 # 5. Nearly everything is improved by fitting gri simultaneously - magnitudes, colours, etc. all have tigher scatter no matter the model or band. While the improvements in one-sigma scatter for magnitudes are not necessarily large, the 2+sigma scatter is significantly tighter, as are colours.
 #     - This is very encouraging and non-trivial; one could have imagined galaxies with non-detections in some bands to have more biased measurements in the bands with detections, but that doesn't seem to be the case very often. Of course it's at least partly expected since the morphology of the galaxy is identical in all bands in single-component models, but the fact that this improves colours substantially without making magnitudes worse is a major bonus.
 
-# In[18]:
-
-
-import importlib
-importlib.reload(mrPlotMatches)
-
-
-# In[19]:
+# In[8]:
 
 
 # Galaxies
-select_truths = mrPlotMatches.plot_matches(
+mrPlotMatches.plot_matches(
     cats, True, models, filters_single, band_ref=band_ref, band_multi=band_multi,
     band_ref_multi=band_ref, mag_max=24.5, match_dist_asec=0.168,
     plot_compure=False, rematch=True, return_select_truth=True, **args_type['resolved'], **args
 )
-
-
-# In[27]:
-
-
-select_truth = select_truths[3828]
-cats_type = cats[3828]
-cat_truth, cat_meas = cats_type['truth'], cats_type['meas']['griz']
-
-mag_max=24.5
-match_dist_asec=0.168
-
-mags_true = {band: -2.5 * np.log10(cat_truth[f'lsst_{band}_flux']) + 31.4 for band in bands}
-good_mags_true = {band: mags_true[band] < mag_max for band in bands}
-
-indices, dists = (cats_type[x] for x in ('indices1', 'dists1'))
-# Cheat a little and set negatives to -1
-indices = np.copy(indices)
-indices[dists > match_dist_asec] = -1
-# bincount only works on non-negative integers, but we want to preserve the true indices and
-# don't need the total count of unmatched sources
-n_matches = np.bincount(indices + 1)[1:]
-matches_multi = n_matches > 1
-mags_true_ref = mags_true[band_ref]
-
-# set multiple matches to integers < -1
-for idx in np.where(matches_multi)[0]:
-    matches = np.where(indices == idx)[0]
-    brightest = np.argmax(mags_true_ref[matches])
-    indices[matches] = -idx - 2
-    indices[matches[brightest]] = idx
-
-good = indices[select_truth] >= 0
-
-cat_truth, indices = (x[select_truth][good] for x in (cat_truth, indices))
-cats_meas = {band: cat.copy(deep=True).asAstropy()[indices]
-             for band, cat in cats_meas.items()}
-mags_true = {band: -2.5 * np.log10(cat_truth[f'lsst_{band}_flux']) + 31.4 for band in bands}
-good_mags_true = {band: mags_true[band] < mag_max for band in bands}
-if has_multi:
-    cat_multi = cat_multi.copy(deep=True).asAstropy()[indices]
 
 
 # ## Point source fluxes and colours

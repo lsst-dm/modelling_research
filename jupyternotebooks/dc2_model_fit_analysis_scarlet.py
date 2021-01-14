@@ -54,7 +54,7 @@ butler_ref = dc2.get_refcat(make=False)
 
 # Load the DC2 repo butlers: we'll need them later
 butlers_dc2 = {
-    '2.2i': Butler('/project/dtaranu/dc2/scarlet/2020-11-16/ugrizy'),
+    '2.2i': Butler('/project/dtaranu/dc2/scarlet/2020-12-17/ugrizy'),
 }
 
 
@@ -63,7 +63,7 @@ butlers_dc2 = {
 
 # Match with the refcat using astropy's matcher
 truth_path = dc2.get_truth_path()
-tracts = {3828: (f'{truth_path}scarlet/2020-12-01_mpf-siblingSub/', '2.2i'),}
+tracts = {3828: (f'{truth_path}scarlet/2020-12-17_mpf-siblingSub/', '2.2i'),}
 filters_single = ('g', 'r', 'i', 'z')
 filters_multi = ('griz',)
 band_multi = filters_multi[0]
@@ -74,14 +74,14 @@ get_path_cats = functools.partial(dc2.get_path_cats, patches_regex=patches_regex
 # Calibrate catalogs: this only needs to be done once; get_cmodel_forced should only be true for single bands for reasons
 calibrate_cats = True
 get_multiprofit = True
-get_cmodel_forced = False
-get_ngmix = False
+get_cmodel_forced = True
+get_ngmix = True
 get_scarlet = True
 if calibrate_cats:
-    butler_scarlet = Butler(f'/project/dtaranu/dc2/scarlet/2020-12-01/ugrizy') if get_scarlet else None
+    butler_scarlet = Butler(f'/project/dtaranu/dc2/scarlet/2020-12-17/ugrizy') if get_scarlet else None
     path = tracts[3828][0]
     for bands in filters_single + filters_multi:
-        butler_ngmix = Butler(f'/project/dtaranu/dc2/scarlet/2020-12-01_ngmix/{bands}') if get_ngmix else None
+        butler_ngmix = Butler(f'/project/dtaranu/dc2/scarlet/2020-12-17_ngmix/{bands}') if get_ngmix else None
         is_single = len(bands) == 1
         files = [
             f'{path}{bands}/mpf_dc2_{bands}_3828_{x},{y}.fits'
@@ -148,11 +148,11 @@ args = dict(scatterleft=True, scatterright=True,)
 args_type = {
     'resolved': {
         'limx': (14.5, 24.5),
-        'limy': (-0.6, 0.4),
+        'limy': (-0.5, 0.5),
     },
     'unresolved': {
         'limx': (16, 23),
-        'limy': (-0.08, 0.06),
+        'limy': (-0.08, 0.08),
     },
 }
 mpl.rcParams['axes.labelsize'] = 15
