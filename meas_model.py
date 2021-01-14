@@ -65,8 +65,10 @@ def plot_sources(ax, cxs, cys, mags, kwargs_annotate=None, kwargs_scatter=None, 
             text = ax_i.annotate(f'{mag:.1f}', (cx, cy), **kwargs_annotate)
             if path_effects is not None:
                 text.set_path_effects(path_effects)
+    handles = []
     for ax_i in ax:
-        ax_i.scatter(cxs, cys, **kwargs_scatter)
+        handles.append(ax_i.scatter(cxs, cys, **kwargs_scatter))
+    return handles
 
 
 @dc.dataclass
@@ -84,7 +86,7 @@ class Deblend:
         self, bands_weights, bbox=None, plot_sig=False, data_residual_factor=1, bands=None,
         sources=None, sources_true=None, sources_sig=None, measmodels=None, chi_clip=3, residual_scale=1,
         label_data=None, label_model=None, offsetxy_texts=None, color_true=None, show=True, idx_children_sub=None,
-        **kwargs
+        ax_legend=1, **kwargs
     ):
         if bands is None:
             if len(bands_weights) == 3:
@@ -101,23 +103,29 @@ class Deblend:
             offsetxy_texts = [(1, 1), (1, -1), (-1, -1), (-1, 1)]
         if color_true is None:
             color_true = 'pink'
-        imgs, models = {}, {}
+        imgs, models, weights = {}, {}, {}
         for b in bands:
             datum = self.data[b]
             weight = bands_weights.get(b, 1.)
+            weights[b] = weight
             img, model = (
                 (x.subset(bbox) if bbox is not None else x)
-                for x in (img, datum.model)
+                for x in (datum.img, datum.model)
             )
             if idx_children_sub is not None:
-                cat = self.data[band].cat
+                model = model.clone()
+                bbox_img = img.getBBox()
+                cat = self.data[b].cat
                 for idx_child in idx_children_sub:
-                    model_child, bbox_extra = get_spanned_image(child.getFootprint())
-                    model.subset(bbox_extra).array -= model_child
+                    fp_child = cat[idx_child].getFootprint()
+                    bbox_intersect = fp_child.getBBox().clippedTo(bbox_img)
+                    if bbox_intersect.area > 0:
+                        model_child, bbox_extra = get_spanned_image(fp_child, bbox=bbox_intersect)
+                        model.subset(bbox_intersect).array -= model_child
             imgs[b] = weight * img.array
-            models[b] = weight * model.arraay
+            models[b] = model
         img_rgb = make_lupton_rgb(*(imgs.values()), **kwargs)
-        img_model_rgb = make_lupton_rgb(*(models.values()), **kwargs)
+        img_model_rgb = make_lupton_rgb(*(i.array*w for i, w in zip(models.values(), weights.values())), **kwargs)
         fig, ax = plt.subplots(ncols=2)
         ax[0].imshow(img_rgb)
         bands = list(bands_weights.keys())
@@ -126,11 +134,12 @@ class Deblend:
         ax[1].imshow(img_model_rgb)
         n_y, n_x, n_c = img_rgb.shape
         if sources_true is not None:
-            plot_sources(
+            handle = plot_sources(
                 ax, *get_source_points(sources_true),
                 kwargs_annotate=dict(color=color_true, fontsize=5, ha='right', va='top'),
                 kwargs_scatter=dict(marker='o', color=color_true, s=0.5)
-            )
+            )[ax_legend]
+            handle.set_label('True Mags')
 
         for idx_model, (model, specs) in enumerate(measmodels.items()):
             cxs, cys, mags, ellipses = [], [], [], []
@@ -150,56 +159,81 @@ class Deblend:
                         shape = ellipse.shape
                         if shape is not None:
                             ellipses.append(((cx, cy), shape.r_maj, shape.r_min, shape.ang))
-            for ax_i in ax:
-                scatter_opts = specs.get('scatter_opts', {})
-                ax_i.scatter(cxs, cys, **scatter_opts)
-                for spec in ('color', 'edgecolors', 'facecolors'):
-                    color = scatter_opts.get(spec)
-                    if color is not None:
-                        break
-                if color is None:
-                    color = 'white'
-                for cx, cy, mag in zip(cxs, cys, mags):
-                    ax_i.annotate(f'{mag:.1f}', (cx + offsetxy_text[0], cy + offsetxy_text[1]), color=color,
-                                  fontsize=5)
-            for ellipse in ellipses:
-                for ax_i in ax:
-                    ell_patch = patches.Ellipse(*ellipse, fill=False)
-                    ax_i.add_patch(ell_patch)
+            if cxs and cys:
+                for idx_ax, ax_i in enumerate(ax):
+                    scatter_opts = specs.get('scatter_opts', {})
+                    handle = ax_i.scatter(cxs, cys, **scatter_opts)
+                    if idx_ax == ax_legend:
+                        handle.set_label(model)
+                    for spec in ('color', 'edgecolors', 'facecolors'):
+                        color = scatter_opts.get(spec)
+                        if color is not None:
+                            break
+                    if color is None:
+                        color = 'white'
+                    for cx, cy, mag in zip(cxs, cys, mags):
+                        ax_i.annotate(f'{mag:.1f}', (cx + offsetxy_text[0], cy + offsetxy_text[1]), color=color,
+                                      fontsize=5)
+                for ellipse in ellipses:
+                    for ax_i in ax:
+                        ell_patch = patches.Ellipse(*ellipse, fill=False)
+                        ax_i.add_patch(ell_patch)
         ax[1].set_title(f'{label_bands} {label_model} (neighb.*{data_residual_factor:.1f})')
+        legend = ax[ax_legend].legend(facecolor='k')
+        for text, handle in zip(legend.get_texts(), legend.legendHandles):
+            color = handle.get_edgecolor()
+            if color is None:
+                color = handle.get_facecolor()
+            # Don't ask why but sometimes one or the other functions returns a list of length one
+            text.set_color(color[0] if isinstance(color, list) else color[0])
 
         if plot_sig:
-            fig, ax = plt.subplots(ncols=2)
+            fig_sig, ax_sig = plt.subplots(ncols=2)
             chi_rgb = np.zeros_like(img_rgb)
             res_rgb = np.zeros_like(img_rgb)
 
             for idx, band in enumerate(bands):
-                residual = self.data[band].model.array - data_residual_factor * self.data[band].img.array
-                chi = residual * self.data[band].siginv.array
+                data_band = self.data[band]
+                model_b, img_b, siginv_b = (
+                    x if bbox is None else x.subset(bbox)
+                    for x in (models[band], data_band.img, data_band.siginv)
+                )
+                residual = model_b.array - data_residual_factor * img_b.array
+                chi = residual * siginv_b.array
                 chi_rgb[:, :, idx] = 256 * np.clip(chi / (2 * chi_clip) + 0.5, 0, 1)
                 res_rgb[:, :, idx] = 256 * np.clip(residual / (2 * residual_scale) + 0.5, 0, 1)
-            ax[0].imshow(res_rgb)
-            ax[0].set_title(f'{label_bands} Residuals (clipped +/- {residual_scale:.2f})')
-            ax[1].imshow(chi_rgb)
-            ax[1].set_title(f'{label_bands} Chi (clipped +/- {chi_clip:.2f})')
+            ax_sig[0].imshow(res_rgb)
+            ax_sig[0].set_title(f'{label_bands} Residuals (clipped +/- {residual_scale:.2f})')
+            ax_sig[1].imshow(chi_rgb)
+            ax_sig[1].set_title(f'{label_bands} Chi (clipped +/- {chi_clip:.2f})')
 
             if sources_sig is not None:
-                plot_sources(
-                    ax, *self._get_points(sources_sig),
+                handle = plot_sources(
+                    ax_sig, *get_source_points(sources_sig),
                     # Can also try bbox=dict(facecolor='black', pad=1) but I find that it obscures the image too much
                     kwargs_annotate=dict(color='w', fontsize=4.5, ha='right', va='top'),
                     #kwargs_scatter=dict(marker='o', facecolor='w', edgecolor='k', s=9),
                     kwargs_scatter=dict(marker='o', facecolor='none', edgecolor='none', s=0),
                     path_effects=[pathfx.withStroke(linewidth=1.5, foreground='k')],
-                )
+                )[ax_legend]
+                handle.set_label('True Mags')
+                legend = ax[ax_legend].legend(facecolor='k')
+                for text, handle in zip(legend.get_texts(), legend.legendHandles):
+                    color = handle.get_edgecolor()
+                    if color is None:
+                        color = handle.get_facecolor()
+                    # Don't ask why but sometimes one or the other functions returns a list of length one
+                    text.set_color(color[0] if isinstance(color, list) else color[0])
+        else:
+            fig_sig, ax_sig = None, None
         if show:
             plt.show()
+        return fig, ax, fig_sig, ax_sig
 
     def __post_init__(self):
         self.parent = self.cat_ref[self.idx_parent]
         self.is_child = self.cat_ref['parent'] == self.parent['id']
-        self.idx_children = np.nonzero(self.is_child)[0]
-        self.idx_children.dtype = np.int16
+        self.idx_children = np.nonzero(self.is_child)[0].astype(np.int16)
         self.children = self.cat_ref[self.is_child]
 
 
