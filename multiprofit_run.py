@@ -1,11 +1,11 @@
 import argparse
 import logging
-import numpy as np
 import sys
 
 from lsst.daf.persistence import Butler
 from lsst.geom import SpherePoint, degrees
 from modelling_research.multiprofit_task import MultiProFitConfig, MultiProFitTask
+import modelling_research.fit_multiband as mrFitmb
 from multiprofit.utils import str2bool
 
 
@@ -70,12 +70,13 @@ def get_data(butler, tract, name_patch, cat_type=None, exposure_type=None, filte
         cat_type = "deepCoadd_meas"
 
     dataId = {"tract": tract, "patch": name_patch}
-    data = {}
+    data = []
     for i, band in enumerate(filters):
-        data[band] = {
-            'exposure': butler.get(exposure_type, dataId, filter=band),
-            'sources': butler.get(cat_type, dataId, filter=band),
-        }
+        data.append(mrFitmb.CatalogExposure(
+            band=band,
+            catalog=butler.get(cat_type, dataId, filter=band),
+            exposure=butler.get(exposure_type, dataId, filter=band),
+        ))
     return data
 
 
@@ -89,27 +90,22 @@ def get_flags():
     """
     # TODO: Figure out if there's a way to get help from docstrings (defaults can be read easily)
     flags = {
-        'repo': dict(type=str, nargs='?', default="/datasets/hsc/repo/rerun/RC/w_2020_22/DM-25176/",
+        'repo': dict(type=str, nargs='?', default="/datasets/hsc/repo/rerun/RC/w_2021_02/DM-28282/",
                      help="Path to Butler repository to read from"),
         'filenameOut': dict(type=str, nargs='?', default=None, help="Output catalog filename", kwarg=True),
         'radec': dict(type=float, nargs=2, default=None, help="RA/dec coordinate of source"),
         'name_patch': dict(type=str, nargs='?', default="4,4", help="Butler patch string"),
         'tract': dict(type=int, nargs='?', default=9813, help="Butler tract ID"),
         'filters': dict(type=str, nargs='*', default=['HSC-I'], help="List of bandpass filters"),
-        'idx_begin': dict(type=int, nargs='?', default=0, help="Initial row index to fit"),
-        'idx_end': dict(type=int, nargs='?', default=np.Inf, help="Final row index to fit"),
         'img_multi_plot_max': dict(type=float, nargs='?', default=None,
                                    help="Max value for colour images in plots"),
         'mag_prior_field': dict(type=str, nargs='?', default='base_PsfFlux_mag'),
         'filter_prior': dict(type=str, nargs='?', default='HSC-I'),
         'weights_band': dict(type=float, nargs='*', default=None,
-                             help="Weights per filter to rescale cdimages in multi-band plots"),
+                             help="Weights per filter to rescale images in multi-band plots"),
         'path_cosmos_galsim': dict(type=str, nargs='?',
                                    default="/project/dtaranu/cosmos/hst/COSMOS_25.2_training_sample",
                                    help="Path to GalSim COSMOS catalogs"),
-        'plot': dict(action='store_true', default=False, help="Plot each source fit"),
-        'printTrace': dict(action='store_true', default=False, help="Print traceback for errors"),
-        'useRef': dict(action='store_true', default=False, help="Use deepCoadd_ref source catalog"),
         'loglevel': {'type': int, 'nargs': '?', 'default': 21, 'help': 'logging.Logger default level'},
     }
     for param, field in MultiProFitConfig._fields.items():
@@ -148,7 +144,7 @@ def main():
         ra, dec = args.radec
         tract, patch = get_patch_tract(ra, dec, butler)
         name_patch = ','.join([str(x) for x in patch.getIndex()])
-    sources = butler.get('deepCoadd_ref', tract=tract, patch=name_patch) if args.useRef else None
+    sources = butler.get('deepCoadd_ref', tract=tract, patch=name_patch)
 
     argsvars = vars(args)
     kwargs = {key: argsvars[key] for key in kwargs}
@@ -165,11 +161,11 @@ def main():
 
     task = MultiProFitTask(config=config)
     data = get_data(butler, tract, name_patch=name_patch, filters=args.filters)
-    catalog, results = task.fit(data, idx_begin=args.idx_begin, idx_end=args.idx_end,
-                                printTrace=args.printTrace, plot=args.plot,
-                                img_multi_plot_max=args.img_multi_plot_max, weights_band=args.weights_band,
-                                path_cosmos_galsim=args.path_cosmos_galsim, sources=sources,
-                                mags_prior=mags_prior)
+    catalog, results = task.fit(
+        data, sources,
+        img_multi_plot_max=args.img_multi_plot_max, weights_band=args.weights_band,
+        path_cosmos_galsim=args.path_cosmos_galsim, mags_prior=mags_prior,
+    )
     return catalog, results
 
 
