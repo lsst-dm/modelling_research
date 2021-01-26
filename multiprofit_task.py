@@ -200,87 +200,83 @@ class MultiProFitConfig(pexConfig.Config):
                     self.update(**{req: True})
         defaults = {
             'psfmodel': namePsfModel,
-            'psfpixel': "T",
+            'psfpixel': True,
         }
         init_values = self.plotOnly or self.deblendFromDeblendedFits
         inittype_moments = "moments" if not init_values else "values"
         if self.fitGaussianPsfConv:
             modelSpecs.append(
-                dict(name="gausspx", model=nameSersicModel, fixedparams='nser', initparams="nser=0.5",
-                     inittype=inittype_moments, **defaults))
+                mpfFit.ModelSpec(name="gausspx", model=nameSersicModel, fixedparams='nser', initparams="nser=0.5",
+                                 inittype=inittype_moments, **defaults))
         if self.fitCModel:
             modelSpecs.extend([
-                dict(name=f"{nameMG}expgpx", model=nameSersicModel, fixedparams='nser', initparams="nser=1",
-                     inittype="guessgauss2exp:gausspx" if not init_values else "values", **defaults),
-                dict(name=f"{nameMG}devepx", model=nameSersicModel, fixedparams='nser', initparams="nser=4",
-                     inittype=f"guessexp2dev:{nameMG}expgpx" if not init_values else "values", **defaults),
-                dict(name=f"{nameMG}cmodelpx", model=f"{nameSersicPrefix}:2",
-                     fixedparams="cenx;ceny;nser;sigma_x;sigma_y;rho", initparams="nser=4,1",
-                     inittype=f"{nameMG}devepx;{nameMG}expgpx", **defaults),
+                mpfFit.ModelSpec(name=f"{nameMG}expgpx", model=nameSersicModel, fixedparams='nser', initparams="nser=1",
+                                 inittype="guessgauss2exp:gausspx" if not init_values else "values", **defaults),
+                mpfFit.ModelSpec(name=f"{nameMG}devepx", model=nameSersicModel, fixedparams='nser', initparams="nser=4",
+                                 inittype=f"guessexp2dev:{nameMG}expgpx" if not init_values else "values", **defaults),
+                mpfFit.ModelSpec(name=f"{nameMG}cmodelpx", model=f"{nameSersicPrefix}:2",
+                                 fixedparams="cenx;ceny;nser;sigma_x;sigma_y;rho", initparams="nser=4,1",
+                                 inittype=f"{nameMG}devepx;{nameMG}expgpx", **defaults),
             ])
             if self.fitSersicFromCModel:
-                modelSpecs.extend([
-                    dict(name=f"{nameMG}serbpx", model=nameSersicModel, fixedparams='', initparams='',
-                         inittype="best" if not init_values else "values", **defaults),
-                ])
+                modelSpecs.append(mpfFit.ModelSpec(
+                    name=f"{nameMG}serbpx", model=nameSersicModel, fixedparams='', initparams='',
+                    inittype="best" if not init_values else "values", **defaults
+                ))
                 if self.fitSersicFromCModelAmplitude:
-                    modelSpecs.append(
-                        dict(name=f"{nameMG}serbapx", model=nameSersicAmpModel, fixedparams=allParams,
-                             initparams="rho=inherit;rscale=modify", inittype=f"{nameMG}serbpx",
-                             unlimitedparams="sigma_x;sigma_y", **defaults)
-                    )
+                    modelSpecs.append(mpfFit.ModelSpec(
+                        name=f"{nameMG}serbapx", model=nameSersicAmpModel, fixedparams=allParams,
+                        initparams="rho=inherit;rscale=modify", inittype=f"{nameMG}serbpx",
+                        unlimitedparams="sigma_x;sigma_y", **defaults
+                    ))
                 if self.fitSersicX2FromSerExp:
-                    modelSpecs.append(
-                        dict(name=f"{nameMG}serx2sepx", model=nameSersicX2Model, fixedparams='',
-                             initparams='',
-                             inittype=f"{nameMG}serbpx;{nameMG}expgpx" if not init_values else "values",
-                             **defaults)
-                    )
+                    modelSpecs.append(mpfFit.ModelSpec(
+                        name=f"{nameMG}serx2sepx", model=nameSersicX2Model, fixedparams='', initparams='',
+                        inittype=f"{nameMG}serbpx;{nameMG}expgpx" if not init_values else "values", **defaults
+                    ))
                     if self.fitSersicX2SEAmplitude:
-                        modelSpecs.append(
-                            dict(name=f"{nameMG}serx2seapx", model=nameSersicX2AmpModel,
-                                 fixedparams=allParams, initparams="rho=inherit;rscale=modify",
-                                 inittype=f"{nameMG}serx2sepx", unlimitedparams="sigma_x;sigma_y", **defaults)
-                        )
+                        modelSpecs.append(mpfFit.ModelSpec(
+                            name=f"{nameMG}serx2seapx", model=nameSersicX2AmpModel, fixedparams=allParams,
+                            initparams="rho=inherit;rscale=modify", inittype=f"{nameMG}serx2sepx",
+                            unlimitedparams="sigma_x;sigma_y", **defaults
+                        ))
             if self.fitDevExpFromCModel:
-                modelSpecs.append(
-                    dict(name=f"{nameMG}devexppx", model=nameSersicX2Model, fixedparams='nser',
-                         initparams='nser=4,1',
-                         inittype=f"{nameMG}devepx;{nameMG}expgpx" if not init_values else "values",
-                         **defaults)
-                )
+                modelSpecs.append(mpfFit.ModelSpec(
+                    name=f"{nameMG}devexppx", model=nameSersicX2Model, fixedparams='nser', initparams='nser=4,1',
+                    inittype=f"{nameMG}devepx;{nameMG}expgpx" if not init_values else "values",
+                    **defaults
+                ))
                 if self.fitSersicX2FromDevExp:
-                    modelSpecs.append(
-                        dict(name=f"{nameMG}serx2px", model=nameSersicX2Model, fixedparams='', initparams='',
-                             inittype=f"{nameMG}devexppx" if not init_values else "values", **defaults)
-                    )
+                    modelSpecs.append(mpfFit.ModelSpec(
+                        name=f"{nameMG}serx2px", model=nameSersicX2Model, fixedparams='', initparams='',
+                        inittype=f"{nameMG}devexppx" if not init_values else "values", **defaults
+                    ))
                     if self.fitSersicX2DEAmplitude:
-                        modelSpecs.append(
-                            dict(name=f"{nameMG}serx2apx", model=nameSersicX2AmpModel, fixedparams=allParams,
-                                 initparams="rho=inherit;rscale=modify", inittype=f"{nameMG}serx2px",
-                                 **defaults)
-                        )
+                        modelSpecs.append(mpfFit.ModelSpec(
+                            name=f"{nameMG}serx2apx", model=nameSersicX2AmpModel, fixedparams=allParams,
+                            initparams="rho=inherit;rscale=modify", inittype=f"{nameMG}serx2px", **defaults
+                        ))
         if self.fitCModelExp:
-            modelSpecs.append(
-                dict(name=f"{nameMG}expcmpx", model=nameSersicModel, fixedparams='cenx;ceny;nser',
-                     initparams="nser=1", inittype="moments", **defaults)
-            )
+            modelSpecs.append(mpfFit.ModelSpec(
+                name=f"{nameMG}expcmpx", model=nameSersicModel, fixedparams='cenx;ceny;nser', initparams="nser=1",
+                inittype="moments", **defaults
+            ))
         if self.fitSersicFromGauss:
-            modelSpecs.append(
-                dict(name=f"{nameMG}sergpx", model=nameSersicModel, fixedparams='', initparams="nser=1",
-                     inittype="guessgauss2exp:gausspx" if not init_values else "values", **defaults)
-            )
+            modelSpecs.append(mpfFit.ModelSpec(
+                name=f"{nameMG}sergpx", model=nameSersicModel, fixedparams='', initparams="nser=1",
+                inittype="guessgauss2exp:gausspx" if not init_values else "values", **defaults
+            ))
         if self.fitSersic:
-            modelSpecs.append(
-                dict(name=f"{nameMG}sermpx", model=nameSersicModel, fixedparams='', initparams="nser=1",
-                     inittype=inittype_moments, **defaults)
-            )
+            modelSpecs.append(mpfFit.ModelSpec(
+                name=f"{nameMG}sermpx", model=nameSersicModel, fixedparams='', initparams="nser=1",
+                inittype=inittype_moments, **defaults
+            ))
             if self.fitSersicAmplitude:
-                modelSpecs.append(
-                    dict(name=f"{nameMG}serapx", model=nameSersicAmpModel, fixedparams=allParams,
-                         initparams="rho=inherit;rscale=modify", inittype=f"{nameMG}sermpx",
-                         unlimitedparams="sigma_x;sigma_y", **defaults)
-                )
+                modelSpecs.append(mpfFit.ModelSpec(
+                    name=f"{nameMG}serapx", model=nameSersicAmpModel, fixedparams=allParams,
+                    initparams="rho=inherit;rscale=modify", inittype=f"{nameMG}sermpx",
+                    unlimitedparams="sigma_x;sigma_y", **defaults
+                ))
         return modelSpecs
 
 
@@ -399,7 +395,7 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
         if modelSpecs is None:
             modelSpecs = self.config.getModelSpecs()
         self.modelSpecs = modelSpecs
-        self.modelSpecsDict = {modelspec['name']: modelspec for modelspec in modelSpecs}
+        self.modelSpecsDict = {modelspec.name: modelspec for modelspec in modelSpecs}
         self.schema = None
         self.modeller = mpfObj.Modeller(None, 'scipy')
         self.models = {}
@@ -892,7 +888,7 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
                 }
                 skip_fit_psf = True
                 # Check if any PSF fit failed (e.g. because a large blend was skipped entirely) and redo if so
-                values_init_psf = self.modelSpecs[0]['values_init_psf']
+                values_init_psf = self.modelSpecs[0].values_init_psf
                 for band, params_psf in values_init_psf.items():
                     for name_param, value_param in params_psf:
                         if not np.isfinite(value_param):
@@ -910,16 +906,16 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
                 # Check if a model fit failed (e.g. as above) and zero init params
                 # This will need to be updated if background models become non-linear
                 for modelSpec in self.modelSpecs:
-                    values_init_model = modelSpec['values_init']
+                    values_init_model = modelSpec.values_init
                     if not skip_fit_psf:
-                        del modelSpec['values_init_psf']
+                        del modelSpec.values_init_psf
                     for name_param, value_param in values_init_model:
                         if not np.isfinite(value_param):
                             values_init_model = [
                                 (name_p, self.__getParamValueDefault(name_p))
                                 for name_p, _ in values_init_model
                             ]
-                            modelSpec['values_init'] = values_init_model
+                            modelSpec.values_init = values_init_model
                             break
                 results_parent = mpfFit.fit_galaxy_exposures(
                     exposurePsfs, bands, [self.modelSpecs[0]], plot=False, print_exception=True,
@@ -935,11 +931,11 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
                 values_init = {}
                 # Iterate through each model and do a simultaneous re-fit
                 for modelSpec in self.modelSpecsDict.values():
-                    name_modeltype = modelSpec['model']
-                    name_model = modelSpec['name']
+                    name_modeltype = modelSpec.model
+                    name_model = modelSpec.name
                     fields_base_model = fields_base[name_model]
 
-                    inittype_split = modelSpec['inittype'].split(';')
+                    inittype_split = modelSpec.inittype.split(';')
                     # TODO: Come up with a better way to determine if initializing from models
                     if inittype_split[0] in self.modelSpecsDict:
                         modelSpecs = [self.modelSpecsDict[name_init] for name_init in inittype_split]
@@ -1214,7 +1210,7 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
         unit : `str`
             The default unit of the parameter, if any; '' otherwise.
         """
-        name_full = f'{prefix if prefix else ""}{"instFlux" if nameParam is "flux" else nameParam}'
+        name_full = f'{prefix if prefix else ""}{"instFlux" if nameParam == "flux" else nameParam}'
         doc, unit = MultiProFitTask.params_multiprofit.get(nameParam, ('', ''))
         return name_full, doc, unit
 
@@ -1505,7 +1501,7 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
         self.__setFieldsPsf(results, fields["psf"], fields["psf_extra"], row, filters)
         self.__setFieldsSource(results, fields["base"], fields["base_extra"], row)
         if self.config.computeMeasModelfitLikelihood:
-            model = results['models'][self.modelSpecs[0]["model"]]
+            model = results['models'][self.modelSpecs[0].model]
             self.__setFieldsMeasmodel(exposures, model, source, fields["measmodel"], row)
 
     def fit(
@@ -1728,11 +1724,11 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
                                 (name_field, row_in[key]) for name_field, key in fields_band[name_psfmodel]
                             ]
                         for modelspec in self.modelSpecs:
-                            modelspec['values_init'] = [
+                            modelspec.values_init = [
                                 (name_field, row_in[key])
                                 for name_field, key in fields['base'][modelspec['name']]
                             ]
-                            modelspec['values_init_psf'] = values_init_psf
+                            modelspec.values_init_psf = values_init_psf
 
                     results, error, deblended = self.__fitSource(
                         src, exposures, extras, children_cat=children_cat,
