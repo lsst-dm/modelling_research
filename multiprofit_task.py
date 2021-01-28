@@ -712,7 +712,9 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
     def __fitSource(self, source, exposures, extras, children_cat=None,
                     footprint=None, failOnLargeFootprint=False, row=None,
                     usePriorShapeDefault=False, priorCentroidSigma=np.Inf, mag_prior=None,
-                    backgroundPriors=None, fields=None, idx_src=None, children_src=None, **kwargs):
+                    backgroundPriors=None, fields=None, idx_src=None, children_src=None, dummy=False,
+                    kwargs_moments=None,
+                    **kwargs):
         """Fit a single deblended source with MultiProFit.
 
         Parameters
@@ -741,6 +743,8 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
             Dict by band of 2-element tuple containing background level prior mean and sigma.
         children_cat : iterable of `lsst.afw.table.SourceRecord`
             Child sources used to determine original bounding boxes used in fitting deblended sources and for dilation.
+        kwargs_moments : `dict`
+            Additional arguments to pass to the kwargs_moments param of multiprofit.fitutils.fit_galaxy_exposures.
         **kwargs
             Additional keyword arguments to pass to `multiprofit.fitutils.fit_galaxy_exposures`.
 
@@ -759,6 +763,8 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
         deblended source fits ("deepCoadd_ref") whereas children_cat should be the resume catalog with MultiProFit
         measurements, which likely contains filter-dependent footprints that may not match those from the deepCoadd_ref.
         """
+        if kwargs_moments is None:
+            kwargs_moments = {}
         has_children = children_src is not None
         n_children = len(children_cat) if has_children else 0
         deblend_no_init = self.config.deblend and has_children
@@ -843,10 +849,13 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
 
             deblend_from_fits = self.config.deblendFromDeblendedFits and children_cat is not None
             if not deblend_from_fits:
-                skip_fit = self.config.plotOnly is True
+                skip_fit = dummy or self.config.plotOnly
+                # No good reason to allow default centroids
+                kwargs_moments_in = kwargs_moments.copy()
+                kwargs_moments_in['cenx'], kwargs_moments_in['ceny'] = cens
                 results = mpfFit.fit_galaxy_exposures(
                     exposurePsfs, bands, self.modelSpecs, plot=self.config.plot, print_exception=True,
-                    cenx=cens[0], ceny=cens[1], fit_background=self.config.fitBackground,
+                    kwargs_moments=kwargs_moments_in, fit_background=self.config.fitBackground,
                     psf_shrink=self.config.psfHwhmShrink, prior_specs=params_prior,
                     skip_fit=skip_fit, skip_fit_psf=skip_fit, background_sigma_add=(
                         self.config.backgroundSigmaAdd if self.config.fitBackground else None),
@@ -917,9 +926,11 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
                             ]
                             modelSpec.values_init = values_init_model
                             break
+                kwargs_moments_in = kwargs_moments.copy()
+                kwargs_moments_in['cenx'], kwargs_moments_in['ceny'] = cens
                 results_parent = mpfFit.fit_galaxy_exposures(
                     exposurePsfs, bands, [self.modelSpecs[0]], plot=False, print_exception=True,
-                    cenx=cens[0], ceny=cens[1], fit_background=self.config.fitBackground,
+                    kwargs_moments=kwargs_moments_in, fit_background=self.config.fitBackground,
                     psf_shrink=self.config.psfHwhmShrink, skip_fit=True, skip_fit_psf=skip_fit_psf, **kwargs
                 )
                 filters = [x[0].band for x in exposurePsfs]
