@@ -34,7 +34,7 @@ def get_patch_tract(ra, dec, butler):
     return tract, skymap[tract].findPatch(spherePoint)
 
 
-def get_data(butler, tract, name_patch, cat_type=None, exposure_type=None, filters=None):
+def get_data(butler, tract, name_patch, cat_type=None, exposure_type=None, bands=None):
     """Get the necessary data to run the MultiProFit task on a range of sources in a region.
 
     Parameters
@@ -49,7 +49,7 @@ def get_data(butler, tract, name_patch, cat_type=None, exposure_type=None, filte
         The type of catalog to retrieve from the butler. Default "deepCoadd_meas".
     exposure_type : `str`
         The type of exposure to retrieve from the butler. Default "deepCoadd_calexp".
-    filters : iterable of `str`
+    bands : iterable of `str`
         Names of bandpass filters for filter-dependent fields. Default ["HSC-I", "HSC-R", "HSC-G"].
 
     Returns
@@ -62,8 +62,8 @@ def get_data(butler, tract, name_patch, cat_type=None, exposure_type=None, filte
             The catalog of sources to fit (`lsst.afw.table.SourceCatalog`)
 
     """
-    if filters is None:
-        filters = ["HSC-I", "HSC-R", "HSC-G"]
+    if bands is None:
+        bands = ["HSC-I", "HSC-R", "HSC-G"]
     if exposure_type is None:
         exposure_type = "deepCoadd_calexp"
     if cat_type is None:
@@ -71,7 +71,7 @@ def get_data(butler, tract, name_patch, cat_type=None, exposure_type=None, filte
 
     dataId = {"tract": tract, "patch": name_patch}
     data = []
-    for i, band in enumerate(filters):
+    for i, band in enumerate(bands):
         data.append(mrFitmb.CatalogExposure(
             band=band,
             catalog=butler.get(cat_type, dataId, filter=band),
@@ -96,21 +96,18 @@ def get_flags():
         'radec': dict(type=float, nargs=2, default=None, help="RA/dec coordinate of source"),
         'name_patch': dict(type=str, nargs='?', default="4,4", help="Butler patch string"),
         'tract': dict(type=int, nargs='?', default=9813, help="Butler tract ID"),
-        'filters': dict(type=str, nargs='*', default=['HSC-I'], help="List of bandpass filters"),
         'img_multi_plot_max': dict(type=float, nargs='?', default=None,
                                    help="Max value for colour images in plots"),
         'mag_prior_field': dict(type=str, nargs='?', default='base_PsfFlux_mag'),
         'filter_prior': dict(type=str, nargs='?', default='HSC-I'),
         'weights_band': dict(type=float, nargs='*', default=None,
                              help="Weights per filter to rescale images in multi-band plots"),
-        'path_cosmos_galsim': dict(type=str, nargs='?',
-                                   default="/project/dtaranu/cosmos/hst/COSMOS_25.2_training_sample",
-                                   help="Path to GalSim COSMOS catalogs"),
         'loglevel': {'type': int, 'nargs': '?', 'default': 21, 'help': 'logging.Logger default level'},
     }
     for param, field in MultiProFitConfig._fields.items():
-        type_default = field.dtype
-        flag = dict(type=type_default if type_default is not bool else str2bool, nargs='?',
+        is_list = hasattr(field, 'itemtype')
+        type_default = field.itemtype if is_list else field.dtype
+        flag = dict(type=type_default if type_default is not bool else str2bool, nargs='*' if is_list else '?',
                     default=field.default,
                     help=f'Value for MultiProFitConfig.{param}', kwarg=True)
         flags[param] = flag
@@ -131,7 +128,7 @@ def main():
     try:
         args = parser.parse_args()
     except Exception as e:
-        print(e)
+        print(f'Error: {e}')
         parser.print_help()
         sys.exit(status=1)
     logging.basicConfig(stream=sys.stdout, level=args.loglevel)
@@ -150,7 +147,7 @@ def main():
     kwargs = {key: argsvars[key] for key in kwargs}
     config = MultiProFitTask.ConfigClass(**kwargs)
 
-    if config.usePriorShapeDefault:
+    if True or config.usePriorShapeDefault:
         field_prior = args.mag_prior_field
         dataId_prior = {'tract': tract, 'patch': name_patch, 'filter': args.filter_prior}
         cat_prior = butler.get("deepCoadd_meas", dataId_prior)
@@ -160,14 +157,13 @@ def main():
         mags_prior = None
 
     task = MultiProFitTask(config=config)
-    data = get_data(butler, tract, name_patch=name_patch, filters=args.filters)
+    data = get_data(butler, tract, name_patch=name_patch, bands=args.bands)
     catalog, results = task.fit(
-        data, sources,
-        img_multi_plot_max=args.img_multi_plot_max, weights_band=args.weights_band,
-        path_cosmos_galsim=args.path_cosmos_galsim, mags_prior=mags_prior,
+        data, sources, img_multi_plot_max=args.img_multi_plot_max, weights_band=args.weights_band,
+        mags_prior=mags_prior,
     )
     return catalog, results
 
 
 if __name__ == '__main__':
-    main()
+    cat, res = main()
