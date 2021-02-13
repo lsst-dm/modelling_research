@@ -34,7 +34,9 @@ def get_patch_tract(ra, dec, butler):
     return tract, skymap[tract].findPatch(spherePoint)
 
 
-def get_data(butler, tract, name_patch, cat_type=None, exposure_type=None, bands=None):
+def get_data(
+        butler, tract, name_patch, cat_type=None, exposure_type=None, bands=None, get_calib=False, type_calib=None
+):
     """Get the necessary data to run the MultiProFit task on a range of sources in a region.
 
     Parameters
@@ -68,6 +70,11 @@ def get_data(butler, tract, name_patch, cat_type=None, exposure_type=None, bands
         exposure_type = "deepCoadd_calexp"
     if cat_type is None:
         cat_type = "deepCoadd_meas"
+    if get_calib:
+        if type_calib is None:
+            type_calib = "deepCoadd_photoCalib"
+    else:
+        type_calib = None
 
     dataId = {"tract": tract, "patch": name_patch}
     data = []
@@ -76,6 +83,7 @@ def get_data(butler, tract, name_patch, cat_type=None, exposure_type=None, bands
             band=band,
             catalog=butler.get(cat_type, dataId, filter=band),
             exposure=butler.get(exposure_type, dataId, filter=band),
+            calib=butler.get(type_calib, dataId, filter=band) if type_calib is not None else None,
         ))
     return data
 
@@ -98,7 +106,6 @@ def get_flags():
         'tract': dict(type=int, nargs='?', default=9813, help="Butler tract ID"),
         'img_multi_plot_max': dict(type=float, nargs='?', default=None,
                                    help="Max value for colour images in plots"),
-        'mag_prior_field': dict(type=str, nargs='?', default='base_PsfFlux_mag'),
         'filter_prior': dict(type=str, nargs='?', default='HSC-I'),
         'weights_band': dict(type=float, nargs='*', default=None,
                              help="Weights per filter to rescale images in multi-band plots"),
@@ -147,20 +154,10 @@ def main():
     kwargs = {key: argsvars[key] for key in kwargs}
     config = MultiProFitTask.ConfigClass(**kwargs)
 
-    if True or config.usePriorShapeDefault:
-        field_prior = args.mag_prior_field
-        dataId_prior = {'tract': tract, 'patch': name_patch, 'filter': args.filter_prior}
-        cat_prior = butler.get("deepCoadd_meas", dataId_prior)
-        calib_prior = butler.get("deepCoadd_photoCalib", dataId_prior)
-        mags_prior = calib_prior.calibrateCatalog(cat_prior)[field_prior]
-    else:
-        mags_prior = None
-
-    task = MultiProFitTask(config=config)
-    data = get_data(butler, tract, name_patch=name_patch, bands=args.bands)
+    task = MultiProFitTask(config=config, schema=sources.schema)
+    data = get_data(butler, tract, name_patch=name_patch, bands=args.bands, get_calib=task.usingPrior())
     catalog, results = task.fit(
         data, sources, img_multi_plot_max=args.img_multi_plot_max, weights_band=args.weights_band,
-        mags_prior=mags_prior,
     )
     return catalog, results
 

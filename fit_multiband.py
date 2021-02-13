@@ -1,9 +1,12 @@
 import lsst.afw.image as afwImage
 import lsst.afw.table as afwTable
+import lsst.daf.butler as dafButler
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
 import lsst.pipe.base.connectionTypes as cT
-from typing import List, NamedTuple, Optional, Set
+from typing import Dict, Iterable, List, NamedTuple, Union
+
+__all__ = ["CatalogExposure", "MultibandFitSubTask", "MultibandFitConfig", "MultibandFitTask"]
 
 
 class CatalogExposure(NamedTuple):
@@ -11,27 +14,18 @@ class CatalogExposure(NamedTuple):
     catalog: afwTable.SourceCatalog
     exposure: afwImage.Exposure
     calib: afwImage.PhotoCalib = None
+    dataId: Union[dafButler.DataCoordinate, None] = None
+    metadata: Dict = None
 
 
-multibandFitBaseTemplates = {
-    "name_input_coadd": "deep", "name_output_coadd": "deep",
-    "name_output_cat": "fit", "name_output_bands": "all",
-}
+multibandFitBaseTemplates = {"name_input_coadd": "deep", "name_output_coadd": "deep", "name_output_cat": "fit"}
 
 
 class MultibandFitConnections(
     pipeBase.PipelineTaskConnections,
-    dimensions=("tract", "patch", "band", "skymap"),
+    dimensions=("tract", "patch", "skymap"),
     defaultTemplates=multibandFitBaseTemplates,
 ):
-    # Should this really be included here, or in subclasses if that's possible?
-    calibs = cT.Input(
-        doc="Photometric calibration for exposures",
-        name="{name_input_coadd}Coadd_calib",
-        storageClass="PhotoCalib",
-        multiple=True,
-        dimensions=("tract", "patch", "band", "skymap"),
-    )
     cat_ref = cT.Input(
         doc="Reference multiband source catalog",
         name="{name_input_coadd}Coadd_ref",
@@ -54,7 +48,7 @@ class MultibandFitConnections(
     )
     cat_output = cT.Output(
         doc="Measurement multi-band catalog",
-        name="{name_output_coadd}Coadd_{name_output_cat}_{name_output_bands}",
+        name="{name_output_coadd}Coadd_{name_output_cat}",
         storageClass="SourceCatalog",
         dimensions=("tract", "patch", "skymap"),
     )
@@ -65,33 +59,71 @@ class MultibandFitConnections(
     )
     cat_output_schema = cT.InitOutput(
         doc="Output of the schema used in deblending task",
-        name="{name_output_coadd}Coadd_{name_output_cat}_{name_output_bands}_schema",
+        name="{name_output_coadd}Coadd_{name_output_cat}_schema",
         storageClass="SourceCatalog"
     )
 
-    # Is this needed?
-    def setDefaults(self):
-        super().setDefaults()
+    def adjustQuantum(self, datasetRefMap):
+        """ Validates the `lsst.daf.butler.DatasetRef` bands against the
+        subtask's list of bands to fit and drops unnecessary bands.
 
-    def __init__(self, *, config=None):
-        super().__init__(config=config)
+        Parameters
+        ----------
+        datasetRefMap : `NamedKeyDict`
+            Mapping from dataset type to a `set` of
+            `lsst.daf.butler.DatasetRef` objects
 
-        if not config.require_calibs:
-            self.inputs.remove("calibs")
+        Returns
+        -------
+        datasetRefMap : `NamedKeyDict`
+            Modified mapping of input with possibly adjusted
+            `lsst.daf.butler.DatasetRef` objects.
+
+        Raises
+        ------
+        ValueError
+            Raised if any of the per-band datasets have an inconsistent band
+            set, or if the band set to fit is not a subset of the data bands.
+
+        """
+        datasetRefMap = super().adjustQuantum(datasetRefMap)
+        # Check which bands are going to be fit
+        bands_fit, bands_read = self.config.get_band_sets()
+        bands_needed = bands_fit.union(bands_read)
+
+        bands_data = None
+        has_extra_bands = False
+
+        for type_d, ref_d in datasetRefMap.items():
+            # Datasets without bands in their dimensions should be fine
+            if 'band' in type_d.dimensions:
+                bands = [dref.dataId['band'] for dref in ref_d]
+                bands_set = set(bands)
+                if bands_data is None:
+                    bands_data = bands_set
+                    if bands_data != bands_fit:
+                        if not bands_needed.issubset(bands_data):
+                            raise ValueError(f'bands_needed={bands_needed}) !subsetof bands_set={bands_set}'
+                                             f' from refs={ref_d})')
+                        has_extra_bands = True
+                elif bands_set != bands_data:
+                    raise ValueError(f'Datatype={type_d} bands_set={bands_set}) != previous={bands_data})')
+                if has_extra_bands:
+                    for dref in ref_d:
+                        if dref.dataId['band'] not in bands_needed:
+                            ref_d.remove(dref)
+        return datasetRefMap
 
 
-# Should this class do anything?
 class MultibandFitSubTask(pipeBase.Task):
-    _DefaultName = "multibandFitSub"
     ConfigClass = pexConfig.Config
 
-    def get_bands_calib_required(self) -> Set[str]:
+    def __init__(self, schema: afwTable.Schema, **kwargs):
         raise RuntimeError("Not implemented")
 
-    def get_schema(self, **kwargs) -> afwTable.Schema:
-        raise RuntimeError("Not implemented")
-
-    def run(self, catexps, cat_ref, **kwargs) -> afwTable.SourceCatalog:
+    def run(
+        self, catexps: Iterable[CatalogExposure], cat_ref: afwTable.SourceCatalog, **kwargs
+    ) -> afwTable.SourceCatalog:
         raise RuntimeError("Not implemented")
 
 
@@ -103,8 +135,13 @@ class MultibandFitConfig(
         target=MultibandFitSubTask,
         doc="Task to fit sources using multiple bands",
     )
-    # But this should be determined by fit_multiband.config...
-    require_calibs = False
+
+    def get_band_sets(self):
+        dict_fit = self.toDict()['fit_multiband']
+        bands_to_fit = dict_fit.get('bands_fit')
+        if bands_to_fit is None:
+            raise RuntimeError(f'{__class__}.fit_multiband must have bands_fit attribute (toDict={config_fit})')
+        return set(bands_to_fit), set(dict_fit.get('bands_read', ()))
 
 
 class MultibandFitTask(pipeBase.PipelineTask):
@@ -113,64 +150,38 @@ class MultibandFitTask(pipeBase.PipelineTask):
 
     def __init__(self, initInputs, **kwargs):
         super().__init__(initInputs=initInputs, **kwargs)
-        self.makeSubtask("fit_multiband")
-        self.cat_output_schema = afwTable.SourceCatalog(
-            self.fit_multiband.get_schema(initInputs["cat_ref_schema"].schema)
-        )
+        self.makeSubtask("fit_multiband", schema=initInputs["cat_ref_schema"].schema)
+        self.cat_output_schema = afwTable.SourceCatalog(self.fit_multiband.schema)
 
     def runQuantum(self, butlerQC, inputRefs, outputRefs):
         inputs = butlerQC.get(inputRefs)
-        # I don't know if these are really necessary - I think only deblending really needs an IdFactory?
-        #packedId, maxBits = butlerQC.quantum.dataId.pack("tract_patch", returnMaxBits=True)
-        #inputs["idFactory"] = afwTable.IdFactory.makeSource(packedId, 64 - maxBits)
-        has_calibs = hasattr(inputRefs, 'calibs')
         input_objs = [inputRefs.cats_meas, inputRefs.coadds]
-        if has_calibs:
-            input_objs.append(inputRefs.calibs)
-        bands_inputs = [[dRef.dataId["band"] for dRef in obj] for obj in input_objs]
-        bands = bands_inputs[0]
-        if not all(x == bands for x in bands_inputs[1:]):
-            raise RuntimeError(f'bands_outputs={bands_inputs} not all identical')
-        bands_set = set(bands)
-        bands_calib = self.fit_multiband.get_bands_calib_required()
-        if len(bands_calib) > 0:
-            if not self.config.require_calibs:
-                raise RuntimeError(f"self.fit_multiband={self.fit_multiband} has bands_calib={bands_calib} but "
-                                   f"require_calib={require_calib} is False")
-            if not bands_calib.issubset(bands_set):
-                raise RuntimeError(f"self.fit_multiband={self.fit_multiband} bands_calib={bands_calib} not subset of "
-                                   f"bands_set={bands_set}")
-        else:
-            # Warn instead?
-            if self.config.require_calibs:
-                raise RuntimeError(f"self.fit_multiband={self.fit_multiband} has bands_calib={bands_calib} but "
-                                   f"require_calib={require_calib} is True")
-        inputs['bands'] = bands
-        outputs = self.run(**inputs)
-        # How is consistency with the connections enforced? e.g. if the next line is commented out
+        dataIds_cats, dataIds = [[dRef.dataId for dRef in obj] for obj in input_objs]
+        if not all((x == y for x, y in zip(dataIds, dataIds_cats))):
+            raise RuntimeError(f'Mismatched cats_meas, coadds dataIds {dataIds_cats} {dataIds}')
+        bands_data = [dataId['band'] for dataId in dataIds]
+        bandset_fit, bandset_read = self.config.get_band_sets()
+        bandset_needed = bandset_fit.union(bandset_read)
+        bandset_data = set(bands_data)
+        if bandset_data != bandset_needed:
+            raise RuntimeError(f'set(band={bands_data})={bandset_data} != bandset_needed={bandset_needed}'
+                               f'=(bands_fit={bandset_fit}).union(bands_read={bandset_read}))')
+        cat_ref, cats_meas, coadds = (inputs[x] for x in ('cat_ref', 'cats_meas', 'coadds'))
+        n_data = [len(x) for x in (bands_data, cats_meas, coadds)]
+        if not all(x == n_data[0] for x in n_data[1:]):
+            raise RuntimeError(f'bands, cats_meas, coadds, dataIds lens={n_data} not matched')
+        catexps = [
+            CatalogExposure(band=band, catalog=cat, exposure=exp, dataId=dataId, metadata={},
+                            calib=exp.getPhotoCalib() if hasattr(exp, 'getPhotoCalib') else None)
+            for band, cat, exp, dataId in zip(bands_data, cats_meas, coadds, dataIds)
+        ]
+        outputs = self.run(catexps=catexps, cat_ref=cat_ref)
         butlerQC.put(outputs, outputRefs)
 
-    def run(
-        self,
-        bands: List[str],
-        cat_ref: afwTable.SourceCatalog,
-        cats_meas: List[afwTable.SourceCatalog],
-        coadds: List[afwImage.Exposure],
-        calibs: Optional[List[afwImage.PhotoCalib]] = None
-    ):
-        if calibs is None:
-            calibs = [None]*len(bands)
-        n_data = [len(x) for x in (bands, cats_meas, coadds, calibs)]
-        if not all(x == n_data[0] for x in n_data[1:]):
-            raise RuntimeError(f'bands, cats_meas, coadds lens={n_data} not matched')
-        catexps = [
-            CatalogExposure(band=band, catalog=cat, exposure=exp, calib=calib)
-            for band, cat, exp, calib in zip(bands, cats_meas, coadds, calibs)
-        ]
-        cat_output = self.fit_multiband.run(catexps, cat_ref)
-        # It would make much more sense to validate this earlier, but I'm not sure how - it's easy only for the subtask
+    def run(self, catexps: List[CatalogExposure], cat_ref: afwTable.SourceCatalog):
+        cat_output = self.fit_multiband.run(catexps, cat_ref).output
+        # It would be best to validate this earlier but I'm not sure how
         if cat_output.schema != self.cat_output_schema.schema:
-            print(type(cat_output.schema), type(self.cat_output_schema.schema))
             raise RuntimeError(f'fit_multiband.run schema != initOutput schema:'
                                f' {cat_output.schema} vs {self.cat_output_schema.schema}')
         retStruct = pipeBase.Struct(cat_output=cat_output)
