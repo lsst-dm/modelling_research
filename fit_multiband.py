@@ -119,11 +119,41 @@ class MultibandFitSubTask(pipeBase.Task):
     ConfigClass = pexConfig.Config
 
     def __init__(self, schema: afwTable.Schema, **kwargs):
+        """ Initialize the task, defining and setting the output catalog schema.
+
+        Parameters
+        ----------
+        schema : `lsst.afw.table.Schema`
+            The input schema for the reference source catalog, used to initialize the output schema.
+        kwargs
+            Additional arguments to be passed to the subclass constructor(s).
+
+        Notes
+        -----
+        This method must initialize an attribute named schema with the schema of the output catalog.
+        """
         raise RuntimeError("Not implemented")
 
     def run(
         self, catexps: Iterable[CatalogExposure], cat_ref: afwTable.SourceCatalog, **kwargs
-    ) -> afwTable.SourceCatalog:
+    ) -> pipeBase.Struct:
+        """ Fit sources from a reference catalog using data from multiple exposures in the same region (patch).
+
+        Parameters
+        ----------
+        catexps : `typing.List [CatalogExposure]`
+            A list of catalog-exposure pairs in a given band. Subclasses may require there to only be one catexp per
+            band, and/or for the catalogs to contain HeavyFootprints with deblended images.
+        cat_ref : `lsst.afw.table.SourceCatalog`
+            A reference source catalog to fit. Subclasses may be configured fit only a subset of these sources.
+        kwargs
+            Additional keyword arguments.
+
+        Returns
+        -------
+        retStruct : `lsst.pipe.base.Struct`
+            A struct with a cat_output attribute containing the output measurement catalog.
+        """
         raise RuntimeError("Not implemented")
 
 
@@ -140,7 +170,8 @@ class MultibandFitConfig(
         dict_fit = self.toDict()['fit_multiband']
         bands_to_fit = dict_fit.get('bands_fit')
         if bands_to_fit is None:
-            raise RuntimeError(f'{__class__}.fit_multiband must have bands_fit attribute (toDict={config_fit})')
+            raise RuntimeError(f'{__class__}.fit_multiband must have bands_fit attribute '
+                               f'(self.toDict()["fit_multiband"]={dict_fit})')
         return set(bands_to_fit), set(dict_fit.get('bands_read', ()))
 
 
@@ -178,7 +209,22 @@ class MultibandFitTask(pipeBase.PipelineTask):
         outputs = self.run(catexps=catexps, cat_ref=cat_ref)
         butlerQC.put(outputs, outputRefs)
 
-    def run(self, catexps: List[CatalogExposure], cat_ref: afwTable.SourceCatalog):
+    def run(self, catexps: List[CatalogExposure], cat_ref: afwTable.SourceCatalog) -> pipeBase.Struct:
+        """ Fit sources from a reference catalog using data from multiple exposures in the same region (patch).
+
+        Parameters
+        ----------
+        catexps : `typing.List [CatalogExposure]`
+            A list of catalog-exposure pairs in a given band. Subtasks may require there to only be one catexp per band,
+            and/or for the catalogs to contain HeavyFootprints with deblended images.
+        cat_ref : `lsst.afw.table.SourceCatalog`
+            A reference source catalog to fit. Subtasks may be configured fit only a subset of these sources.
+
+        Returns
+        -------
+        retStruct : `lsst.pipe.base.Struct`
+            A struct with a cat_output attribute containing the output measurement catalog.
+        """
         cat_output = self.fit_multiband.run(catexps, cat_ref).output
         # It would be best to validate this earlier but I'm not sure how
         if cat_output.schema != self.cat_output_schema.schema:
