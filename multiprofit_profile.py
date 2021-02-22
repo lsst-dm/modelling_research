@@ -48,16 +48,18 @@ nameSersicPrefix = f"mgsersic{gaussianOrderSersic}"
 nameSersicModel = f"{nameSersicPrefix}:1"
 nameSersicAmpModel = f"gaussian:{gaussianOrderSersic}+rscale:1"
 
+defaults = dict(psfmodel=namePsfModel, psfpixel=True)
+
 modelspecs = [
-    dict(name="gausspx", model=nameSersicModel, fixedparams='nser', initparams="nser=0.5",
-         inittype="moments", psfmodel=namePsfModel, psfpixel="T"),
-    dict(name=f"{nameMG}expgpx", model=nameSersicModel, fixedparams='nser', initparams="nser=1",
-         inittype="guessgauss2exp:gausspx", psfmodel=namePsfModel, psfpixel="T"),
-    dict(name=f"{nameMG}devepx", model=nameSersicModel, fixedparams='nser', initparams="nser=4",
-         inittype=f"guessexp2dev:{nameMG}expgpx", psfmodel=namePsfModel, psfpixel="T"),
-    dict(name=f"{nameMG}cmodelpx", model=f"{nameSersicPrefix}:2",
-         fixedparams="cenx;ceny;nser;sigma_x;sigma_y;rho", initparams="nser=4,1",
-         inittype=f"{nameMG}devepx;{nameMG}expgpx", psfmodel=namePsfModel, psfpixel="T"),
+    mpfFit.ModelSpec(name="gausspx", model=nameSersicModel, fixedparams='nser', initparams="nser=0.5",
+                     inittype="moments", **defaults),
+    mpfFit.ModelSpec(name=f"{nameMG}expgpx", model=nameSersicModel, fixedparams='nser', initparams="nser=1",
+                     inittype="guessgauss2exp:gausspx", **defaults),
+    mpfFit.ModelSpec(name=f"{nameMG}devepx", model=nameSersicModel, fixedparams='nser', initparams="nser=4",
+                     inittype=f"guessexp2dev:{nameMG}expgpx", **defaults),
+    mpfFit.ModelSpec(name=f"{nameMG}cmodelpx", model=f"{nameSersicPrefix}:2",
+                     fixedparams="cenx;ceny;nser;sigma_x;sigma_y;rho", initparams="nser=4,1",
+                     inittype=f"{nameMG}devepx;{nameMG}expgpx", **defaults),
 ]
 
 noiseReplacers = {band: rebuildNoiseReplacer(exposure, sources) for band, exposure in exposures.items()}
