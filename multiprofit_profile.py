@@ -33,6 +33,7 @@ dataId = {"tract": 9813, "patch": "4,4", "filter": filters[0]}
 sources = butler.get("deepCoadd_meas", dataId)
 exposures = {band: butler.get("deepCoadd_calexp", dataId, filter=band) for band in filters}
 
+n_eval = 10
 # 1338 takes a while if you want to benchmark a source dominated by model evaluation time
 idx_source = 1337
 name_source = f"profile_{idx_source}"
@@ -67,17 +68,31 @@ noiseReplacers = {band: rebuildNoiseReplacer(exposure, sources) for band, exposu
 for noiseReplacer in noiseReplacers.values():
     noiseReplacer.insertSource(source.getId())
 
-exposurePsfs = []
-for band, exposure in exposures.items():
-    mpfExposure = mpfObj.Exposure(
-        band=band, image=np.float64(exposure.image.subset(bbox).array),
-        error_inverse=1 / np.float64(exposure.variance.subset(bbox).array),
-        is_error_sigma=False)
-    mpfPsf = mpfObj.PSF(band, image=exposure.getPsf().computeKernelImage(center),
-                        engine="galsim")
-    exposurePsfs.append((mpfExposure, mpfPsf))
+exposures_data = {
+    band: (
+        mpfObj.Exposure(
+            band=band, image=np.float64(exposure.image.subset(bbox).array),
+            error_inverse=1 / np.float64(exposure.variance.subset(bbox).array),
+            is_error_sigma=False,
+        ),
+        exposure.getPsf().computeKernelImage(center),
+    )
+    for band, exposure in exposures.items()
+}
 
-cProfile.run("mpfFit.fit_galaxy_exposures(exposurePsfs, exposures.keys(), modelspecs)", name_source)
+
+def get_exposurePsfs(exposures_data):
+    return [
+        (exposure_data[0], mpfObj.PSF(band, image=exposure_data[1], engine="galsim"))
+        for band, exposure_data in exposures_data.items()
+    ]
+
+
+cProfile.run(
+    "for _ in range(n_eval): "
+    "mpfFit.fit_galaxy_exposures(get_exposurePsfs(exposures_data), exposures.keys(), modelspecs)",
+    name_source,
+)
 for noiseReplacer in noiseReplacers.values():
     noiseReplacer.removeSource(source.getId())
 
