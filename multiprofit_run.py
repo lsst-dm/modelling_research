@@ -176,7 +176,12 @@ def main():
     config = MultiProFitTask.ConfigClass(**kwargs)
 
     task = MultiProFitTask(config=config, schema=sources.schema)
-    data = get_data(butler, tract, name_patch=name_patch, bands=args.bands, get_calib=task.usingPrior())
+    bands = set(args.bands_fit)
+    if hasattr(args, 'bands_read'):
+        bands_read = args.bands_read
+        if bands_read is not None:
+            bands = bands.union(set(bands_read))
+    data = get_data(butler, tract, name_patch=name_patch, bands=bands, get_calib=True)
     catalog, results = task.fit(
         data, sources, img_multi_plot_max=args.img_multi_plot_max, weights_band=args.weights_band,
     )
