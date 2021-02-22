@@ -21,6 +21,7 @@
 
 from collections import defaultdict, namedtuple
 import copy
+import gauss2d
 import logging
 import lsst.afw.image as afwImage
 import lsst.afw.table as afwTable
@@ -33,7 +34,6 @@ import modelling_research.meas_model as mrMeas
 import modelling_research.make_cutout as mrCutout
 import lsst.pipe.tasks.fit_multiband as fitMb
 import matplotlib.pyplot as plt
-import multiprofit as mpf
 import multiprofit.fitutils as mpfFit
 import multiprofit.objects as mpfObj
 from multiprofit.priors import get_hst_size_prior
@@ -443,7 +443,7 @@ class MultiProFitTask(fitMb.MultibandFitSubTask):
         self.mask_names_zero = ['BAD', 'EDGE', 'SAT', 'NO_DATA']
         self.bbox_ref = None
         # Initialize the schema, in case users need it before runtime
-        img = mpf.make_gaussian_pixel(10, 10, 1, 3, 1, 0, 0, 20, 0, 20, 20, 20)
+        img = gauss2d.make_gaussian_pixel(10, 10, 1, 3, 1, 0, 0, 20, 0, 20, 20, 20)
         exposurePsfs = [
             (mpfObj.Exposure(band=band, image=img, error_inverse=None), img)
             for band in self.config.bands_fit
