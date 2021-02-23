@@ -96,7 +96,7 @@ models = {
     },
 }
 
-names_optional_comp = ("nser",)
+names_optional_comp = (("nser", True),)
 names_optional = ("loglike", "chisqred", "time")
 flags_bad = ["base_PixelFlags_flag_saturatedCenter", "base_PixelFlags_flag_sensor_edgeCenter",
              "deblend_tooManyPeaks", "modelfit_CModel_flag"]
@@ -111,9 +111,9 @@ flags_good = ["detect_isPatchInner"]
 data = {}
 joiner = "_"
 
-def assign_field(datum, field, name):
+def assign_field(datum, field, name, log10=False):
     if field is not None:
-        datum[name] = field
+        datum[name] = np.log10(field) if log10 else field
 
 def assign_fields(datum, fields, names, postfix=''):
     for field, name in zip(fields, names):
@@ -166,10 +166,11 @@ def reduce_cat(cat, name_cat, scale_dist, is_single, field_flux='flux', has_mags
                         for comp in range(is_mpf, meas_model.n_comps + is_mpf):
                             reff, axrat, ang = meas_model.get_ellipse_terms(cat, band=band_full, comp=comp)
                             assign_fields(datum, (np.log10(scale_dist*reff), axrat, ang), names_ellipse, postfix=f'{comp}')
-                            for name_item in names_optional_comp:
-                                name_src = f'{meas_model.get_field_prefix(band_full, comp=comp)}_{name_item}'
+                            for name_item, item_log10 in names_optional_comp:
+                                prefix = meas_model.get_field_prefix(band_full, comp=comp)
+                                name_src = f'{prefix}_{name_item}'
                                 name_out = f'{name_item}_{comp}_{band_short}'
-                                assign_field(datum, get_field(cat, name_src), name_out)
+                                assign_field(datum, get_field(cat, name_src), name_out, log10=item_log10)
                         for name_item in names_optional:
                             name_src = get_field(cat, f'{meas_model.get_field_prefix(band_full)}_{name_item}')
                             assign_field(datum, name_src, f'{name_item}_{band_short}')
@@ -192,9 +193,9 @@ def reduce_cat(cat, name_cat, scale_dist, is_single, field_flux='flux', has_mags
                         for comp in range(1, meas_model.n_comps + 1):
                             reff, axrat, ang = meas_model.get_ellipse_terms(cat, comp=comp)
                             assign_fields(datum, (np.log10((scale_reff if is_gauss_no_psf_base else scale_dist)*reff), axrat, ang), names_ellipse)
-                            for name_item in names_optional_comp:
+                            for name_item, item_log10 in names_optional_comp:
                                 name_src = f'{meas_model.get_field_prefix("", comp=comp)}_{name_item}'
-                                assign_field(datum, get_field(cat, name_src), f'{name_item}_{comp}')
+                                assign_field(datum, get_field(cat, name_src), f'{name_item}_{comp}', log10=item_log10)
                         for ax in ('x', 'y'):
                             assign_field(datum, meas_model.get_cen(cat, axis=ax, comp=1), f'cen{ax}')
                     for name_item in names_optional:
@@ -246,8 +247,8 @@ scales = {'hsc': 0.168, 'hst': 0.03}
 
 postfix_calib = '_mag'
 extension = '.fits'
-path_proj = "/project/dtaranu/cosmos/hsc/"
-subdirs = {'hsc': f'{path_proj}/scarlet/2020-10-28_mpf/', 'hst': f'{path_proj}/scarlet/2020-10-28_mpf/'}
+path_proj = "/project/dtaranu/cosmos/hsc/old/"
+subdirs = {'hsc': f'{path_proj}/scarlet/2020-11-04_mpf-noiseReplacer/', 'hst': f'{path_proj}/scarlet/2020-11-04_mpf-noiseReplacer/'}
 prefixes = {'hsc': f'/mpf_cosmos-hsc_', 'hst': '-iso/mpf_cosmos-hst-iso_'}
 butler = Butler("/project/fred3m/rerun/fullRC2_1/")
 
@@ -260,7 +261,7 @@ bands_survey = {
     'hsc': ((bands_ref,) + bands_extra, True),
     'hst': (bands_hst, False),
 }
-globs_patches = ("[3-5],[3-5]",) #("0,[0-8]", "1,[0-7]", "[2-7],[0-8]", "8,[0-4]",)
+globs_patches = ("0,[0-8]", "1,[0-7]", "[2-7],[0-8]", "8,[0-4]",)
 patches = {}
 
 
@@ -395,6 +396,7 @@ units = {
 labels = {
     "mag_i": 'i',
     "reff": '$\log10(R_{eff,maj})$',
+    "nser_1": '$\log10(n_{s})$'
 }
 
 mag_i_bright, mag_i_mid, mag_i_faint = 15.5, 24., 29.
@@ -720,9 +722,11 @@ limy = columns_plot["loglike"]["limy"], columns_plot_size["reff"]["limy"]
 columns_plot["loglike"]["limy"] = (-3, 0.2)
 columns_plot_size_algo["reff"]["limy"] = (-0.7, 0.3)
 columns_plot_size_algo["time"] = columns_plot["time"]
+columns_plot_size_algo["mag_i_nser"] = dict(log=False, ratio=False, limx=mag_i_lim, limy=(-0.31, 0.79),
+                                            column_x="mag_i", column_y="nser_1", datum_idx_y=0)
 for alt in ("mg8serm", "mg8serg"):
     plot_models_algo(data, "griz", "mpf", ("mg8serb", alt), {'loglike': columns_plot['loglike']},
-                     columns_plot_size_algo, labels=labels, argspj=argspj)
+                     {"mag_i_nser": columns_plot_size_algo["mag_i_nser"]}, labels=labels, argspj=argspj)
 columns_plot["loglike"]["limy"], columns_plot_size["reff"]["limy"] = limy
 
 
@@ -819,7 +823,7 @@ def plot_mpf_model_hsc_vs_hst(model, model_reff=None, plot_only_size_mag=False, 
                 n_ser = n_ser[good]
                 good_size = (reff_hst > 0) & (reff_hsc > 0)
                 prefix = '$R_{eff, HSC&HST}$ > 1"'
-                y = np.log10(n_ser[good_size]/data_hst["nser_1"][good][good_size])
+                y = n_ser[good_size] - data_hst["nser_1"][good][good_size]
                 plotjoint_running_percentiles(
                     x_good[good_size], y, **argspj,
                     labelx=label_x, labely="log10($n_{ser,HSC}$/$n_{ser,HST}$)",
@@ -971,7 +975,7 @@ for name, rows in rows_big.items():
                 axes[0].imshow(make_lupton_rgb(*[x.image.subset(bbox).array for x in calexps_patch.values()],
                                                stretch=0.4, Q=8))
                 axes[0].set_title(f'HSC-[ZIR] $R_{{e}}$={10**data_hsc["reff"][idx_row]:.2f}"'
-                                  f' n={data_hsc["nser_1"][idx_row]:.2f}\n'
+                                  f' n={10**data_hsc["nser_1"][idx_row]:.2f}\n'
                                   f'$mag_i$={data_hsc["mag_i"][idx_row]:.2f}'
                                   f' i-z={data_hsc["mag_i"][idx_row] - data_hsc["mag_z"][idx_row]:.2f}')
                 fluxratio = data_hst["flux_f814w"][idx_row]/(
@@ -982,7 +986,7 @@ for name, rows in rows_big.items():
                                 marker='o', color='lime', facecolors='none')
                 axes[1].imshow(make_lupton_rgb(img.image,img.image, img.image, stretch=0.01, Q=6))
                 axes[1].set_title(f'HST F814W $R_{{e}}$={10**data_hst["reff"][idx_row]:.2f}" '
-                                  f'n={data_hst["nser_1"][idx_row]:.2f}\n mag={mag_hst:.2f}')
+                                  f'n={10**data_hst["nser_1"][idx_row]:.2f}\n mag={mag_hst:.2f}')
                 axes[1].scatter(cenx*scale_hst2hsc, ceny*scale_hst2hsc, marker='x', color='lime')
                 axes[1].scatter(data_hst["cenx"][idx_row]-0.5, data_hst["ceny"][idx_row]-0.5,
                                 marker='o', color='lime', facecolors='none')
