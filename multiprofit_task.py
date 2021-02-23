@@ -918,7 +918,7 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
                     psf_shrink=self.config.psfHwhmShrink, prior_specs=params_prior,
                     skip_fit=skip_fit, skip_fit_psf=skip_fit, background_sigma_add=(
                         self.config.backgroundSigmaAdd if self.config.fitBackground else None),
-                    replace_data_by_model=self.config.replaceDataByModel,
+                    replace_data_by_model=self.config.replaceDataByModel, loggerPsf=kwargs.get('logger'),
                     **kwargs,
                 )
                 if (not self.config.plotOnly) and self.config.fitGaussian:
