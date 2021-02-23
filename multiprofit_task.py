@@ -990,7 +990,9 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
                 results_parent = mpfFit.fit_galaxy_exposures(
                     exposurePsfs, bands, [self.modelSpecs[0]], plot=False, print_exception=True,
                     kwargs_moments=kwargs_moments_in, fit_background=self.config.fitBackground,
-                    psf_shrink=self.config.psfHwhmShrink, skip_fit=True, skip_fit_psf=skip_fit_psf, **kwargs
+                    psf_shrink=self.config.psfHwhmShrink, skip_fit=True, skip_fit_psf=skip_fit_psf,
+                    loggerPsf=kwargs.get('logger'),
+                    **kwargs
                 )
                 filters = [x[0].band for x in exposurePsfs]
                 if not skip_fit_psf:
@@ -1839,7 +1841,6 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
                                 for name_field, key in fields['base'][modelspec['name']]
                             ]
                             modelspec.values_init_psf = values_init_psf
-
                     results, error, deblended = self.__fitSource(
                         src, exposures, extras, children_cat=children_cat,
                         footprint=footprint, failOnLargeFootprint=is_parent,
