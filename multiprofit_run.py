@@ -130,7 +130,7 @@ def get_flags():
         'filter_prior': dict(type=str, nargs='?', default='HSC-I'),
         'weights_band': dict(type=float, nargs='*', default=None,
                              help="Weights per filter to rescale images in multi-band plots"),
-        'loglevel': {'type': int, 'nargs': '?', 'default': 21, 'help': 'logging.Logger default level'},
+        'loglevel': {'type': int, 'nargs': '?', 'default': None, 'help': 'logging.Logger default level'},
     }
     for param, field in MultiProFitConfig._fields.items():
         is_list = hasattr(field, 'itemtype')
@@ -159,7 +159,12 @@ def main():
         print(f'Error: {e}')
         parser.print_help()
         sys.exit(status=1)
-    logging.basicConfig(stream=sys.stdout, level=args.loglevel)
+
+    if args.loglevel is None:
+        logger = None
+    else:
+        logger = logging.getLogger('mpf_run')
+        logging.basicConfig(stream=sys.stdout, level=args.loglevel)
     butler = Butler(args.repo)
 
     if args.name_patch is not None and args.tract is not None:
@@ -183,7 +188,7 @@ def main():
             bands = bands.union(set(bands_read))
     data = get_data(butler, tract, name_patch=name_patch, bands=bands, get_calib=True)
     catalog, results = task.fit(
-        data, sources, img_multi_plot_max=args.img_multi_plot_max, weights_band=args.weights_band,
+        data, sources, img_multi_plot_max=args.img_multi_plot_max, weights_band=args.weights_band, logger=logger,
     )
     return catalog, results
 
