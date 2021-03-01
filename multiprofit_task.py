@@ -20,7 +20,6 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from collections import defaultdict, namedtuple
-#from collections.abc import Iterable
 import copy
 import logging
 import lsst.afw.image as afwImage
@@ -32,7 +31,7 @@ import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
 import modelling_research.meas_model as mrMeas
 import modelling_research.make_cutout as mrCutout
-import modelling_research.fit_multiband as mrFitmb
+import lsst.pipe.tasks.fit_multiband as fitMb
 import matplotlib.pyplot as plt
 import multiprofit as mpf
 import multiprofit.fitutils as mpfFit
@@ -52,7 +51,7 @@ class FitFailedError(RuntimeError):
     pass
 
 
-class MultiProFitConfig(pexConfig.Config):
+class MultiProFitConfig(fitMb.MultibandFitSubConfig):
     """Configuration for the MultiProFit profile fitter.
 
     Notes
@@ -66,9 +65,6 @@ class MultiProFitConfig(pexConfig.Config):
                                          doc="Multiple of background level sigma to add to image for fits")
     bands_fit = pexConfig.ListField(dtype=str, default=[], doc="List of bandpass filters to fit",
                                     listCheck=lambda x: len(set(x)) == len(x))
-    bands_read = pexConfig.ListField(dtype=str, default=[],
-                                     doc="List of badpass filters to read data from, even if not fitting",
-                                     listCheck=lambda x: len(set(x)) == len(x))
     bboxDilate = pexConfig.Field(dtype=int, default=0, doc="Number of pixels to dilate (expand) source bounding boxes "
                                                            "and hence fitting regions by")
     computeMeasModelfitLikelihood = pexConfig.Field(dtype=bool, default=False,
@@ -203,6 +199,9 @@ class MultiProFitConfig(pexConfig.Config):
     usePriorBackgroundLocalEstimate = pexConfig.Field(
         dtype=bool, default=False, doc="Whether to use a local estimate of the background level to set the"
                                        " background prior mean/sigma; generally a bad idea")
+
+    def bands_read_only(self):
+        return self.priorMagBand if self.usePriorShapeDefault else ()
 
     def getModelSpecs(self):
         """Get a list of dicts of model specifications for MultiProFit/
@@ -348,7 +347,7 @@ def joinFilter(separator, items, exclusion=None):
     return separator.join(filter(exclusion, items))
 
 
-class MultiProFitTask(mrFitmb.MultibandFitSubTask):
+class MultiProFitTask(fitMb.MultibandFitSubTask):
     """A task to run the MultiProFit source modelling code on a catalog with detections and heavy footprints,
     returning additional measurements in a new SourceCatalog.
 
@@ -417,6 +416,10 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
     prefix_psf = f'psf_'
     postfix_nopsf = '-nopsf'
 
+    @property
+    def schema(self):
+        return self._schema
+
     def __init__(self, schema, modelSpecs=None, **kwargs):
         """Initialize the task with model specifications.
 
@@ -430,7 +433,7 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
         **kwargs
             Additional keyword arguments passed to `lsst.pipe.base.Task.__init__`
         """
-        pipeBase.Task.__init__(self, **kwargs)
+        super().__init__(schema, **kwargs)
         if modelSpecs is None:
             modelSpecs = self.config.getModelSpecs()
         self.modelSpecs = modelSpecs
@@ -439,14 +442,6 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
         self.models = {}
         self.mask_names_zero = ['BAD', 'EDGE', 'SAT', 'NO_DATA']
         self.bbox_ref = None
-        if self.config.usePriorShapeDefault:
-            if self.config.priorMagBand is None or not (
-                    self.config.priorMagBand in self.config.bands_fit or
-                    self.config.priorMagBand in self.config.bands_read
-            ):
-                raise ValueError(
-                    f'self.config.priorMagBand={self.config.priorMagBand} not in self.config.bands_fit='
-                    f'{self.config.bands_fit} or bands_read={self.config.bands_read}')
         # Initialize the schema, in case users need it before runtime
         img = mpf.make_gaussian_pixel(10, 10, 1, 3, 1, 0, 0, 20, 0, 20, 20, 20)
         exposurePsfs = [
@@ -457,7 +452,7 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
             exposurePsfs, self.config.bands_fit, self.modelSpecs, skip_fit=True, skip_fit_psf=True,
             logger=logging.Logger(name='multiProFitTask_init', level=21)
         )
-        self.schema, self.mapper, self.fields = self.__getSchema(self.config.bands_fit, results, schema)
+        self._schema, self.mapper, self.fields = self.__getSchema(self.config.bands_fit, results, schema)
 
     @staticmethod
     def _getMapper(schema):
@@ -1578,7 +1573,7 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
 
     def fit(
         self,
-        catexps: Iterable[mrFitmb.CatalogExposure],
+        catexps: Iterable[fitMb.CatalogExposure],
         cat_ref: afwTable.SourceCatalog,
         logger: logging.Logger = None,
         **kwargs,
@@ -1628,7 +1623,6 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
             raise ValueError("Can't set plotOnly=True without resume=True")
         data = {}
         data_prior = {}
-        dataId = None
         if self.config.usePriorShapeDefault:
             data_prior[self.config.priorMagBand] = None
         for catexp in catexps:
@@ -1639,11 +1633,9 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
             in_fit = band in self.config.bands_fit
             if not (in_fit or in_prior):
                 raise ValueError(f'catexp band={band} not in self.config.bands_fit={self.config.bands_fit}'
-                                 f' or bands_read={self.config.bands_read}')
+                                 f' or bands_read={self.config.get_bands_read()}')
             if in_fit:
                 data[band] = catexp
-                if dataId is None:
-                    dataId = catexp.dataId
             if in_prior:
                 data_prior[band] = catexp
 
@@ -1652,7 +1644,7 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
             if catexp is None:
                 raise RuntimeError(f"self.config.priorMagBand={self.config.priorMagBand} not found in any catexp "
                                    f"bands:{[catexp.band for catexp in catexps]}")
-            mags_prior = catexp.calib.calibrateCatalog(catexp.catalog)[self.config.priorMagField]
+            mags_prior = catexp.exposure.getPhotoCalib().calibrateCatalog(catexp.catalog)[self.config.priorMagField]
         else:
             mags_prior = None
 
@@ -1889,7 +1881,7 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
             nFit += 1
             if not self.config.plotOnly:
                 logger.info(
-                    f"dataId[0] {dataId} fit src {idx} ({nFit}/{numSources}) id={src['id']} in {runtime:.3f}s "
+                    f"Fit src {idx} ({nFit}/{numSources}) id={src['id']} in {runtime:.3f}s "
                     f"(total time {time.time() - timeInit:.2f}s "
                     f"process_time {time.process_time() - processTimeInit:.2f}s) {errorMsg}"
                 )
@@ -1908,7 +1900,7 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
     @pipeBase.timeMethod
     def run(
         self,
-        catexps: Iterable[mrFitmb.CatalogExposure],
+        catexps: Iterable[fitMb.CatalogExposure],
         cat_ref: afwTable.SourceCatalog,
         **kwargs,
     ) -> pipeBase.Struct:
@@ -1935,5 +1927,4 @@ class MultiProFitTask(mrFitmb.MultibandFitSubTask):
         """
         catalog, *_ = self.fit(catexps, cat_ref, **kwargs)
         return pipeBase.Struct(output=catalog)
-
 

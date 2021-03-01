@@ -25,8 +25,8 @@ import sys
 
 from lsst.daf.persistence import Butler
 from lsst.geom import SpherePoint, degrees
+import lsst.pipe.tasks.fit_multiband as fitMb
 from modelling_research.multiprofit_task import MultiProFitConfig, MultiProFitTask
-import modelling_research.fit_multiband as mrFitmb
 from multiprofit.utils import str2bool
 
 
@@ -100,7 +100,7 @@ def get_data(
     dataId = {"tract": tract, "patch": name_patch}
     data = []
     for i, band in enumerate(bands):
-        data.append(mrFitmb.CatalogExposure(
+        data.append(fitMb.CatalogExposure(
             band=band,
             catalog=butler.get(cat_type, dataId, filter=band),
             exposure=butler.get(exposure_type, dataId, filter=band),
