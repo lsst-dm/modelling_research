@@ -1,8 +1,6 @@
 import argparse
 import copy
 import os
-import numpy as np
-import scipy.stats as spstats
 import lsst.daf.persistence as dafPersist
 from lsst.afw.table import SourceTable
 from lsst.meas.base.measurementInvestigationLib import makeRerunCatalog, rebuildNoiseReplacer
@@ -17,16 +15,16 @@ def setupCModelConfig (path = "/project/dtaranu/cmodelconfigs/", stack="w_2018_1
                        filters="HSC-R", tracts=9813, patches = '3,4'):
 
     configinfo = {
-        "path": path
-        , "stack": stack
-        , 'butlerdata': {'filter': filters, 'tract': tracts, 'patch': patches}
+        "path": path,
+        "stack": stack,
+        'butlerdata': {'filter': filters, 'tract': tracts, 'patch': patches}
     }
     params = {
-        'gradthresh': {'values': [1e-1, 1e-2, 1e-3], 'default': '1e-2', 'path': '_gradthresh_'}
-        , 'maxinnerit': {'values': [8, 20, 50], 'default': '20', 'path': '_maxinnerit'}
-        , 'nComps': {'values': [2, 3, 6], 'default': '3', 'path': '_nComp'}
-        , 'nfitrad': {'values': [2, 3, 5], 'default': '3', 'path': '_nfitrad_'}
-        , 'sr1term': {'values': [True, False], 'default': 'f', 'path': '_sr1term_'}
+        'gradthresh': {'values': [1e-1, 1e-2, 1e-3], 'default': '1e-2', 'path': '_gradthresh_'},
+        'maxinnerit': {'values': [8, 20, 50], 'default': '20', 'path': '_maxinnerit'},
+        'nComps': {'values': [2, 3, 6], 'default': '3', 'path': '_nComp'},
+        'nfitrad': {'values': [2, 3, 5], 'default': '3', 'path': '_nfitrad_'},
+        'sr1term': {'values': [True, False], 'default': 'f', 'path': '_sr1term_'}
     }
 
     # Should've done this more intelligently
@@ -162,8 +160,8 @@ def runCModelTargets(idsToRerun, butlerdict):
 
 
 if __name__ == "__main__":
-	parser = argparse.ArgumentParser(description="Test re-running LSST CModel on a single object")
-	parser.add_argument("-path", help="The path to the already run deep coadds")
+    parser = argparse.ArgumentParser(description="Test re-running LSST CModel on a single object")
+    parser.add_argument("-path", help="The path to the already run deep coadds")
     parser.add_argument("-row", default=0, type=int, help="The row number of the object in the measurement table")
     parser.set_defaults(path = None, row=0)
 
