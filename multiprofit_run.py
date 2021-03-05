@@ -91,20 +91,14 @@ def get_data(
         exposure_type = "deepCoadd_calexp"
     if cat_type is None:
         cat_type = "deepCoadd_meas"
-    if get_calib:
-        if type_calib is None:
-            type_calib = "deepCoadd_photoCalib"
-    else:
-        type_calib = None
 
     dataId = {"tract": tract, "patch": name_patch}
     data = []
     for i, band in enumerate(bands):
         data.append(fitMb.CatalogExposure(
-            band=band,
             catalog=butler.get(cat_type, dataId, filter=band),
             exposure=butler.get(exposure_type, dataId, filter=band),
-            calib=butler.get(type_calib, dataId, filter=band) if type_calib is not None else None,
+            dataId={'tract': tract, 'patch': name_patch, 'band': band},
         ))
     return data
 

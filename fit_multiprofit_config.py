@@ -7,5 +7,5 @@ config.fit_multiband.fitSersicFromCModel = True
 config.fit_multiband.computeMeasModelfitLikelihood = True
 config.fit_multiband.usePriorShapeDefault = True
 config.fit_multiband.priorCentroidSigma = 0.2
-config.fit_multiband.priorMagBand = "r"
+config.fit_multiband.priorMagBand = "i"
 config.fit_multiband.psfHwhmShrink = 0.1

@@ -27,7 +27,7 @@ import lsst.geom as geom
 import matplotlib.patches as patches
 import matplotlib.patheffects as pathfx
 import matplotlib.pyplot as plt
-from multiprofit.gaussutils import covar_to_ellipse
+from gauss2d.utils import covar_to_ellipse
 from multiprofit.utils import flux_to_mag, mag_to_flux
 from typing import Dict, NamedTuple, Sequence
 import numpy as np
@@ -409,7 +409,7 @@ class Model:
         terms_covar = self.get_covar_terms(cat, band=band, comp=comp)
         if any([x is None for x in terms_covar]):
             return None
-        return covar_to_ellipse(terms_covar, use_method_eigen=False)
+        return covar_to_ellipse(terms_covar)
 
     def get_field_prefix(self, band=None, comp=None):
         """ Return the mandatory prefix for all model fields.
