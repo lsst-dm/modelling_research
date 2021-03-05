@@ -1589,7 +1589,7 @@ class MultiProFitTask(fitMb.MultibandFitSubTask):
 
         Parameters
         ----------
-        catexps : `Iterable` [`modelling_research.fit_multiband.CatalogExposure`]
+        catexps : `Iterable` [`lsst.pipe.tasks.fit_multiband.CatalogExposure`]
             A list of CatalogExposures to fit.
         logger : `logging.Logger`, optional
             A Logger to log output; default logging.getLogger(__name__).
@@ -1609,6 +1609,7 @@ class MultiProFitTask(fitMb.MultibandFitSubTask):
         """
         logger_is_none = logger is None
         if logger_is_none:
+            logging.basicConfig()
             logger = logging.getLogger(__name__)
             logger.level = logging.INFO
         if (self.config.resume or self.config.deblendFromDeblendedFits) and \
@@ -1673,7 +1674,7 @@ class MultiProFitTask(fitMb.MultibandFitSubTask):
             ra_corner, dec_corner = mrCutout.get_corners_exposure(next(iter(data.values()))['exposure'])
             extras = mrCutout.get_exposures_HST_COSMOS(ra_corner, dec_corner, tiles, self.config.pathCosmosGalsim)
             # TODO: Generalize this for e.g. CANDELS
-            filters = [extras[0].band]
+            bands = [extras[0].band]
         elif not self.config.deblendFromDeblendedFits:
             if self.config.disableNoiseReplacer:
                 extras = tuple(
@@ -1910,7 +1911,7 @@ class MultiProFitTask(fitMb.MultibandFitSubTask):
 
         Parameters
         ----------
-        catexps : `iterable` [`modelling_research.fit_multiband.CatalogExposure`]
+        catexps : `iterable` [`lsst.pipe.tasks.fit_multiband.CatalogExposure`]
             A list of CatalogExposures to fit.
         cat_ref: `lsst.afw.table.SourceCatalog`
             A catalog containing deblended sources with footprints
