@@ -39,6 +39,7 @@ import multiprofit.objects as mpfObj
 from multiprofit.priors import get_hst_size_prior
 import numpy as np
 import os
+import pprint
 import time
 import traceback
 from typing import Iterable
@@ -433,7 +434,8 @@ class MultiProFitTask(fitMb.MultibandFitSubTask):
         **kwargs
             Additional keyword arguments passed to `lsst.pipe.base.Task.__init__`
         """
-        super().__init__(schema, **kwargs)
+        super().__init__(schema=schema, **kwargs)
+        self.log.info(pprint.pformat(self.config.toDict()))
         if modelSpecs is None:
             modelSpecs = self.config.getModelSpecs()
         self.modelSpecs = modelSpecs
