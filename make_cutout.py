@@ -271,6 +271,8 @@ def get_tiles_overlapping_HST(ra, dec, tiles, width=None, height=None, first=Fal
 def get_tiles_HST_COSMOS(path=None):
     """Get fits objects and skyboxes for all of the HST COSMOS tiles.
 
+    Parameters
+    ----------
     path : `str`
         A path to a directory containing the COSMOS FITS images.
 

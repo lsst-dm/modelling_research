@@ -24,7 +24,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from modelling_research.make_cutout import get_exposure_cutout_HST, get_exposures_HST_COSMOS, get_tiles_overlapping_HST, get_tiles_HST_COSMOS
-from modelling_research.multiprofit_task import MultiProFitTask
+from lsst.meas.extensions.multiprofit.fit_multiband import MultiProFitTask
 from modelling_research.plotting import plotjoint_running_percentiles
 import numpy as np
 import os

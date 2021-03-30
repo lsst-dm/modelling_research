@@ -28,6 +28,7 @@ import matplotlib.patches as patches
 import matplotlib.patheffects as pathfx
 import matplotlib.pyplot as plt
 from gauss2d.utils import covar_to_ellipse
+from lsst.meas.extensions.multiprofit.utils import get_spanned_image
 from multiprofit.utils import flux_to_mag, mag_to_flux
 from typing import Dict, NamedTuple, Sequence
 import numpy as np
@@ -57,23 +58,6 @@ def get_source_points(sources=None):
             cys.append(measure.ellipse.centroid[1])
             mags.append(measure.mag)
     return cxs, cys, mags
-
-
-# TODO: Allow addition to existing image
-def get_spanned_image(footprint, bbox=None):
-    spans = footprint.getSpans()
-    bbox_is_none = bbox is None
-    if bbox_is_none:
-        bbox = footprint.getBBox()
-    if not (bbox.getHeight() > 0 and bbox.getWidth() > 0):
-        return None, bbox
-    bbox_fp = bbox if bbox_is_none else footprint.getBBox()
-    img = afwImage.Image(bbox_fp, dtype='D')
-    spans.setImage(img, 1)
-    img.array[img.array == 1] = footprint.getImageArray()
-    if not bbox_is_none:
-        img = img.subset(bbox)
-    return img.array, bbox
 
 
 def plot_sources(ax, cxs, cys, mags, kwargs_annotate=None, kwargs_scatter=None, path_effects=None):
@@ -106,8 +90,8 @@ class Deblend:
     def plot(
         self, bands_weights, bbox=None, plot_sig=False, data_residual_factor=1, bands=None,
         sources=None, sources_true=None, sources_sig=None, measmodels=None, chi_clip=3, residual_scale=1,
-        label_data=None, label_model=None, offsetxy_texts=None, color_true=None, show=True, idx_children_sub=None,
-        ax_legend=1, **kwargs
+        label_data=None, label_model=None, offsetxy_texts=None, color_true=None, show=True,
+        idx_children_sub=None, ax_legend=1, **kwargs
     ):
         if bands is None:
             if len(bands_weights) == 3:
@@ -146,7 +130,10 @@ class Deblend:
             imgs[b] = weight * img.array
             models[b] = model
         img_rgb = make_lupton_rgb(*(imgs.values()), **kwargs)
-        img_model_rgb = make_lupton_rgb(*(i.array*w for i, w in zip(models.values(), weights.values())), **kwargs)
+        img_model_rgb = make_lupton_rgb(
+            *(i.array*w for i, w in zip(models.values(), weights.values())),
+            **kwargs
+        )
         fig, ax = plt.subplots(ncols=2)
         ax[0].imshow(img_rgb)
         bands = list(bands_weights.keys())
@@ -193,8 +180,8 @@ class Deblend:
                     if color is None:
                         color = 'white'
                     for cx, cy, mag in zip(cxs, cys, mags):
-                        ax_i.annotate(f'{mag:.1f}', (cx + offsetxy_text[0], cy + offsetxy_text[1]), color=color,
-                                      fontsize=5)
+                        ax_i.annotate(f'{mag:.1f}', (cx + offsetxy_text[0], cy + offsetxy_text[1]),
+                                      color=color, fontsize=5)
                 for ellipse in ellipses:
                     for ax_i in ax:
                         ell_patch = patches.Ellipse(*ellipse, fill=False)
@@ -231,7 +218,8 @@ class Deblend:
             if sources_sig is not None:
                 handle = plot_sources(
                     ax_sig, *get_source_points(sources_sig),
-                    # Can also try bbox=dict(facecolor='black', pad=1) but I find that it obscures the image too much
+                    # Can also try bbox=dict(facecolor='black', pad=1)
+                    # I find that obscures the image too much
                     kwargs_annotate=dict(color='w', fontsize=4.5, ha='right', va='top'),
                     #kwargs_scatter=dict(marker='o', facecolor='w', edgecolor='k', s=9),
                     kwargs_scatter=dict(marker='o', facecolor='none', edgecolor='none', s=0),
@@ -332,7 +320,8 @@ def get_prefix_comp_multiprofit(prefix, comp):
 
 
 def is_field_fit(field):
-    return is_field_modelfit(field) or is_field_multiprofit(field) or is_field_ngmix(field) or is_field_scarlet(field)
+    return (is_field_modelfit(field) or is_field_multiprofit(field) or is_field_ngmix(field)
+            or is_field_scarlet(field))
 
 
 def is_field_instFlux(field):
@@ -373,7 +362,8 @@ class Model:
         Parameters
         ----------
         cat : `dict` [`str`, array-like]
-            A table-like with equal-length array-likes of magnitudes of each component.
+            A table-like with equal-length array-likes of magnitudes of each
+            component.
         band1 : `str`
             A filter name.
         band2 : `str`
@@ -409,7 +399,7 @@ class Model:
         terms_covar = self.get_covar_terms(cat, band=band, comp=comp)
         if any([x is None for x in terms_covar]):
             return None
-        return covar_to_ellipse(terms_covar)
+        return covar_to_ellipse(*terms_covar)
 
     def get_field_prefix(self, band=None, comp=None):
         """ Return the mandatory prefix for all model fields.
@@ -424,7 +414,8 @@ class Model:
 
         """
         prefix = self.name
-        if (self.is_psf and self.is_multiprofit) or self.is_ngmix or self.is_modelfit_forced or self.is_scarlet:
+        if (self.is_psf and self.is_multiprofit) or self.is_ngmix or self.is_modelfit_forced \
+                or self.is_scarlet:
             prefix = f'{prefix}_{band}'
         if comp is not None:
             return self.get_prefix_comp(prefix, comp)

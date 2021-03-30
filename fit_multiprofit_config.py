@@ -1,4 +1,4 @@
-from modelling_research.multiprofit_task import MultiProFitTask
+from lsst.meas.extensions.multiprofit.fit_multiband import MultiProFitTask
 
 config.connections.name_output_cat = "multiprofit"
 config.fit_multiband.retarget(MultiProFitTask)

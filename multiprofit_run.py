@@ -26,7 +26,7 @@ import sys
 from lsst.daf.persistence import Butler
 from lsst.geom import SpherePoint, degrees
 import lsst.pipe.tasks.fit_multiband as fitMb
-from modelling_research.multiprofit_task import MultiProFitConfig, MultiProFitTask
+from lsst.meas.extensions.multiprofit.fit_multiband import MultiProFitConfig, MultiProFitTask
 from multiprofit.utils import str2bool
 
 
