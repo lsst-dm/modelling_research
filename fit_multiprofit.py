@@ -22,8 +22,8 @@
 import logging
 from lsst.pipe.base.testUtils import makeQuantum, runTestQuantum
 from lsst.daf.butler import Butler, DatasetType
-from modelling_research.fit_multiband import MultibandFitConfig, MultibandFitConnections, MultibandFitTask
-from modelling_research.multiprofit_task import MultiProFitTask, MultiProFitConfig
+from lsst.pipe.tasks.fit_multiband import MultibandFitConfig, MultibandFitConnections, MultibandFitTask
+from lsst.meas.extensions.multiprofit.fit_multiband import MultiProFitTask, MultiProFitConfig
 import sys
 
 make_mpf_task = True
@@ -50,8 +50,12 @@ for names_output in (connections.outputs, connections.initOutputs):
             butler.registry.getDatasetType(ct_output.name)
         except KeyError as e:
             print(f'Exception: {e}; attempting to register output datasetType: {ct_output.name}')
-            dataset_type = DatasetType(ct_output.name, ct_output.dimensions if hasattr(ct_output, "dimensions") else [],
-                                       ct_output.storageClass, universe=universe)
+            dataset_type = DatasetType(
+                ct_output.name,
+                ct_output.dimensions if hasattr(ct_output, "dimensions") else [],
+                ct_output.storageClass,
+                universe=universe
+            )
             butler.registry.registerDatasetType(dataset_type)
 
 if make_mpf_task:
@@ -62,7 +66,10 @@ if make_mpf_task:
 
 config.freeze()
 
-task = MultibandFitTask(config=config, initInputs={'cat_ref_schema': butler.get('deepCoadd_ref_schema', dataId)})
+task = MultibandFitTask(
+    config=config,
+    initInputs={'cat_ref_schema': butler.get('deepCoadd_ref_schema', dataId)}
+)
 
 dataIds_band = []
 for band in bands:

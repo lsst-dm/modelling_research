@@ -5,17 +5,16 @@
 
 
 # Imports
-from lsst.daf.persistence import Butler
-
 from astropy.visualization import make_lupton_rgb
 import functools
 import lsst.afw.image as afwImage
+from lsst.daf.persistence import Butler
 import lsst.geom as geom
 import lsst.meas.base.measurementInvestigationLib as mil
 import matplotlib.pyplot as plt
 import modelling_research.dc2 as dc2
 import modelling_research.meas_model as mrMeas
-import modelling_research.multiprofit_task as mrTask
+import lsst.meas.extensions.multiprofit.fit_multiband as mrTask
 import modelling_research.tables as mrTables
 import modelling_research.plot_matches as mrPlotMatches
 import numpy as np
@@ -28,7 +27,7 @@ import seaborn as sns
 
 # Plot settings
 mpl.rcParams['figure.dpi'] = 160
-mpl.rcParams['image.origin'] = 'bottom'
+mpl.rcParams['image.origin'] = 'lower'
 mpl.rcParams['figure.figsize'] = 10, 20
 sns.set(rc={'axes.facecolor': '0.85', 'figure.facecolor': 'w'})
 sns.set_style('dark')
