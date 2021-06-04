@@ -10,7 +10,7 @@
 
 # Import requirements
 import functools
-from lsst.daf.persistence import Butler
+import lsst.daf.butler as dafButler
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import modelling_research.dc2 as dc2
@@ -19,8 +19,8 @@ from modelling_research.calibrate import calibrate_catalogs
 from modelling_research.plotting import plotjoint_running_percentiles
 from modelling_research.plot_matches import plot_matches
 import numpy as np
+import os
 import seaborn as sns
-from timeit import default_timer as timer
 
 
 # In[2]:
@@ -54,8 +54,10 @@ butler_ref = dc2.get_refcat(make=False)
 
 # Load the DC2 repo butlers: we'll need them later
 butlers_dc2 = {
-    '2.2i': Butler('/project/dtaranu/dc2/scarlet/2020-12-17/ugrizy'),
+    '2.2i': dafButler.Butler('/repo/dc2'),
 }
+butler_dc2 = butlers_dc2['2.2i']
+collection_prefix = 'u/dtaranu/DM-30237/w_2021_20/'
 
 
 # In[6]:
@@ -63,14 +65,17 @@ butlers_dc2 = {
 
 # Match with the refcat using astropy's matcher
 truth_path = dc2.get_truth_path()
-tracts = {3828: (f'{truth_path}scarlet/2020-12-17_mpf-siblingSub/', '2.2i'),}
+tract = 3828
+tracts = {tract: ('/project/dtaranu/dc2_gen3/w_2021_20_multibandfit/calcats/', '2.2i')}
 filters_single = ('g', 'r', 'i', 'z')
 filters_multi = ('griz',)
 band_multi = filters_multi[0]
-patch_min, patch_max = 0, 6
-patches_regex = f"[{patch_min}-{patch_max}]"
-patches_regex = f"{patches_regex},{patches_regex}"
-get_path_cats = functools.partial(dc2.get_path_cats, patches_regex=patches_regex)
+name_skymap = 'DC2'
+kwargs_get = {'collections': f'{collection_prefix}mpf_{band_multi}', 'skymap': name_skymap}
+skymap = butler_dc2.get('skyMap', **kwargs_get)
+patch_begin_x, patch_end_x, patch_begin_y, patch_end_y = 0, 0, 6, 6
+patch_max_x, patch_max_y = skymap[tract].getNumPatches()
+get_path_cats = functools.partial(dc2.get_path_cats, patches_regex='*')
 # Calibrate catalogs: this only needs to be done once; get_cmodel_forced should only be true for single bands for reasons
 calibrate_cats = True
 get_multiprofit = True
@@ -78,23 +83,32 @@ get_cmodel_forced = True
 get_ngmix = True
 get_scarlet = True
 if calibrate_cats:
-    butler_scarlet = Butler(f'/project/dtaranu/dc2/scarlet/2020-12-17/ugrizy') if get_scarlet else None
-    path = tracts[3828][0]
-    for bands in filters_single + filters_multi:
-        butler_ngmix = Butler(f'/project/dtaranu/dc2/scarlet/2020-12-17_ngmix/{bands}') if get_ngmix else None
+    skip_existing = True
+    butler_scarlet = butler_dc2 if get_scarlet else None
+    path = tracts[tract][0]
+    for bands in filters_multi + filters_single:
+        kwargs_get_bands = {'collections': [f'{collection_prefix}mpf_{bands}'] + [f'{collection_prefix}ngmix_{bands}'], 'skymap': name_skymap}
+        butler_ngmix = butler_dc2 if get_ngmix else None
         is_single = len(bands) == 1
+        path_band = f'{path}{bands}'
+        if not os.path.isdir(path_band):
+            os.mkdir(path_band)
         files = [
-            f'{path}{bands}/mpf_dc2_{bands}_3828_{x},{y}.fits'
-            for x in range(patch_min, patch_max+1) for y in range(patch_min, patch_max+1)
+            f'{path_band}/mpf_dc2_{bands}_3828_{x + patch_max_x*y}.fits'
+            for x in range(patch_begin_x, patch_end_x + 1) for y in range(patch_begin_y, patch_end_y + 1)
         ]
+        if skip_existing:
+            files = [f for f in files if not os.path.isfile(f'{f.split(".fits")[0]}_mag.fits')]
+        print('Calibrating', files)
         calibrate_catalogs(
-            files, butlers_dc2, is_dc2=True, files_ngmix=butler_ngmix,
+            files, butlers_dc2, is_dc2=True, use_butler=True, files_ngmix=butler_ngmix,
             butler_scarlet=butler_scarlet, get_cmodel_forced=get_cmodel_forced and is_single,
-            overwrite_band=None, retry_delay=10, n_retry_max=3
+            overwrite_band=None, kwargs_get=kwargs_get_bands,
         )
 cats = dc2.match_refcat_dc2(
     butler_ref, match_afw=False, tracts=tracts, butlers_dc2=butlers_dc2,
     filters_single=filters_single, filters_multi=filters_multi, func_path=get_path_cats,
+    kwargs_get=kwargs_get,
 )
 
 
