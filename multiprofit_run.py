@@ -23,14 +23,14 @@ import argparse
 import logging
 import sys
 
-from lsst.daf.persistence import Butler
+from lsst.daf.butler import Butler
 from lsst.geom import SpherePoint, degrees
 import lsst.pipe.tasks.fit_multiband as fitMb
 from lsst.meas.extensions.multiprofit.fit_multiband import MultiProFitConfig, MultiProFitTask
 from multiprofit.utils import str2bool
 
 
-def get_patch_tract(ra, dec, butler):
+def get_patch_tract(ra, dec, butler, collections, skymap):
     """Get the patch and tract that contains a given sky coordinate.
 
     Parameters
@@ -39,8 +39,8 @@ def get_patch_tract(ra, dec, butler):
         Right ascenscion in degrees.
     dec : `float`
         Declination in degrees.
-    butler : `lsst.daf.persistence.Butler`
-        A Generation 2 butler.
+    butler : `lsst.daf.butler.Butler`
+        A Generation 3 butler.
 
     Returns
     -------
@@ -49,24 +49,24 @@ def get_patch_tract(ra, dec, butler):
     patch : `tuple` [`int`, `int`]
         The patch IDs containing the coordinates.
     """
-    skymap = butler.get("deepCoadd_skyMap")
+    skymap = butler.get("skyMap", collections=collections, skymap=skymap)
     spherePoint = SpherePoint(ra, dec, degrees)
     tract = skymap.findTract(spherePoint).getId()
     return tract, skymap[tract].findPatch(spherePoint)
 
 
 def get_data(
-        butler, tract, name_patch, cat_type=None, exposure_type=None, bands=None, get_calib=False, type_calib=None
+        butler, tract, patch, skymap, collections, cat_type=None, exposure_type=None, bands=None,
 ):
     """Get the necessary data to run the MultiProFit task on a range of sources in a region.
 
     Parameters
     ----------
-    butler : `lsst.daf.persistence.Butler`
-        A Generation 2 butler.
+    butler : `lsst.daf.butler.Butler`
+        A Generation 3 butler.
     tract : `int`
         A tract number.
-    name_patch : `str`
+    patch : `str`
         The name of the patch in the tract to process.
     cat_type : `str`
         The type of catalog to retrieve from the butler. Default "deepCoadd_meas".
@@ -92,13 +92,13 @@ def get_data(
     if cat_type is None:
         cat_type = "deepCoadd_meas"
 
-    dataId = {"tract": tract, "patch": name_patch}
+    dataId = {"tract": tract, "patch": patch}
     data = []
     for i, band in enumerate(bands):
         data.append(fitMb.CatalogExposure(
-            catalog=butler.get(cat_type, dataId, filter=band),
-            exposure=butler.get(exposure_type, dataId, filter=band),
-            dataId={'tract': tract, 'patch': name_patch, 'band': band},
+            catalog=butler.get(cat_type, dataId, band=band, skymap=skymap, collections=collections),
+            exposure=butler.get(exposure_type, dataId, band=band, skymap=skymap, collections=collections),
+            dataId={'tract': tract, 'patch': patch, 'band': band},
         ))
     return data
 
@@ -113,11 +113,13 @@ def get_flags():
     """
     # TODO: Figure out if there's a way to get help from docstrings (defaults can be read easily)
     flags = {
-        'repo': dict(type=str, nargs='?', default="/datasets/hsc/repo/rerun/RC/w_2021_02/DM-28282/",
+        'repo': dict(type=str, nargs='?', default="/repo/main",
                      help="Path to Butler repository to read from"),
+        'collections': dict(type=str, nargs='?', default="HSC/runs/DM-30xxx", help="Collections to read from"),
+        'skymap': dict(type=str, nargs='?', default="hsc_rings_v1", help="Skymap name"),
         'filenameOut': dict(type=str, nargs='?', default=None, help="Output catalog filename", kwarg=True),
         'radec': dict(type=float, nargs=2, default=None, help="RA/dec coordinate of source"),
-        'name_patch': dict(type=str, nargs='?', default="4,4", help="Butler patch string"),
+        'patch': dict(type=int, nargs='?', default=40, help="Butler patch number"),
         'tract': dict(type=int, nargs='?', default=9813, help="Butler tract ID"),
         'img_multi_plot_max': dict(type=float, nargs='?', default=None,
                                    help="Max value for colour images in plots"),
@@ -161,14 +163,13 @@ def main():
         logging.basicConfig(stream=sys.stdout, level=args.loglevel)
     butler = Butler(args.repo)
 
-    if args.name_patch is not None and args.tract is not None:
+    if args.patch is not None and args.tract is not None:
         tract = args.tract
-        name_patch = args.name_patch
+        patch = args.patch
     else:
         ra, dec = args.radec
-        tract, patch = get_patch_tract(ra, dec, butler)
-        name_patch = ','.join([str(x) for x in patch.getIndex()])
-    sources = butler.get('deepCoadd_ref', tract=tract, patch=name_patch)
+        tract, patch = get_patch_tract(ra, dec, butler, args.collections, args.skymap)
+    sources = butler.get('deepCoadd_ref', tract=tract, patch=patch, skymap=args.skymap, collections=args.collections)
 
     argsvars = vars(args)
     kwargs = {key: argsvars[key] for key in kwargs}
@@ -180,7 +181,8 @@ def main():
         bands_read = args.bands_read
         if bands_read is not None:
             bands = bands.union(set(bands_read))
-    data = get_data(butler, tract, name_patch=name_patch, bands=bands, get_calib=True)
+    data = get_data(butler, tract, patch=patch, bands=bands, skymap=args.skymap, collections=args.collections)
+    print(bands, [datum.dataId for datum in data])
     catalog, results = task.fit(
         data, sources, img_multi_plot_max=args.img_multi_plot_max, weights_band=args.weights_band, logger=logger,
     )

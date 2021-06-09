@@ -93,11 +93,11 @@ def func_patch_butlerg2(filename):
 
 
 def func_patch_multiprofit(filename):
-    return filename.split('_')[-2]
+    return int(filename.split('_')[-2])
 
 
 def match_refcat(
-        butler_refcat, butler_data, tracts, filter_ref, func_path, match_afw=True, skymap=None,
+        butler_refcat, butler_data, tracts, filter_ref, func_path, kwargs_get, match_afw=True,
         prefix_flux_match=None, prefix_file_path=None, filters_single=None, filters_multi=None, config=None,
         func_patch=None, *args, **kwargs
 ):
@@ -116,11 +116,12 @@ def match_refcat(
     func_path : callable
         A function that takes `prefix_file_path`, filter name and tract number as arguments and returns
         filenames of catalogs in that path. See `get_path_cats_butlerg2` for an example.
+    kwargs_get : `dict`
+        Keyword arguments to pass to butler.get; must include a skymap name and should include collections if the
+        butler was not initialized with any.
     match_afw : `bool`
         Whether to match using `lsst.meas.astrom.DirectMatchTask`; otherwise,
         `astropy.coordinates.match_coordinates_sky` is used.
-    skymap : `lsst.skymap.BaseSkyMap`
-        A skymap to use for matching with astropy. Defaults to `butler_data.get('deepCoadd_skyMap')`.
     prefix_flux_match : `str`
         A field name prefix for truth fluxes. Default 'lsst_'.
     prefix_file_path : `str`
@@ -156,8 +157,6 @@ def match_refcat(
     indices2.
 
     """
-    if not match_afw and skymap is None:
-        skymap = butler_data.get('deepCoadd_skyMap')
     if config is None:
         config = DirectMatchConfig(matchRadius=0.5)
     if filters_single is None:
@@ -170,7 +169,10 @@ def match_refcat(
         prefix_file_path = ''
     if func_patch is None:
         func_patch = func_patch_multiprofit
+    if kwargs_get is None or 'skymap' not in kwargs_get:
+        raise ValueError(f'kwargs_get={kwargs_get} does not contain a "skymap" name')
 
+    skymap = None if match_afw else butler_data.get('skyMap', **kwargs_get)
     flux_match = f'{prefix_flux_match}{filter_ref}'
     filters_all = filters_single + filters_multi
     filters_order = [filter_ref] + [band for band in filters_all if band != filter_ref]
@@ -227,7 +229,7 @@ def match_refcat(
 
                 if not has_match:
                     assert (band == filter_ref)
-                    primary_cat = butler_data.get('deepCoadd_ref', {'tract': tract, 'patch': patch})
+                    primary_cat = butler_data.get('deepCoadd_ref', tract=tract, patch=patch, **kwargs_get)
                     # Scarlet flags failed deblends as primary, at least until DM-27208
                     is_primary[patch] = primary_cat['detect_isPrimary'] * ~primary_cat['deblend_tooManyPeaks']
                 cat = cat[is_primary[patch]]
@@ -238,7 +240,7 @@ def match_refcat(
                             schema_truth = matches.refCat.schema
                         matches = matches.matches
                     else:
-                        bbox = Box2D(skymap_tract[tuple(int(x) for x in patch.split(','))].getInnerBBox())
+                        bbox = Box2D(skymap_tract[patch].getInnerBBox())
                         truth_patch = _get_refcat_bbox(task, bbox, wcs, filterName=flux_match).copy(deep=True)
                         skyCoords = [
                             coord.SkyCoord(x['coord_ra'], x['coord_dec'], unit=u.rad)

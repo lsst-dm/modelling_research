@@ -21,7 +21,7 @@
 
 from . import dc2
 from lsst.afw.table import Field, Schema, SchemaMapper, SourceCatalog
-from lsst.daf.persistence import Butler
+import lsst.daf.butler as dafButler
 from . import meas_model as mm
 import os
 from . import tables
@@ -78,12 +78,14 @@ def calibrate_catalog(catalog, photoCalibs_filter, filter_ref=None, func_field=N
 
 
 def calibrate_catalogs(
-        files, butler, func_dataId=None, is_dc2=False, return_cats=False, write=True,
-        files_ngmix=None, datasetType_ngmix=None, butler_scarlet=None, datasetType_scarlet=None, fields_scarlet=None,
-        postfix='_mag.fits', type_cat=None, type_calib=None, get_cmodel_forced=False, overwrite_band=None, log=True,
-        n_retry_max=0, retry_delay=0, skip_newer=True, **kwargs
+        files, butler, func_dataId=None, is_dc2=False, use_butler=True, return_cats=False, write=True,
+        files_ngmix=None, datasetType=None, datasetType_ngmix=None, butler_scarlet=None,
+        datasetType_scarlet=None, fields_scarlet=None, postfix='_mag.fits', type_cat=None, type_calib=None,
+        get_cmodel_forced=False, overwrite_band=None, log=True,
+        n_retry_max=0, retry_delay=0, skip_newer=True, kwargs_get=None,
+        **kwargs
 ):
-    """Calibrate FITS source measurement catalogs derived from data in a given repo.
+    """Calibrate and concatenate source catalogs.
 
     Parameters
     ----------
@@ -95,6 +97,8 @@ def calibrate_catalogs(
         A function that takes a catalog filename sans FITS extension and returns bands, patch, tract.
     is_dc2 : `bool`
         Whether this is a DC2 simulation repo on lsst-dev.
+    use_butler : `bool`
+        Whether to retrieve catalogs from the butler rather than reading from disk.
     return_cats : `bool`
         Whether to return the calibrate catalogs; they might be very large so the default is False.
     write : `bool`
@@ -153,10 +157,14 @@ def calibrate_catalogs(
         if butler is None:
             butler = {}
     if type_calib is None:
-        type_calib = 'deepCoadd_photoCalib'
+        type_calib = 'deepCoadd.photoCalib'
+    if datasetType is None:
+        datasetType = 'deepCoadd_multiprofit'
+    if kwargs_get is None:
+        kwargs_get = {}
 
     if files_ngmix is not None:
-        is_ngmix_butler = isinstance(files_ngmix, Butler)
+        is_ngmix_butler = isinstance(files_ngmix, dafButler.Butler)
         if is_ngmix_butler:
             if datasetType_ngmix is None:
                 datasetType_ngmix = 'deepCoadd_ngmix_deblended'
@@ -168,9 +176,9 @@ def calibrate_catalogs(
         type_cat = SourceCatalog
     if butler_scarlet is not None:
         if datasetType_scarlet is None:
-            datasetType_scarlet = 'deepCoadd_deblendedModel'
+            datasetType_scarlet = 'deepCoadd_deblendedFlux'
         if fields_scarlet is None:
-            fields_scarlet = ["deblend_edgeFluxFlag", "deblend_scarletFlux"]
+            fields_scarlet = ["deblend_edgePixels", "deblend_scarletFlux"]
 
     time_init = timer()
     time_now = time_init
@@ -180,23 +188,10 @@ def calibrate_catalogs(
     for idx, file in enumerate(files):
         filename = file.split('.fits')[0]
         filename_out = f'{filename}{postfix}'
-        if skip_newer and os.path.isfile(filename_out) and (os.path.getmtime(filename_out) > os.path.getmtime(file)):
+        if skip_newer and all(os.path.isfile(fname) for fname in (file, filename_out)) and (
+                os.path.getmtime(filename_out) > os.path.getmtime(file)):
             print(f'Skipping {file} because output file {filename_out} exists and is newer')
         else:
-            if log:
-                preprint = "Unknown" if (idx == 0) else f'{(time_now - time_init) * (n_files - idx) / idx:.1f}s'
-                print(f'ETA={preprint}; Calibrating {file}... ', end='')
-            for retry in range(1 + n_retry_max):
-                try:
-                    cat = type_cat.readFits(file)
-                except:
-                    if retry == n_retry_max:
-                        raise
-                    elif retry_delay:
-                        time.sleep(retry_delay)
-            if log:
-                time_now = time_print(time_now, prefix='Read in ')
-
             bands, tract, patch = func_dataId(filename)
             dataId = {'tract': tract, 'patch': patch}
 
@@ -205,7 +200,7 @@ def calibrate_catalogs(
                 if version not in butler:
                     path = repos[version]
                     print(f'DC2 butler {path} for {tract} not found; loading...')
-                    butler[version] = Butler(path)
+                    butler[version] = dafButler.Butler(path)
                     # Ignore the time spent reading butlers for the ETA
                     time_init -= time_now
                     time_print(time_now, prefix=f'Loaded butler in ')
@@ -213,6 +208,23 @@ def calibrate_catalogs(
                 butler_cal = butler[version]
             else:
                 butler_cal = butler
+
+            if log:
+                preprint = "Unknown" if (idx == 0) else f'{(time_now - time_init) * (n_files - idx) / idx:.1f}s'
+                print(f'ETA={preprint}; Calibrating {file}... ', end='')
+            if use_butler:
+                cat = butler_cal.get(datasetType, **dataId, **kwargs_get)
+            else:
+                for retry in range(1 + n_retry_max):
+                    try:
+                        cat = type_cat.readFits(file)
+                    except:
+                        if retry == n_retry_max:
+                            raise
+                        elif retry_delay:
+                            time.sleep(retry_delay)
+            if log:
+                time_now = time_print(time_now, prefix='Read in ')
 
             if files_ngmix or get_cmodel_forced or (butler_scarlet is not None):
                 mapper = SchemaMapper(cat.schema)
@@ -222,7 +234,7 @@ def calibrate_catalogs(
             fields_cat_new = []
 
             if files_ngmix is not None:
-                cat_ngmix = files_ngmix.get(datasetType_ngmix, dataId) if \
+                cat_ngmix = files_ngmix.get(datasetType_ngmix, dataId, **kwargs_get) if \
                     is_ngmix_butler else type_cat.readFits(files_ngmix[idx])
                 schema_ngmix = cat_ngmix.schema
                 names = cat.schema.getNames()
@@ -258,7 +270,7 @@ def calibrate_catalogs(
             if butler_scarlet is not None:
                 cats_scarlet = {}
                 for band in bands:
-                    cat_scarlet = butler_scarlet.get(datasetType_scarlet, set_dataId_band(dataId, band))
+                    cat_scarlet = butler_scarlet.get(datasetType_scarlet, **set_dataId_band(dataId, band), **kwargs_get)
                     cats_scarlet[band] = cat_scarlet
                     schema_scarlet = cat_scarlet.schema
                     fields_new = {}
@@ -277,7 +289,7 @@ def calibrate_catalogs(
                 schema = None
                 fields_out = []
                 for band in bands:
-                    forced = butler_cal.get('deepCoadd_forced_src', set_dataId_band(dataId, band))
+                    forced = butler_cal.get('deepCoadd_forced_src', set_dataId_band(dataId, band), **kwargs_get)
 
                     if schema is None:
                         schema = forced.schema
@@ -317,14 +329,14 @@ def calibrate_catalogs(
                 raise RuntimeError(f'pre-calib cat has {n_columns}>max={tables.n_columns_max}')
 
             try:
-                photoCalibs = {band: butler_cal.get(type_calib, set_dataId_band(dataId, band))
+                photoCalibs = {band: butler_cal.get(type_calib, set_dataId_band(dataId, band), **kwargs_get)
                                for band in bands}
             except:
                 print(f'Failed generating photoCalibs of type={type_calib} with dataId={dataId}')
                 raise
 
             if overwrite_band is not None:
-                meas = butler_cal.get('deepCoadd_meas', set_dataId_band(dataId, overwrite_band))
+                meas = butler_cal.get('deepCoadd_meas', set_dataId_band(dataId, overwrite_band), **kwargs_get)
                 for key in meas.schema:
                     field = key.field
                     # It's probably better to keep the original flag that MultiProFit used
@@ -348,43 +360,15 @@ def calibrate_catalogs(
         return cats
 
 
-def get_cat(cat, type_cat=None):
-    """ Get or validate a catalog from an input.
-
-    Parameters
-    ----------
-    cat : `str` or type
-        A path to a FITS catalog to load, or an already-loaded catalog of type `type_cat`.
-    type_cat
-        The type of catalog to load or expect.
-
-    Returns
-    -------
-    cat : type
-        The catalog.
-
-    Notes
-    -----
-    Meow.
-    """
-    if type_cat is None:
-        type_cat = SourceCatalog
-    if isinstance(cat, type_cat):
-        return cat
-    elif isinstance(cat, str):
-        return type.readFits(str)
-    raise RuntimeError(f'Unexpected type {type(cat)}!={type_cat} for cat {cat}')
-
-
 def parse_multiprofit_dataId(filename):
     bands, tract, patch = filename.split('/')[-1].split('_')[-3:]
-    return bands, int(tract), patch
+    return bands, int(tract), int(patch) if patch.isdigit() else patch
 
 
 def parse_multiprofit_dataId_Hsc(filename):
     bands, tract, patch = parse_multiprofit_dataId(filename)
     bands = tuple(f'HSC-{b.upper()}' for b in bands)
-    return bands, tract, patch
+    return bands, int(tract), int(patch) if patch.isdigit() else patch
 
 
 def reorder_fields(cat, filters=None, func_field=None):
@@ -454,5 +438,5 @@ def reorder_fields(cat, filters=None, func_field=None):
 
 
 def set_dataId_band(dataId, band):
-    dataId['filter'] = band
+    dataId['band'] = band
     return dataId

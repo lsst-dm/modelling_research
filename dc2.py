@@ -218,7 +218,7 @@ def make_refcat(butler, files, filters=None, butler_stars=None):
 
 
 def match_refcat_dc2(
-        butler_refcat, tracts=None, butlers_dc2=None, filter_ref=None, match_afw=True, filters_single=None,
+        butler_refcat, kwargs_get, tracts=None, butlers_dc2=None, filter_ref=None, match_afw=True, filters_single=None,
         filters_multi=None, func_path=None, **kwargs
 ):
     """Load DC2 catalogs and Match catalogs to a reference catalog.
@@ -227,6 +227,8 @@ def match_refcat_dc2(
     ----------
     butler_refcat : `lsst.daf.persistence.Butler`
         A butler with a reference catalog.
+    kwargs_get : `dict`
+        Keyword arguments for butler.get calls to pass to `match_refcat`.
     tracts : iterable [`int`]
         A list of tract numbers.
     butlers_dc2 : `dict` [`str`, `lsst.daf.persistence.Butler`]
@@ -242,6 +244,7 @@ def match_refcat_dc2(
     func_path : callable
         A function that takes `prefix_file_path`, filter name and tract number as arguments and returns
         filenames of catalogs in that path. See `get_path_cats` for an example.
+    kwargs : additional arguments passed to `match_refcat`.
 
     Returns
     -------
@@ -256,8 +259,6 @@ def match_refcat_dc2(
         tracts = get_tracts()
     if butlers_dc2 is None:
         butlers_dc2 = get_butlers()
-    if not match_afw:
-        skymaps = {version: butler_dc2.get('deepCoadd_skyMap') for version, butler_dc2 in butlers_dc2.items()}
     if filter_ref is None:
         filter_ref = get_filter_ref()
     if filters_single is None:
@@ -266,12 +267,14 @@ def match_refcat_dc2(
         filters_multi = ('griz',)
     if func_path is None:
         func_path = get_path_cats
+    if kwargs_get is None:
+        kwargs_get = {}
 
     cats = {}
     for tract, (path, run_dc2) in tracts.items():
         cats[tract] = match_refcat(
-            butler_refcat, butlers_dc2[run_dc2], [tract], filter_ref, func_path, match_afw=match_afw,
-            skymap=skymaps[run_dc2], prefix_flux_match='lsst_', prefix_file_path=path,
+            butler_refcat, butlers_dc2[run_dc2], [tract], filter_ref, func_path, kwargs_get=kwargs_get,
+            match_afw=match_afw, prefix_flux_match='lsst_', prefix_file_path=path,
             filters_single=filters_single, filters_multi=filters_multi, **kwargs
         )[tract]
 
