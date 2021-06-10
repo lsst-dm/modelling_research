@@ -73,16 +73,20 @@ band_multi = filters_multi[0]
 name_skymap = 'DC2'
 kwargs_get = {'collections': f'{collection_prefix}mpf_{band_multi}', 'skymap': name_skymap}
 skymap = butler_dc2.get('skyMap', **kwargs_get)
-patch_begin_x, patch_end_x, patch_begin_y, patch_end_y = 0, 0, 6, 6
-patch_max_x, patch_max_y = skymap[tract].getNumPatches()
+
+# Regex to read files
 get_path_cats = functools.partial(dc2.get_path_cats, patches_regex='*')
+
 # Calibrate catalogs: this only needs to be done once; get_cmodel_forced should only be true for single bands for reasons
 calibrate_cats = True
 get_multiprofit = True
 get_cmodel_forced = True
 get_ngmix = True
 get_scarlet = True
+
 if calibrate_cats:
+    patch_begin_x, patch_end_x, patch_begin_y, patch_end_y = 0, 0, 6, 6
+    patch_max_x, patch_max_y = skymap[tract].getNumPatches()
     skip_existing = True
     butler_scarlet = butler_dc2 if get_scarlet else None
     path = tracts[tract][0]
@@ -99,12 +103,13 @@ if calibrate_cats:
         ]
         if skip_existing:
             files = [f for f in files if not os.path.isfile(f'{f.split(".fits")[0]}_mag.fits')]
-        print('Calibrating', files)
-        calibrate_catalogs(
-            files, butlers_dc2, is_dc2=True, use_butler=True, files_ngmix=butler_ngmix,
-            butler_scarlet=butler_scarlet, get_cmodel_forced=get_cmodel_forced and is_single,
-            overwrite_band=None, kwargs_get=kwargs_get_bands,
-        )
+        if files:
+            print(f'Calibrating: files')
+            calibrate_catalogs(
+                files, butlers_dc2, is_dc2=True, use_butler=True, files_ngmix=butler_ngmix,
+                butler_scarlet=butler_scarlet, get_cmodel_forced=get_cmodel_forced and is_single,
+                overwrite_band=None, kwargs_get=kwargs_get_bands,
+            )
 cats = dc2.match_refcat_dc2(
     butler_ref, match_afw=False, tracts=tracts, butlers_dc2=butlers_dc2,
     filters_single=filters_single, filters_multi=filters_multi, func_path=get_path_cats,
@@ -158,7 +163,7 @@ if get_scarlet:
 
 models_stars = {model: models[model] for model in models_stars}
 
-args = dict(scatterleft=True, scatterright=True,)
+args = dict(scatterleft=True, scatterright=True, densityplot=sns.histplot, cmap='Reds')
 args_type = {
     'resolved': {
         'limx': (14.5, 24.5),
@@ -193,6 +198,7 @@ mpl.rcParams['axes.labelsize'] = 15
 
 
 # Galaxies
+args['densityplot'] = sns.histplot
 plot_matches(
     cats, True, models, filters_single, band_ref=band_ref, band_multi=band_multi,
     band_ref_multi=band_ref, mag_max=24.5, match_dist_asec=0.168,
@@ -303,14 +309,17 @@ for band in band_multi:
     else:
         bands_skipped += 1
 times_ref *= (bands_skipped + bands_done)/bands_done
-times[model_ref] = np.log10(times_ref)
 
-lim_time = (-3.2, 1.8)
+lim_time = (-2.2, 1.8)
 lim_y = (-2.1, 4.1)
+
+# Anything more than 1 dex lower than the lower plot limit is probably wrong
+times[model_ref] = np.clip(np.log10(times_ref), lim_time[0]-1, lim_time[1])
+
 # ha ha, how negative
 good_times = None
 for times_model in times.values():
-    good_time = (times_model > lim_time[0]) & (times_model < lim_time[1])
+    good_time = (times_model > lim_time[0])
     if good_times is None:
         good_times = good_time
     else:
@@ -325,7 +334,13 @@ for model, times_model in times.items():
             limx=lim_time, limy=lim_y,
             labelx='log10($t_{cmodel}$)', labely=f'log10($t_{{{model}}}/t_{{{model_ref}}}$)',
             title=f'DC2 3828 All Timing {model} vs {model_ref} ({band_multi})',
-            scatterleft=True, scatterright=True,
+            **args,
         )
         plt.show()
+
+
+# In[ ]:
+
+
+
 
