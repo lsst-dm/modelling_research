@@ -196,11 +196,28 @@ def plotjoint(tab, columns, labels=None, columncolor=None, colorbaropts=None,
     return jointplots, jointplotsratio
 
 
-def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None, limx=None, limy=None,
-                                  ndivisions=None, nbinspan=None, labelx=None, labely=None, title=None,
-                                  histtickspacingxmaj=None, histtickspacingymaj=None, marginal_hist_limit_ceil=True,
-                                  scatterleft=False, scatterright=False, drawzeroline=True):
-    """
+def plotjoint_running_percentiles(
+        x,
+        y,
+        percentiles=None,
+        percentilecolours=None,
+        limx=None,
+        limy=None,
+        ndivisions=None,
+        nbinspan=None,
+        labelx=None,
+        labely=None,
+        title=None,
+        histtickspacingxmaj=None,
+        histtickspacingymaj=None,
+        marginal_hist_limit_ceil=True,
+        scatterleft=False,
+        scatterright=False,
+        drawzeroline=True,
+        densityplot=None,
+        **kwargs
+):
+    """ Make a 2D joint distribution plot with density, running percentiles and marginal histograms.
 
     :param x: Float[]; x data.
     :param y: Float[]; y data.
@@ -219,6 +236,8 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
     :param scatterleft: Bool; scatter plot points leftwards of the leftmost bin center?
     :param scatterright: Bool; scatter plot points rightwards of the rightmost bin center?
     :param drawzeroline: Bool; draw line at y=0?
+    :param density: Seaborn plot function; plotting function used for density plot. Default sns.kdeplot (may be slow).
+    :param kwargs: Additional keyword arguments to pass to seaborn.plot_joint.
     :return: seaborn.JointGrid handle for the plot.
     """
     numpoints = len(x)
@@ -234,6 +253,8 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
         raise ValueError('len(percentiles)={} != len(percentilecolours)={}'.format(
             len(percentiles), len(percentilecolours)
         ))
+    if densityplot is None:
+        densityplot = sns.kdeplot
     # TODO: Check all inputs
     if ndivisions is None:
         ndivisions = int(np.ceil(numpoints**(1./3.)))
@@ -249,11 +270,14 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
     isyhi = y > limy[1]
     y[isylo] = limy[0]
     y[isyhi] = limy[1]
+
     # Make a joint grid, plot a KDE and leave the marginal plots for later
     p = sns.JointGrid(x=x, y=y, ylim=limy, xlim=limx)
-    p.plot_joint(sns.kdeplot, cmap="Reds", fill=True, n_levels=int(np.ceil(numpoints**(1/3))))
+    print('kwargs: ', kwargs.keys())
+    p.plot_joint(densityplot, **kwargs)
     joint = p.ax_joint
-    # Setup bin edges to have overlapping bins for running percentiles
+
+    # Set up bin edges to have overlapping bins for running percentiles
     binedges = np.sort(x)[np.asarray(np.round(np.linspace(0, len(x)-1, num=nedgesover)), dtype=int)]
     if drawzeroline:
         joint.axhline(y=0, color='k', linewidth=1, label='')
@@ -261,6 +285,7 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
     joint.set_ylabel(labely)
     xbins = np.zeros(nbinsover)
     ybins = [np.zeros(nbinsover) for _ in range(len(percentiles))]
+
     # Get running percentiles
     for idxbin in range(nbinsover):
         xlower, xupper = binedges[[idxbin, idxbin + nbinspan + 1]]
