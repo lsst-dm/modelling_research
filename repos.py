@@ -28,7 +28,8 @@ import subprocess
 
 
 def find_copy_single_file(
-        path_in, path_out, filename_glob_in, func_filename_out=None, write=True, overwrite=False, link=False, **kwargs
+    path_in, path_out, filename_glob_in, func_filename_out=None, write=True, overwrite=False, link=False,
+    **kwargs
 ):
     """ Find via glob and copy or link a single file to a new destination.
 
@@ -113,7 +114,8 @@ def parse_path_flat(path):
     flat, band_file = prefix.split('_')
     if flat != 'flat' or band_file != band:
         raise RuntimeError(
-            f'Invalid flat path={path} where {flat}!="flat" and/or directory band={band} != filename band={band_file}'
+            f'Invalid flat path={path} where {flat}!="flat" and/or directory band={band}'
+            f' != filename band={band_file}'
         )
     det, postfix = postfix.split('_')
     date_flat, extension = postfix.split('.')
@@ -125,7 +127,7 @@ def parse_path_flat(path):
 
 
 def reformat_path_flat(
-        path_reformat, band_out=None, date_out=None, raft_out=None, sensor_out=None, det_out=None, prefix=None,
+    path_reformat, band_out=None, date_out=None, raft_out=None, sensor_out=None, det_out=None, prefix=None,
 ):
     if prefix is None:
         prefix = ''
@@ -151,7 +153,9 @@ def validate_filename_raw(filename_raw, ccd_visit):
     if visit_full.lstrip('0') != visit or visit_full != format_visit(int(visit)):
         raise RuntimeError(f'{filename} derived visit={visit_full} doesn\'t match ccd_visit={ccd_visit}')
     if raft_full != raft:
-        raise RuntimeError(f'{filename} derived raft={raft_full} != raft={raft} for filename_raw={filename_raw}')
+        raise RuntimeError(
+            f'{filename} derived raft={raft_full} != raft={raft} for filename_raw={filename_raw}'
+        )
     blank1, filename_ccd = filename_det.split('det')
     ccd, blank2 = filename_ccd.split('.fits')
     if (blank1 != '') or (blank2 != '') or ccd != format_ccd(ccd_visit['ccd']):
@@ -193,18 +197,22 @@ def copy_repo_subset(
 
     """
     butler_in = Butler(path_in)
-    htm_pixelization = sphgeom.HtmPixelization(butler_in.get("ref_cat_config", name='cal_ref_cat').indexer['HTM'].depth)
+    htm_pixelization = sphgeom.HtmPixelization(
+        butler_in.get("ref_cat_config", name='cal_ref_cat').indexer['HTM'].depth
+    )
     skymap = butler_coadd.get('deepCoadd_skyMap')
 
     path_in_calib, path_in_raw, path_in_refcat, path_out_calib, path_out_raw, path_out_refcat = (
-        os.path.join(path_base, subdir) for path_base in (path_in, path_out) for subdir in ('CALIB', 'raw', 'ref_cats')
+        os.path.join(path_base, subdir)
+        for path_base in (path_in, path_out) for subdir in ('CALIB', 'raw', 'ref_cats')
     )
     paths_calib_in, paths_calib_out = (
         {subdir: os.path.join(path_base, subdir) for subdir in ('bfkernels', 'bias', 'dark', 'flat', 'SKY')}
         for path_base in (path_in_calib, path_out_calib)
     )
     path_in_refcat_cal, path_out_refcat_cal = (
-        os.path.join(path_base, 'cal_ref_cat') for path_base in (path_in_refcat, path_out_refcat)
+        os.path.join(path_base, 'cal_ref_cat')
+        for path_base in (path_in_refcat, path_out_refcat)
     )
     paths_out = [path_out, path_out_calib, path_out_raw, path_out_refcat, path_out_refcat_cal] + list(
         paths_calib_out.values())
@@ -267,7 +275,9 @@ def copy_repo_subset(
                         'bias': os.path.join('*', f'bias-{raft}-{sensor}-det{ccd}_*-*-*.fits'),
                         'dark': os.path.join('*', f'dark-{raft}-{sensor}-det{ccd}_*-*-*.fits'),
                         'flat': os.path.join(band, '*-*-*', f'flat_{band}-{raft}-{sensor}-det{ccd}_*.fits'),
-                        'SKY': os.path.join('*-*-*', band, f'SKY-*-*-*-{band}-{raft}-{sensor}-det{ccd}_*-*-*.fits'),
+                        'SKY': os.path.join(
+                            '*-*-*', band, f'SKY-*-*-*-{band}-{raft}-{sensor}-det{ccd}_*-*-*.fits'
+                        ),
                     }
                     for type_calib, filename_glob_in in filenames_glob.items():
                         if type_calib == 'flat' and (band_flat != band):

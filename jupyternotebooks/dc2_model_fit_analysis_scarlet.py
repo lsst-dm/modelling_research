@@ -10,7 +10,7 @@
 
 # Import requirements
 import functools
-from lsst.daf.persistence import Butler
+import lsst.daf.butler as dafButler
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import modelling_research.dc2 as dc2
@@ -19,8 +19,8 @@ from modelling_research.calibrate import calibrate_catalogs
 from modelling_research.plotting import plotjoint_running_percentiles
 from modelling_research.plot_matches import plot_matches
 import numpy as np
+import os
 import seaborn as sns
-from timeit import default_timer as timer
 
 
 # In[2]:
@@ -54,8 +54,10 @@ butler_ref = dc2.get_refcat(make=False)
 
 # Load the DC2 repo butlers: we'll need them later
 butlers_dc2 = {
-    '2.2i': Butler('/project/dtaranu/dc2/scarlet/2020-12-17/ugrizy'),
+    '2.2i': dafButler.Butler('/repo/dc2'),
 }
+butler_dc2 = butlers_dc2['2.2i']
+collection_prefix = 'u/dtaranu/DM-30237/w_2021_20/'
 
 
 # In[6]:
@@ -63,38 +65,55 @@ butlers_dc2 = {
 
 # Match with the refcat using astropy's matcher
 truth_path = dc2.get_truth_path()
-tracts = {3828: (f'{truth_path}scarlet/2020-12-17_mpf-siblingSub/', '2.2i'),}
+tract = 3828
+tracts = {tract: ('/project/dtaranu/dc2_gen3/w_2021_20_multibandfit/calcats/', '2.2i')}
 filters_single = ('g', 'r', 'i', 'z')
 filters_multi = ('griz',)
 band_multi = filters_multi[0]
-patch_min, patch_max = 0, 6
-patches_regex = f"[{patch_min}-{patch_max}]"
-patches_regex = f"{patches_regex},{patches_regex}"
-get_path_cats = functools.partial(dc2.get_path_cats, patches_regex=patches_regex)
+name_skymap = 'DC2'
+kwargs_get = {'collections': f'{collection_prefix}mpf_{band_multi}', 'skymap': name_skymap}
+skymap = butler_dc2.get('skyMap', **kwargs_get)
+
+# Regex to read files
+get_path_cats = functools.partial(dc2.get_path_cats, patches_regex='*')
+
 # Calibrate catalogs: this only needs to be done once; get_cmodel_forced should only be true for single bands for reasons
 calibrate_cats = True
 get_multiprofit = True
 get_cmodel_forced = True
 get_ngmix = True
 get_scarlet = True
+
 if calibrate_cats:
-    butler_scarlet = Butler(f'/project/dtaranu/dc2/scarlet/2020-12-17/ugrizy') if get_scarlet else None
-    path = tracts[3828][0]
-    for bands in filters_single + filters_multi:
-        butler_ngmix = Butler(f'/project/dtaranu/dc2/scarlet/2020-12-17_ngmix/{bands}') if get_ngmix else None
+    patch_begin_x, patch_end_x, patch_begin_y, patch_end_y = 0, 0, 6, 6
+    patch_max_x, patch_max_y = skymap[tract].getNumPatches()
+    skip_existing = True
+    butler_scarlet = butler_dc2 if get_scarlet else None
+    path = tracts[tract][0]
+    for bands in filters_multi + filters_single:
+        kwargs_get_bands = {'collections': [f'{collection_prefix}mpf_{bands}'] + [f'{collection_prefix}ngmix_{bands}'], 'skymap': name_skymap}
+        butler_ngmix = butler_dc2 if get_ngmix else None
         is_single = len(bands) == 1
+        path_band = f'{path}{bands}'
+        if not os.path.isdir(path_band):
+            os.mkdir(path_band)
         files = [
-            f'{path}{bands}/mpf_dc2_{bands}_3828_{x},{y}.fits'
-            for x in range(patch_min, patch_max+1) for y in range(patch_min, patch_max+1)
+            f'{path_band}/mpf_dc2_{bands}_3828_{x + patch_max_x*y}.fits'
+            for x in range(patch_begin_x, patch_end_x + 1) for y in range(patch_begin_y, patch_end_y + 1)
         ]
-        calibrate_catalogs(
-            files, butlers_dc2, is_dc2=True, files_ngmix=butler_ngmix,
-            butler_scarlet=butler_scarlet, get_cmodel_forced=get_cmodel_forced and is_single,
-            overwrite_band=None, retry_delay=10, n_retry_max=3
-        )
+        if skip_existing:
+            files = [f for f in files if not os.path.isfile(f'{f.split(".fits")[0]}_mag.fits')]
+        if files:
+            print(f'Calibrating: files')
+            calibrate_catalogs(
+                files, butlers_dc2, is_dc2=True, use_butler=True, files_ngmix=butler_ngmix,
+                butler_scarlet=butler_scarlet, get_cmodel_forced=get_cmodel_forced and is_single,
+                overwrite_band=None, kwargs_get=kwargs_get_bands,
+            )
 cats = dc2.match_refcat_dc2(
     butler_ref, match_afw=False, tracts=tracts, butlers_dc2=butlers_dc2,
     filters_single=filters_single, filters_multi=filters_multi, func_path=get_path_cats,
+    kwargs_get=kwargs_get,
 )
 
 
@@ -144,7 +163,7 @@ if get_scarlet:
 
 models_stars = {model: models[model] for model in models_stars}
 
-args = dict(scatterleft=True, scatterright=True,)
+args = dict(scatterleft=True, scatterright=True, densityplot=sns.histplot, cmap='Reds')
 args_type = {
     'resolved': {
         'limx': (14.5, 24.5),
@@ -179,6 +198,7 @@ mpl.rcParams['axes.labelsize'] = 15
 
 
 # Galaxies
+args['densityplot'] = sns.histplot
 plot_matches(
     cats, True, models, filters_single, band_ref=band_ref, band_multi=band_multi,
     band_ref_multi=band_ref, mag_max=24.5, match_dist_asec=0.168,
@@ -206,7 +226,8 @@ plot_matches(
 
 # Compare ngmix vs mpf g-r colours. They agree almost shockingly well for ~80-90% of sources.
 cat_mb = cats[3828]['meas'][band_multi]
-is_good = cat_mb['detect_isPatchInner'] & cat_mb['detect_isTractInner'] & (cat_mb['parent'] != 0) & ~cat_mb['merge_footprint_sky']
+is_good = cat_mb['detect_isPatchInner'] & cat_mb['detect_isTractInner'] & 
+          cat_mb['isDeblendedSource'] & ~cat_mb['merge_footprint_sky']
 cat_good = cat_mb[is_good]
 if get_ngmix:
     models_gmr = ['ngmix bd', 'MPF Sersic']
@@ -289,14 +310,17 @@ for band in band_multi:
     else:
         bands_skipped += 1
 times_ref *= (bands_skipped + bands_done)/bands_done
-times[model_ref] = np.log10(times_ref)
 
-lim_time = (-3.2, 1.8)
+lim_time = (-2.2, 1.8)
 lim_y = (-2.1, 4.1)
+
+# Anything more than 1 dex lower than the lower plot limit is probably wrong
+times[model_ref] = np.clip(np.log10(times_ref), lim_time[0]-1, lim_time[1])
+
 # ha ha, how negative
 good_times = None
 for times_model in times.values():
-    good_time = (times_model > lim_time[0]) & (times_model < lim_time[1])
+    good_time = (times_model > lim_time[0])
     if good_times is None:
         good_times = good_time
     else:
@@ -311,7 +335,13 @@ for model, times_model in times.items():
             limx=lim_time, limy=lim_y,
             labelx='log10($t_{cmodel}$)', labely=f'log10($t_{{{model}}}/t_{{{model_ref}}}$)',
             title=f'DC2 3828 All Timing {model} vs {model_ref} ({band_multi})',
-            scatterleft=True, scatterright=True,
+            **args,
         )
         plt.show()
+
+
+# In[ ]:
+
+
+
 

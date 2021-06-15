@@ -453,6 +453,5 @@ def _source_is_type(cat, resolved, include_nan=False, threshold=0.5):
     if include_nan:
         return ~_source_is_type(cat, not resolved, threshold=threshold)
     else:
-        return (cat[
-                    'base_ClassificationExtendedness_value'] >= threshold) if resolved else (
+        return (cat['base_ClassificationExtendedness_value'] >= threshold) if resolved else (
                 cat['base_ClassificationExtendedness_value'] < threshold)

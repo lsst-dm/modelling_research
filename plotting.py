@@ -196,11 +196,28 @@ def plotjoint(tab, columns, labels=None, columncolor=None, colorbaropts=None,
     return jointplots, jointplotsratio
 
 
-def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None, limx=None, limy=None,
-                                  ndivisions=None, nbinspan=None, labelx=None, labely=None, title=None,
-                                  histtickspacingxmaj=None, histtickspacingymaj=None, marginal_hist_limit_ceiling=True,
-                                  scatterleft=False, scatterright=False, drawzeroline=True):
-    """
+def plotjoint_running_percentiles(
+        x,
+        y,
+        percentiles=None,
+        percentilecolours=None,
+        limx=None,
+        limy=None,
+        ndivisions=None,
+        nbinspan=None,
+        labelx=None,
+        labely=None,
+        title=None,
+        histtickspacingxmaj=None,
+        histtickspacingymaj=None,
+        marginal_hist_limit_ceil=True,
+        scatterleft=False,
+        scatterright=False,
+        drawzeroline=True,
+        densityplot=None,
+        **kwargs
+):
+    """ Make a 2D joint distribution plot with density, running percentiles and marginal histograms.
 
     :param x: Float[]; x data.
     :param y: Float[]; y data.
@@ -219,6 +236,8 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
     :param scatterleft: Bool; scatter plot points leftwards of the leftmost bin center?
     :param scatterright: Bool; scatter plot points rightwards of the rightmost bin center?
     :param drawzeroline: Bool; draw line at y=0?
+    :param density: Seaborn plot function; plotting function used for density plot. Default sns.kdeplot (may be slow).
+    :param kwargs: Additional keyword arguments to pass to seaborn.plot_joint.
     :return: seaborn.JointGrid handle for the plot.
     """
     numpoints = len(x)
@@ -234,11 +253,13 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
         raise ValueError('len(percentiles)={} != len(percentilecolours)={}'.format(
             len(percentiles), len(percentilecolours)
         ))
+    if densityplot is None:
+        densityplot = sns.kdeplot
     # TODO: Check all inputs
     if ndivisions is None:
-        ndivisions = np.int(np.ceil(numpoints**(1./3.)))
+        ndivisions = int(np.ceil(numpoints**(1./3.)))
     if nbinspan is None:
-        nbinspan = np.int(np.ceil(ndivisions/10.))
+        nbinspan = int(np.ceil(ndivisions/10.))
     nedgesover = ndivisions*nbinspan + 2
     nbinsover = (ndivisions - 1)*nbinspan
     if limx is None:
@@ -249,18 +270,22 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
     isyhi = y > limy[1]
     y[isylo] = limy[0]
     y[isyhi] = limy[1]
+
     # Make a joint grid, plot a KDE and leave the marginal plots for later
     p = sns.JointGrid(x=x, y=y, ylim=limy, xlim=limx)
-    p.plot_joint(sns.kdeplot, cmap="Reds", shade=True, shade_lowest=False,
-                 n_levels=np.int(np.ceil(numpoints**(1/3))))
-    # Setup bin edges to have overlapping bins for running percentiles
+    print('kwargs: ', kwargs.keys())
+    p.plot_joint(densityplot, **kwargs)
+    joint = p.ax_joint
+
+    # Set up bin edges to have overlapping bins for running percentiles
     binedges = np.sort(x)[np.asarray(np.round(np.linspace(0, len(x)-1, num=nedgesover)), dtype=int)]
     if drawzeroline:
-        plt.axhline(y=0, color='k', linewidth=1, label='')
-    plt.xlabel(labelx)
-    plt.ylabel(labely)
+        joint.axhline(y=0, color='k', linewidth=1, label='')
+    joint.set_xlabel(labelx)
+    joint.set_ylabel(labely)
     xbins = np.zeros(nbinsover)
     ybins = [np.zeros(nbinsover) for _ in range(len(percentiles))]
+
     # Get running percentiles
     for idxbin in range(nbinsover):
         xlower, xupper = binedges[[idxbin, idxbin + nbinspan + 1]]
@@ -277,13 +302,13 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
             for idxper, percentile in enumerate(percentiles):
                 ybins[idxper][idxbin] = ybins[idxper][idxbin-1] if idxbin > 0 else np.nan
     for yper, pc, colpc in zip(ybins, percentiles, percentilecolours):
-        plt.plot(xbins, yper, linestyle='-', color=colpc, linewidth=1.5, label=str(pc) + 'th %ile')
+        joint.plot(xbins, yper, linestyle='-', color=colpc, linewidth=1.5, label=str(pc) + 'th %ile')
         for idxbin, idxlim in [(0, 0), (-1, 1)]:
-            plt.plot([limx[idxlim], xbins[idxbin]], [yper[idxbin], yper[idxbin]], linestyle='-',
-                     color=colpc, linewidth=1.5, label=None)
-    plt.legend()
+            joint.plot([limx[idxlim], xbins[idxbin]], [yper[idxbin], yper[idxbin]], linestyle='-',
+                       color=colpc, linewidth=1.5, label=None)
+    joint.legend()
     xlowerp = binedges[0]
-    idxxupper = np.int(np.ceil(nbinspan / 2))
+    idxxupper = int(np.ceil(nbinspan / 2))
     xupperp = binedges[idxxupper]
     # Plot outliers, with points outside of the plot boundaries as triangles
     # Not really necessary but more explicit.
@@ -305,8 +330,8 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
                 for condplot, markercond, sizecond in [(condoutlier*condy2, marker, 4),
                                                        (condoutlier*(~condy2), '.', 2)]:
                     if np.sum(condplot) > 0:
-                        plt.scatter(xcond[condplot], ycond[condplot], s=sizecond, marker=markercond,
-                                    color=colourpc)
+                        joint.scatter(xcond[condplot], ycond[condplot], s=sizecond, marker=markercond,
+                                      color=colourpc)
                 #plt.scatter(xcond[condoutlier], ycond[condoutlier], s=2, marker=markercond, color='k')
         xlowerp = xupperp
         if idxbin == (nbinsover-2):
@@ -317,14 +342,16 @@ def plotjoint_running_percentiles(x, y, percentiles=None, percentilecolours=None
     for idxbin in ([0] if scatterleft else []) + ([nbinsover-1] if scatterright else []):
         cond = (y > ybins[0][idxbin]) & (y < ybins[-1][idxbin])
         cond = cond & ((x < xbins[idxbin]) if (idxbin == 0) else (x > xbins[idxbin]))
-        plt.scatter(x[cond], y[cond], s=1, marker='+', color='k')
+        joint.scatter(x[cond], y[cond], s=1, marker='+', color='k')
     plot_marg_hist(
         p.ax_marg_x, x, tick_spacing=histtickspacingxmaj,
-        bins=ndivisions * 2, weights=np.repeat(1.0 / len(x), len(x)), histtype='stepfilled', linewidth=0
+        bins=ndivisions * 2, weights=np.repeat(1.0 / len(x), len(x)), histtype='stepfilled', linewidth=0,
+        limit_ceiling=marginal_hist_limit_ceil,
     )
     plot_marg_hist(
         p.ax_marg_y, y, tick_spacing=histtickspacingymaj, orient_x=False, orientation='horizontal',
-        bins=ndivisions*4, weights=np.repeat(1.0 / len(y), len(y)), histtype='stepfilled', linewidth=0
+        bins=ndivisions*4, weights=np.repeat(1.0 / len(y), len(y)), histtype='stepfilled', linewidth=0,
+        limit_ceiling = marginal_hist_limit_ceil,
     )
     if title is not None:
         p.fig.suptitle(title, y=1., verticalalignment='bottom')
