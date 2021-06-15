@@ -226,7 +226,8 @@ plot_matches(
 
 # Compare ngmix vs mpf g-r colours. They agree almost shockingly well for ~80-90% of sources.
 cat_mb = cats[3828]['meas'][band_multi]
-is_good = cat_mb['detect_isPatchInner'] & cat_mb['detect_isTractInner'] & (cat_mb['parent'] != 0) & ~cat_mb['merge_footprint_sky']
+is_good = cat_mb['detect_isPatchInner'] & cat_mb['detect_isTractInner'] & 
+          cat_mb['isDeblendedSource'] & ~cat_mb['merge_footprint_sky']
 cat_good = cat_mb[is_good]
 if get_ngmix:
     models_gmr = ['ngmix bd', 'MPF Sersic']
