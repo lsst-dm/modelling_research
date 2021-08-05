@@ -90,8 +90,8 @@ class Deblend:
     def plot(
         self, bands_weights, bbox=None, plot_sig=False, data_residual_factor=1, bands=None,
         sources=None, sources_true=None, sources_sig=None, measmodels=None, chi_clip=3, residual_scale=1,
-        label_data=None, label_model=None, offsetxy_texts=None, color_true=None, show=True,
-        idx_children_sub=None, ax_legend=1, **kwargs
+        label_data=None, label_model=None, offsetxy_texts=None, color_true=None, name_psf_model=None,
+        show=True, idx_children_sub=None, ax_legend=1, **kwargs
     ):
         if bands is None:
             if len(bands_weights) == 3:
@@ -108,7 +108,7 @@ class Deblend:
             offsetxy_texts = [(1, 1), (1, -1), (-1, -1), (-1, 1)]
         if color_true is None:
             color_true = 'pink'
-        imgs, models, weights = {}, {}, {}
+        imgs, models, models_psf, weights = {}, {}, {}, {}
         for b in bands:
             datum = self.data[b]
             weight = bands_weights.get(b, 1.)
@@ -129,6 +129,7 @@ class Deblend:
                         model.subset(bbox_intersect).array -= model_child
             imgs[b] = weight * img.array
             models[b] = model
+
         img_rgb = make_lupton_rgb(*(imgs.values()), **kwargs)
         img_model_rgb = make_lupton_rgb(
             *(i.array*w for i, w in zip(models.values(), weights.values())),

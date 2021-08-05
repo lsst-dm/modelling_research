@@ -273,7 +273,6 @@ def plotjoint_running_percentiles(
 
     # Make a joint grid, plot a KDE and leave the marginal plots for later
     p = sns.JointGrid(x=x, y=y, ylim=limy, xlim=limx)
-    print('kwargs: ', kwargs.keys())
     p.plot_joint(densityplot, **kwargs)
     joint = p.ax_joint
 
@@ -314,7 +313,7 @@ def plotjoint_running_percentiles(
     # Not really necessary but more explicit.
     # TODO: Color code outliers by y-value?
     for idxbin in range(nbinsover):
-        condbin = (x >= xlowerp)*(x <= xupperp)
+        condbin = (x >= xlowerp) & (x <= xupperp)
         xcond = x[condbin]
         ycond = y[condbin]
         for upper, condoutlier in enumerate([ycond <= ybins[0][idxbin], ycond >= ybins[-1][idxbin]]):
@@ -327,8 +326,8 @@ def plotjoint_running_percentiles(
                     condy2 = isylo[condbin]
                     marker = '^'
                 colourpc = percentilecolours[-1 if upper else 0]
-                for condplot, markercond, sizecond in [(condoutlier*condy2, marker, 4),
-                                                       (condoutlier*(~condy2), '.', 2)]:
+                for condplot, markercond, sizecond in [(condoutlier & condy2, marker, 4),
+                                                       (condoutlier & (~condy2), '.', 2)]:
                     if np.sum(condplot) > 0:
                         joint.scatter(xcond[condplot], ycond[condplot], s=sizecond, marker=markercond,
                                       color=colourpc)

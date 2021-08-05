@@ -213,7 +213,11 @@ def calibrate_catalogs(
                 preprint = "Unknown" if (idx == 0) else f'{(time_now - time_init) * (n_files - idx) / idx:.1f}s'
                 print(f'ETA={preprint}; Calibrating {file}... ', end='')
             if use_butler:
-                cat = butler_cal.get(datasetType, **dataId, **kwargs_get)
+                cat = butler_cal.get(
+                    datasetType,
+                    **(set_dataId_band(dataId, bands[0]) if (datasetType == "deepCoadd_meas") else dataId),
+                    **kwargs_get,
+                )
             else:
                 for retry in range(1 + n_retry_max):
                     try:

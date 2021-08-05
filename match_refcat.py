@@ -117,7 +117,7 @@ def match_refcat(
         A function that takes `prefix_file_path`, filter name and tract number as arguments and returns
         filenames of catalogs in that path. See `get_path_cats_butlerg2` for an example.
     kwargs_get : `dict`
-        Keyword arguments to pass to butler.get; must include a skymap name and should include collections if the
+        Keyword arguments to pass to butler.get; may require a skymap name and should include collections if the
         butler was not initialized with any.
     match_afw : `bool`
         Whether to match using `lsst.meas.astrom.DirectMatchTask`; otherwise,
@@ -169,8 +169,8 @@ def match_refcat(
         prefix_file_path = ''
     if func_patch is None:
         func_patch = func_patch_multiprofit
-    if kwargs_get is None or 'skymap' not in kwargs_get:
-        raise ValueError(f'kwargs_get={kwargs_get} does not contain a "skymap" name')
+    if kwargs_get is None:
+        kwargs_get = {}
 
     skymap = None if match_afw else butler_data.get('skyMap', **kwargs_get)
     flux_match = f'{prefix_flux_match}{filter_ref}'
@@ -201,13 +201,16 @@ def match_refcat(
             n_files = len(files)
 
             time = timer()
-            for idx, file in enumerate(files):
+            for idx, filename in enumerate(files):
                 # This entire bit of aggravating code is a tedious way to get matched catalogs
                 # in different bands all matched on the same reference band
-                patch = func_patch(file)
+                if isinstance(filename[1], afwTable.SourceCatalog):
+                    filename, cat = filename
+                else:
+                    cat = read_split_cat_fits(filename)
+                patch = func_patch(filename)
                 matches = matched_ids_src.get(patch, None)
                 has_match = matches is not None
-                cat = read_split_cat_fits(file)
                 if cat_full is None:
                     assert (idx == 0)
                     cat_full = afwTable.SourceCatalog(cat.schema)
@@ -224,7 +227,7 @@ def match_refcat(
                         matched_fails = ','.join(k for k, v in matched_schema.items() if not v)
                         set_matched = set(colnames) == set_colnames_full
                         raise RuntimeError(
-                            f"File {file} column {matched_fails} don't match original {files[0]}; "
+                            f"File {filename} column {matched_fails} don't match original {files[0]}; "
                             f"set matched={set_matched} but ")
 
                 if not has_match:
@@ -300,7 +303,7 @@ def match_refcat(
                 time = time_print(
                     time, prefix=f'Loaded in ',
                     postfix=f'; loading {patch} ({idx + 1}/{n_files})'
-                            f'{" and matching" if not has_match else ""} file={file};'
+                            f'{" and matching" if not has_match else ""} file={filename};'
                             f' len(cat,truth)={len(cat_full) if cat_full is not None else 0},'
                             f'{len(truth_full) if truth_full is not None else 0}'
                 )
