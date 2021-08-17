@@ -25,18 +25,20 @@ import seaborn as sns
 
 
 # Config
-hsc = True
+hsc = False
 overwrite = False
-gen2to3 = False
+gen2to3 = True
 filter_inexact_psf = True
 filter_interpolated = True
 midfix = '_gen2to3' if gen2to3 else ''
-savepre = (f'/project/dtaranu/{"cosmos/hsc/" if hsc else "dc2_gen3"}'
-           f'/w_2021_{"26" if hsc else "24"}{midfix}_coaddpsf/')
+savepre = (f'/project/dtaranu/{"cosmos/hsc" if hsc else "dc2_gen3"}'
+           f'/coaddpsf/w_2021_{"06" if hsc else "04"}{midfix}/')
+if not os.path.isdir(savepre):
+    os.mkdir(savepre)
 savepost = '.parq'
 bands = ['g', 'r', 'i']
 if hsc:
-    butler = dafButler.Butler('/repo/main', collections='HSC/runs/RC2/w_2021_26/DM-30867')
+    butler = dafButler.Butler('/repo/main', collections='HSC/runs/RC2/w_2021_06/DM-28654')
     n_patches = 81
     scale_pix = 0.168
     tracts = [9615, 9697]
@@ -44,16 +46,16 @@ if hsc:
     if not filter_inexact_psf and not filter_interpolated:
         tracts.append(9813)
     limxs = {band: x for band, x in zip(bands, ((0.525, 1.275), (0.35, 1.0), (0.35, 1.0),))}
-    limsfrac = (-0.08, 0.08)
+    limsfrac = (-0.05, 0.05)
 else:
-    butler = dafButler.Butler('/repo/dc2', collections='2.2i/runs/test-med-1/w_2021_24/DM-30730')
+    butler = dafButler.Butler('/repo/dc2', collections='2.2i/runs/test-med-1/w_2021_04/DM-28453')
     tracts = [3828, 3829]
     n_patches = 49
     scale_pix = 0.2
     filter_inexact_psf = True
     filter_interpolated = True
     limxs = {band: x for band, x in zip(bands, ((0.6, 1.2), (0.65, 0.95), (0.65, 0.95),))}
-    limsfrac = (-0.04, 0.02)
+    limsfrac = (-0.025, 0.025)
 patches = list(range(n_patches))
 
 
@@ -110,7 +112,7 @@ def make_summary(butler, type_cat=None, **kwargs):
     starIyy = stars['base_SdssShape_yy']
     modelIxx = stars['base_SdssShape_psf_xx']
     modelIxy = stars['base_SdssShape_psf_xy']
-    modelIyy = stars['base_SdssShape_psf_xx']
+    modelIyy = stars['base_SdssShape_psf_yy']
     data = {}
     data['starE1'] = (starIxx-starIyy)/(starIxx+starIyy)
     data['starE2'] = (2*starIxy)/(starIxx+starIyy)

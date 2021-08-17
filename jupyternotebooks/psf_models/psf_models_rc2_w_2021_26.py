@@ -25,24 +25,37 @@ import seaborn as sns
 
 
 # Config
-hsc = False
-overwrite = True
-gen2to3 = True
+hsc = True
+overwrite = False
+gen2to3 = False
+filter_inexact_psf = True
+filter_interpolated = True
 midfix = '_gen2to3' if gen2to3 else ''
-savepre = (f'/project/dtaranu/{"cosmos/hsc/" if hsc else "dc2_gen3"}'
+savepre = (f'/project/dtaranu/{"hsc" if hsc else "dc2_gen3"}'
            f'/w_2021_{"26" if hsc else "24"}{midfix}_coaddpsf/')
+if not os.path.isdir(savepre):
+    os.mkdir(savepre)
 savepost = '.parq'
 bands = ['g', 'r', 'i']
 if hsc:
     butler = dafButler.Butler('/repo/main', collections='HSC/runs/RC2/w_2021_26/DM-30867')
-    tract = 9813
     n_patches = 81
     scale_pix = 0.168
+    tracts = [9615, 9697]
+    # It's pointless to include COSMOS if these flags are used as 90%+ of coadd stars have them
+    if not filter_inexact_psf and not filter_interpolated:
+        tracts.append(9813)
+    limxs = {band: x for band, x in zip(bands, ((0.525, 1.275), (0.35, 1.0), (0.35, 1.0),))}
+    limsfrac = (-0.05, 0.05)
 else:
-    butler = dafButler.Butler('/repo/dc2', collections='2.2i/runs/test-med-1/w_2021_24/DM-30730')
-    tract = 3828
+    butler = dafButler.Butler('/repo/dc2', collections='2.2i/runs/test-med-1/w_2021_24/DM-30674')
+    tracts = [3828, 3829]
     n_patches = 49
     scale_pix = 0.2
+    filter_inexact_psf = True
+    filter_interpolated = True
+    limxs = {band: x for band, x in zip(bands, ((0.6, 1.2), (0.65, 0.95), (0.65, 0.95),))}
+    limsfrac = (-0.025, 0.025)
 patches = list(range(n_patches))
 
 
@@ -70,33 +83,36 @@ def make_summary(butler, type_cat=None, **kwargs):
         print(f'Failed to butler.get({type_cat}, {kwargs}) due to {e}')
         return None
 
-    mask = np.logical_and.reduce((
-        src.get('calib_psf_used')==1,
-        src.get('base_PixelFlags_flag_interpolated')==False,
-        src.get('base_PixelFlags_flag_saturated')==False,
-        src.get('base_PixelFlags_flag_inexact_psf')==False,
-        src.get('base_PixelFlags_flag_clipped')==False
-    ))
+    mask = src['calib_psf_used']
+    n_psf = np.sum(mask)
+    stars = src[mask]
+    
+    mask = None
+    flags = [
+        'base_PixelFlags_flag_clipped',
+        'base_PixelFlags_flag_saturated',
+    ]
+    if filter_inexact_psf:
+        flags.append('base_PixelFlags_flag_inexact_psf')
+    if filter_interpolated:
+        flags.append('base_PixelFlags_flag_interpolated')
+    for flag in flags:
+        if mask is None:
+            mask = ~stars[flag]
+        else:
+            mask = mask & ~stars[flag]
+        print(f'Flag {flag} filters {np.sum(stars[flag])}/{n_psf} for dataId: {kwargs}')
+    print(f'Selected {np.sum(mask)}/{n_psf}')
     if np.sum(mask)==0:
         print('No data')
         return None
-    sIxxKey = src.schema.find('base_SdssShape_xx').key
-    sIyyKey = src.schema.find('base_SdssShape_yy').key
-    sIxyKey = src.schema.find('base_SdssShape_xy').key
-    mIxxKey = src.schema.find('base_SdssShape_psf_xx').key
-    mIyyKey = src.schema.find('base_SdssShape_psf_yy').key
-    mIxyKey = src.schema.find('base_SdssShape_psf_xy').key
-    fluxPsfKey = src.schema.find('base_PsfFlux_instFlux').key
-    fluxPsfErrKey = src.schema.find('base_PsfFlux_instFluxErr').key
-    fluxCmodelKey = src.schema.find('modelfit_CModel_instFlux').key
-    fluxCmodelErrKey = src.schema.find('modelfit_CModel_instFluxErr').key
-    stars = src[mask]
-    starIxx = src.get(sIxxKey)[mask]
-    starIxy = src.get(sIxyKey)[mask]
-    starIyy = src.get(sIyyKey)[mask]
-    modelIxx = src.get(mIxxKey)[mask]
-    modelIxy = src.get(mIxyKey)[mask]
-    modelIyy = src.get(mIyyKey)[mask]
+    stars = stars[mask]
+    starIxx = stars['base_SdssShape_xx']
+    starIxy = stars['base_SdssShape_xy']
+    starIyy = stars['base_SdssShape_yy']
+    modelIxx = stars['base_SdssShape_psf_xx']
+    modelIxy = stars['base_SdssShape_psf_xy']
+    modelIyy = stars['base_SdssShape_psf_yy']
     data = {}
     data['starE1'] = (starIxx-starIyy)/(starIxx+starIyy)
     data['starE2'] = (2*starIxy)/(starIxx+starIyy)
@@ -106,21 +122,22 @@ def make_summary(butler, type_cat=None, **kwargs):
     data['modelSize'] = np.sqrt(0.5*(modelIxx + modelIyy))*2.354820045*scale_pix
     data['ra'] = [a.getCoord().getRa().asDegrees() for a in stars]
     data['dec'] = [a.getCoord().getDec().asDegrees() for a in stars]
-    data['fluxPsf'] = src.get(fluxPsfKey)[mask]
-    data['fluxPsfErr'] = src.get(fluxPsfErrKey)[mask]
-    data['fluxCmodel'] = src.get(fluxCmodelKey)[mask]
-    data['fluxCmodelErr'] = src.get(fluxCmodelErrKey)[mask]
+    data['fluxPsf'] = stars['base_PsfFlux_instFlux']
+    data['fluxPsfErr'] = stars['base_PsfFlux_instFluxErr']
+    data['fluxCmodel'] = stars['modelfit_CModel_instFlux']
+    data['fluxCmodelErr'] = stars['modelfit_CModel_instFluxErr']
     df = pd.DataFrame(data)
     return df
 
-def make_table(band, tract, patches, **kwargs):
+def make_table(band, tracts, patches, **kwargs):
     data=[]
-    for patch in patches:
-        print(f'Making summary for band={band}, tract={tract}, patch={patch}')
-        result = make_summary(band=band, tract=tract, patch=patch, **kwargs)
-        if result is None:
-            continue
-        data.append(result)
+    for tract in tracts:
+        for patch in patches:
+            print(f'Making summary for band={band}, tract={tract}, patch={patch}')
+            result = make_summary(band=band, tract=tract, patch=patch, **kwargs)
+            if result is None:
+                continue
+            data.append(result)
     table = pd.concat(data)
     return table
 
@@ -131,11 +148,12 @@ def make_table(band, tract, patches, **kwargs):
 # Read/write data
 data = {}
 for band in bands:
-    desc = f'{tract}_{band}'
+    desc = (f'{",".join((str(x) for x in tracts))}_{band}_filt_inexact'
+            f'{int(filter_inexact_psf)}_interp{int(filter_interpolated)}')
     savefile = f'{savepre}{desc}{savepost}'
     if overwrite or not os.path.exists(savefile):
-        print(f'Generating {savefile} for band={band}, tract={tract}, patches={patches}')
-        table = make_table(band, tract, patches, butler=butler)
+        print(f'Generating {savefile} for band={band}, tracts={tracts}, patches={patches}')
+        table = make_table(band, tracts, patches, butler=butler)
         table.to_parquet(savefile)
         data[band] = table
     else:
@@ -143,12 +161,10 @@ for band in bands:
         data[band] = pd.read_parquet(savefile)
 
 
-# In[6]:
+# In[9]:
 
 
 # Plot
-doonlyoneplot = False
-limsfrac = (-0.05, 0.05)
 kwargs_plotjoint = dict(
     nbinspan = 8,
     densityplot=sns.histplot,
@@ -161,7 +177,6 @@ plot_patch = False
 labelflux = 'log10(instFluxPsf)'
 labelsizeresid = r'($FWHM_{model}$ - $FWHM_{data}$)/$FWHM_{data}$'
 labelsize = r'$FWHM_{data}/arcsec$'
-limxs = {band: x for band, x in zip(bands, ((0.6, 1.2), (0.7, 0.9), (0.7, 0.9),))}
 
 for dataplot, typeofdata in ((data, 'Lanczos5'),):
     for band, limx in limxs.items():
@@ -186,7 +201,7 @@ for dataplot, typeofdata in ((data, 'Lanczos5'),):
         sizebins = np.sort(datum['starSize'][condsizefrac])[
             np.asarray(np.round(np.linspace(0, np.sum(condsizefrac)-1, num=4+1)), dtype=int)
         ]
-        for idx in range(len(sizebins)*(not doonlyoneplot) + 2*doonlyoneplot-1):
+        for idx in range(len(sizebins) - 1):
             sizemin, sizemax = sizebins[idx:idx+2]
             cond = condsizefrac & (datum['starSize'] > sizemin) & (datum['starSize'] < sizemax)
             numpoints = np.sum(cond)
