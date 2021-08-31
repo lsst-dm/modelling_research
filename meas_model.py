@@ -41,14 +41,17 @@ Shape = NamedTuple('Shape', [('r_maj', float), ('r_min', float), ('ang', float)]
 Ellipse = NamedTuple('Ellipse', [('centroid', Centroid), ('shape', Shape)])
 Measurement = NamedTuple('Measurement', [('mag', float), ('ellipse', Ellipse), ('mag_err', float)])
 Source = NamedTuple('Source', [('idx_row', int), ('measurements', Sequence[Measurement])])
-CatExp = NamedTuple('CatExp', [
-    ('band', str),
-    ('cat', afwTable.SourceCatalog),
-    ('img', afwImage.Image),
-    ('model', afwImage.Image),
-    ('siginv', afwImage.Image),
-])
 
+
+@dc.dataclass(frozen=True)
+class CatExp:
+    band: str = ''
+    cat: afwTable.SourceCatalog = dc.field(default=None, repr=False)
+    img: afwImage.Image = dc.field(default=None, repr=False)
+    model: afwImage.Image = dc.field(default=None, repr=False)
+    photoCalib: afwImage.PhotoCalib = None
+    psf: measAlg.CoaddPsf = None
+    siginv: afwImage.Image = dc.field(default=None, repr=False)
 
 
 def get_source_points(band, sources=None):
