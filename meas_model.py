@@ -31,16 +31,43 @@ from gauss2d.utils import covar_to_ellipse
 import lsst.meas.algorithms as measAlg
 from lsst.meas.extensions.multiprofit.utils import get_spanned_image
 from multiprofit.utils import flux_to_mag, mag_to_flux
-from typing import Dict, NamedTuple, Sequence
+from typing import Dict, Sequence
 import numpy as np
 
 
 # Classes for row-wise measurements
-Centroid = NamedTuple('Centroid', [('x', float), ('y', float), ('x_err', float), ('y_err', float)])
-Shape = NamedTuple('Shape', [('r_maj', float), ('r_min', float), ('ang', float)])
-Ellipse = NamedTuple('Ellipse', [('centroid', Centroid), ('shape', Shape)])
-Measurement = NamedTuple('Measurement', [('mag', float), ('ellipse', Ellipse), ('mag_err', float)])
-Source = NamedTuple('Source', [('idx_row', int), ('measurements', Sequence[Measurement])])
+@dc.dataclass(frozen=True)
+class Centroid:
+    x: float
+    y: float
+    x_err: float = None
+    y_err: float = None
+
+    @property
+    def cen(self):
+        return self.x, self.y
+
+@dc.dataclass(frozen=True)
+class Shape:
+    r_maj: float
+    r_min: float
+    ang: float
+
+@dc.dataclass(frozen=True)
+class Ellipse:
+    centroid: Centroid
+    shape: Shape
+
+@dc.dataclass(frozen=True)
+class Measurement:
+    mag: float
+    ellipse: Ellipse
+    mag_err: float
+
+@dc.dataclass(frozen=True)
+class Source:
+    idx_row: int
+    measurements: Sequence[Measurement]
 
 
 @dc.dataclass(frozen=True)
@@ -59,8 +86,8 @@ def get_source_points(band, sources=None):
     if sources:
         for source in sources:
             measure = source.measurements[band]
-            cxs.append(measure.ellipse.centroid[0])
-            cys.append(measure.ellipse.centroid[1])
+            cxs.append(measure.ellipse.centroid.x)
+            cys.append(measure.ellipse.centroid.y)
             mags.append(measure.mag)
     return cxs, cys, mags
 
@@ -189,7 +216,7 @@ class Deblend:
                 measure = source.measurements.get(model)
                 if measure is not None:
                     ellipse = measure.ellipse
-                    cx, cy, *_ = ellipse.centroid
+                    cx, cy = ellipse.centroid.cen
                     cx += offsets[0]
                     cy += offsets[1]
                     if (cx > 0) & (cx < n_x) & (cy > 0) & (cy < n_y):
@@ -391,9 +418,6 @@ def get_sources_meas(
                 chi_sq = chi_sqs[min]
                 if chi_sq > 0 and np.isfinite(chi_sq):
                     mag_true_matched = mag_true[is_unmatched][min]
-                    print(f'Matched source with measures={meas} to true={mag_true_matched:.4f}'
-                          f',{x_true[is_unmatched][min]:.4f},{y_true[is_unmatched][min]:.4f}'
-                          f' (chisq={chi_sq} from arr={chi_sqs})')
                     # Set the matched array element
                     unmatched[np.where(mag_true == mag_true_matched)[0][0]] = False
                     source.measurements[model_true] = Measurement(
