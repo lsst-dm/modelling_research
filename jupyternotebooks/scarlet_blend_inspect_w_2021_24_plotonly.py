@@ -44,7 +44,8 @@ band_fit = 'griz'
 
 
 # Construct Source Measurements from a cat
-def get_source_meas_all(bbox, cat, column_mag, mag_min, wcs, column_ra=None, column_dec=None, zeropoint=None):
+def get_source_meas_all(bbox, cat, columns_mag, mag_min, wcs, column_ra=None, column_dec=None, zeropoint=None,
+                        offset_x=0, offset_y=0):
     if column_ra is None:
         column_ra = 'coord_ra'
     if column_dec is None:
@@ -55,20 +56,28 @@ def get_source_meas_all(bbox, cat, column_mag, mag_min, wcs, column_ra=None, col
         for x in (bbox_begin, bbox.getEnd())
     )
     ra_t, dec_t = cat[column_ra], cat[column_dec]
-    mag = cat[column_mag]
-    if zeropoint is not None:
-        mag = -2.5*np.log10(mag) + zeropoint
+    mags = {}
+    for band, column_mag in columns_mag.items():
+        mag = cat[column_mag]
+        if zeropoint is not None:
+            mag = -2.5*np.log10(mag) + zeropoint
+        mags[band] = mag
     sources_within = np.where((ra_t > ra_c1) & (ra_t < ra_c2) & (dec_t > dec_c1) & (dec_t < dec_c2) & (mag < mag_min))[0]
     sources_input = []
     for idx in sources_within:
         cx, cy = wcs.skyToPixel(geom.SpherePoint(ra_t[idx], dec_t[idx], geom.radians)) - bbox_begin
         source = mrMeas.Source(
             idx_row=idx,
-            measurements=[
+            measurements={
+                band:
                 mrMeas.Measurement(
-                    mag=mag[idx], ellipse=mrMeas.Ellipse(centroid=mrMeas.Centroid(x=cx, y=cy), shape=None),
+                    mag=mag[idx], mag_err=None, ellipse=mrMeas.Ellipse(
+                        centroid=mrMeas.Centroid(x=cx + offset_x, y=cy + offset_y, x_err=None, y_err=None),
+                        shape=None,
+                    ),
                 )
-            ]
+                for band, mag in mags.items()
+            }
         )
         sources_input.append(source)
     return sources_input
@@ -100,6 +109,7 @@ exps_orig_b = {}
 calibs_p = {}
 patch_main = 24
 collections = collection_prefix
+exps_main = {}
 
 for patch in (patch_main,) if has_multiprofit else range(49):
     print(f'Reading patch {patch}')
@@ -119,12 +129,16 @@ for patch in (patch_main,) if has_multiprofit else range(49):
         exp = butler.get('deepCoadd_calexp', **dataId, band=band, collections=collections)
         if is_main:
             exp.variance.array = 1./np.sqrt(exp.variance.array)
-            exp_main = exp
-        catexps_b[band] = mrMeas.CatExp(band=band,
-                                        cat=cat,
-                                        img=exp.image if is_main else None,
-                                        siginv=exp.variance if is_main else None,
-                                        model=None)
+            exps_main[band] = exp
+        catexps_b[band] = mrMeas.CatExp(
+            band=band,
+            cat=cat,
+            img=exp.image if is_main else None,
+            photoCalib=exp.getPhotoCalib(),
+            psf=exp.getPsf(),
+            model=None,
+            siginv=exp.variance if is_main else None,
+       )
         calibs_b[band] = exp.getPhotoCalib()
         # We don't need to keep these for the old deblender
         if is_main and (name == name_scarlet):
@@ -176,6 +190,7 @@ else:
 models_meas = {
     'Base PSF': mrMeas.Model('Base PSF', 'base_PsfFlux', 0),
     'CModel': mrMeas.Model('Stack CModel', 'modelfit_CModel', 2),
+    'Scarlet': mrMeas.Model('Scarlet', 'scarlet', 0),
 }
 if has_multiprofit:
     models_meas['MPF Sersic']: mrMeas.Model('MPF Sersic', 'multiprofit_mg8serbpx', 1)
@@ -263,7 +278,7 @@ sns.set_style('dark', {'axes.grid' : False, "xtick.color": 'k', "ytick.color": '
 
 # Settings for DC2 sources in footprints
 mag_min = 26
-column_mag_true = f'lsst_{band_ref}_flux'
+columns_mag_true = {b: f'lsst_{b}_flux' for b in 'ugriz'}
 tract = 3828
 
 
@@ -274,7 +289,7 @@ tract = 3828
 cat_meas = cats_mpf[f'{name_scarlet}_{name_nr}']
 sizes = 0.2*np.sqrt(0.5*(cat_meas['modelfit_CModel_ellipse_xx'] + cat_meas['modelfit_CModel_ellipse_yy']))
 mags = cat_meas['modelfit_CModel_mag']
-big_stars = (mags > 16.25) & (mags < 17) & (sizes > 0.05) & (sizes < 0.3)
+big_stars = (mags > 16.) & (mags < 17.5) & (sizes > 0.05) & (sizes < 0.3)
 big_stars_rows = np.where(big_stars & (cat_meas['deblend_parentNChild'] > 0) & (cat_meas['deblend_parentNChild'] <= 8))[0]
 
 idxs_parent = [
@@ -296,7 +311,9 @@ if plot_big_stars:
 
 
 # These were identified earlier but should be similar to those found above
-idxs_parent = [2274, 2375, 2786, 7270, 7289, 7314]
+use_previously_found = False
+if use_previously_found:
+    idxs_parent = [2274, 2375, 2786, 7270, 7289, 7314]
 
 
 # In[14]:
@@ -305,9 +322,12 @@ idxs_parent = [2274, 2375, 2786, 7270, 7289, 7314]
 # Load a particular blend that has badly-behaved children (ha ha)
 # Luckily all cats have the same parent, but that shouldn't be relied on
 namepaths = {f'{name_scarlet}_{name_nr}': (name_scarlet, None)}
-for idx_parent in idxs_parent[:1]:
+for idx_parent in idxs_parent:
     blend = mrMeas.Blend([
-        mrMeas.Deblend(cat_ref=cat_refs[name], data=catexps_n, idx_parent=idx_parent, name_deblender=name)
+        mrMeas.Deblend(
+            band_ref=band_ref, cat_ref=cat_refs[name],
+            data=catexps_n, idx_parent=idx_parent, name_deblender=name,
+        )
         for name, catexps_n in catexps.items()
     ])
 
@@ -327,52 +347,44 @@ for idx_parent in idxs_parent[:1]:
         name_scarlet: {'offset': offset, 'scatter_opts': dict(s=4, color='cyan', marker='+', linewidth=0.4)},
         'Base PSF': {'offset': offset, 'scatter_opts': dict(s=9, edgecolors='chartreuse', facecolors="None", marker='o', linewidth=0.4)},
     }
-    truth = cats_dc2[f'{name_scarlet}_{name_nr}'][tract]['truth']
+    name_full = f'{name_scarlet}_{name_nr}'
+    truth = cats_dc2[name_full][tract]['truth']
     sources_true = get_source_meas_all(
         bbox=blend.bbox, cat=truth, wcs=wcs_refs[name_scarlet],
-        column_mag=column_mag_true, mag_min=mag_min, zeropoint=31.4,
+        columns_mag=columns_mag_true, mag_min=mag_min, zeropoint=31.4,
     )
     for name_deblender, name_rerun in reruns_plot:
         deblend = blend.data[name_deblender]
         meas = sources_meas[f'{name_deblender}_{name_rerun}']
         is_scarlet = name_deblender == name_scarlet
-        for do_sources_true in ((False, True) if is_scarlet else (True,)):
-            measmodels_plot = {name_scarlet: measmodels[name_scarlet]} if is_scarlet and do_sources_true else measmodels
-            fig, ax, fig_sig, ax_sig = deblend.plot(
+        # Plot slight variations on the same thing; should this be condensed?
+        #for do_sources_true in ((False, True) if is_scarlet else (True,)):
+        measmodels_plot = {name_scarlet: measmodels[name_scarlet]} if is_scarlet else measmodels
+        fig, ax, fig_sig, ax_sig = deblend.plot(
+            bands_weights, plot_sig=True, sources=meas,
+            sources_true=sources_true, # if do_sources_true else None,
+            sources_sig=sources_true, # if not do_sources_true else None,
+            measmodels=measmodels_plot,
+            label_data=f'DC2 t{tract} p{patch} id{idx_parent} iter={cat_meas[idx_parent]["deblend_iterations"]}',
+            stretch=1, Q=12, residual_scale=0.2,
+            show=False,
+        )
+        for model_psf_true in ((False, True)):
+            deblend.plot(
                 bands_weights, plot_sig=True, sources=meas,
-                sources_true=sources_true if do_sources_true else None,
-                sources_sig=sources_true if not do_sources_true else None,
-                measmodels=measmodels_plot,
+                sources_true=sources_true,
+                sources_sig=sources_true,
+                models_psf={'Base PSF': models_meas[f'{name_deblender}_{name_rerun}']['Base PSF']},
                 label_data=f'DC2 t{tract} p{patch} id{idx_parent} iter={cat_meas[idx_parent]["deblend_iterations"]}',
+                label_model=f'Base PSF{" (true mag)" if model_psf_true else ""}',
+                model_psf_true=model_psf_true,
+                measmodels=measmodels,
                 stretch=1, Q=12, residual_scale=0.2,
                 show=False,
             )
 
 
 # In[15]:
-
-
-# Test PSF point making
-from lsst.geom import Point2D
-meas_psf = meas[0].measurements['Base PSF']
-print(meas_psf)
-print(dir(deblend))
-img_psf = exp_main.getPsf().computeImage(Point2D(x=meas_psf.ellipse.centroid.x, y=meas_psf.ellipse.centroid.y))
-print(img_psf.getXY0())
-plt.imshow(img_psf.array)
-
-print(blah)
-
-
-# In[17]:
-
-
-#
-print(meas_psf)
-print(blend.bbox)
-
-
-# In[ ]:
 
 
 # Find a misbehaving child
@@ -382,7 +394,7 @@ for name_deblender, name_rerun in reruns_plot:
     meas = sources_meas[f'{name_deblender}_{name_rerun}']
     bbox_parent = deblend.parent.getFootprint().getBBox()
     for idx_target, src in enumerate(meas):
-        x, y = (x-y for x, y in zip(src.measurements[name_model].ellipse.centroid, bbox_parent.getBegin()))
+        x, y = (x-y for x, y in zip(src.measurements[name_model].ellipse.centroid.cen, bbox_parent.getBegin()))
         if 75 < x < 85 and 150 < y < 160:
             break
     print(f'{name_deblender} Found:', idx_target, x, y)
@@ -401,7 +413,7 @@ for name_deblender, name_rerun in reruns_plot:
     }
     sources_true_child = get_source_meas_all(
         bbox=bbox_child, cat=truth, wcs=wcs_refs[name_scarlet],
-        column_mag=column_mag_true, mag_min=mag_min, zeropoint=31.4
+        columns_mag=columns_mag_true, mag_min=mag_min, zeropoint=31.4
     )
     for measmodels_child, plot_sig in ((measmodels_deblend, False), (measmodels_fit, True)):
         _ = deblend.plot(
@@ -412,7 +424,7 @@ for name_deblender, name_rerun in reruns_plot:
         )
 
 
-# In[ ]:
+# In[16]:
 
 
 # Plot child data with nearby models subtracted, and residuals relative to zero (i.e. vs sky noise only)
@@ -431,7 +443,7 @@ _ = deblend.plot(
 )
 
 
-# In[ ]:
+# In[17]:
 
 
 # Now let's do it the old noiseReplacer way

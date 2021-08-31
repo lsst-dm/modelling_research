@@ -259,6 +259,9 @@ class Deblend:
             chi_rgb = np.zeros_like(img_rgb)
             res_rgb = np.zeros_like(img_rgb)
 
+            chisq = 0
+            n_chi = 0
+
             for idx, band in enumerate(bands):
                 data_band = self.data[band]
                 model_b, img_b, siginv_b = (
@@ -267,12 +270,18 @@ class Deblend:
                 )
                 residual = model_b.array - data_residual_factor * img_b.array
                 chi = residual * siginv_b.array
+                chi_finite = chi[np.isfinite(chi)]
+                n_chi += chi_finite.size
+                chisq += np.sum(chi_finite**2)
+
                 chi_rgb[:, :, idx] = 256 * np.clip(chi / (2 * chi_clip) + 0.5, 0, 1)
                 res_rgb[:, :, idx] = 256 * np.clip(residual / (2 * residual_scale) + 0.5, 0, 1)
+
             ax_sig[0].imshow(res_rgb)
             ax_sig[0].set_title(f'{label_bands} Model - Data Residuals (clipped +/- {residual_scale:.2f})')
             ax_sig[1].imshow(chi_rgb)
-            ax_sig[1].set_title(f'{label_bands} Model - Data Chi (clipped +/- {chi_clip:.2f})')
+            ax_sig[1].set_title(f'{label_bands} Model - Data Chi (clipped +/- {chi_clip:.2f})'
+                                f' chisqred={chisq/n_chi:.2f}')
 
             if sources_sig is not None:
                 handle = plot_sources(
