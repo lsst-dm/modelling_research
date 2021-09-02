@@ -28,34 +28,66 @@ import matplotlib.patches as patches
 import matplotlib.patheffects as pathfx
 import matplotlib.pyplot as plt
 from gauss2d.utils import covar_to_ellipse
+import lsst.meas.algorithms as measAlg
 from lsst.meas.extensions.multiprofit.utils import get_spanned_image
 from multiprofit.utils import flux_to_mag, mag_to_flux
-from typing import Dict, NamedTuple, Sequence
+from typing import Dict, Sequence
 import numpy as np
 
 
 # Classes for row-wise measurements
-Centroid = NamedTuple('Centroid', [('x', float), ('y', float)])
-Shape = NamedTuple('Shape', [('r_maj', float), ('r_min', float), ('ang', float)])
-Ellipse = NamedTuple('Ellipse', [('centroid', Centroid), ('shape', Shape)])
-Measurement = NamedTuple('Measurement', [('mag', float), ('ellipse', Ellipse)])
-Source = NamedTuple('Source', [('idx_row', int), ('measurements', Sequence[Measurement])])
-CatExp = NamedTuple('CatExp', [
-    ('band', str),
-    ('cat', afwTable.SourceCatalog),
-    ('img', afwImage.Image),
-    ('model', afwImage.Image),
-    ('siginv', afwImage.Image),
-])
+@dc.dataclass(frozen=True)
+class Centroid:
+    x: float
+    y: float
+    x_err: float = None
+    y_err: float = None
+
+    @property
+    def cen(self):
+        return self.x, self.y
+
+@dc.dataclass(frozen=True)
+class Shape:
+    r_maj: float
+    r_min: float
+    ang: float
+
+@dc.dataclass(frozen=True)
+class Ellipse:
+    centroid: Centroid
+    shape: Shape
+
+@dc.dataclass(frozen=True)
+class Measurement:
+    mag: float
+    ellipse: Ellipse
+    mag_err: float
+
+@dc.dataclass(frozen=True)
+class Source:
+    idx_row: int
+    measurements: Sequence[Measurement]
 
 
-def get_source_points(sources=None):
+@dc.dataclass(frozen=True)
+class CatExp:
+    band: str = ''
+    cat: afwTable.SourceCatalog = dc.field(default=None, repr=False)
+    img: afwImage.Image = dc.field(default=None, repr=False)
+    model: afwImage.Image = dc.field(default=None, repr=False)
+    photoCalib: afwImage.PhotoCalib = None
+    psf: measAlg.CoaddPsf = None
+    siginv: afwImage.Image = dc.field(default=None, repr=False)
+
+
+def get_source_points(band, sources=None):
     cxs, cys, mags = [], [], []
     if sources:
         for source in sources:
-            measure = source.measurements[0]
-            cxs.append(measure.ellipse.centroid[0])
-            cys.append(measure.ellipse.centroid[1])
+            measure = source.measurements[band]
+            cxs.append(measure.ellipse.centroid.x)
+            cys.append(measure.ellipse.centroid.y)
             mags.append(measure.mag)
     return cxs, cys, mags
 
@@ -76,8 +108,20 @@ def plot_sources(ax, cxs, cys, mags, kwargs_annotate=None, kwargs_scatter=None, 
     return handles
 
 
+def add_psf_models(img, psf, calib, meas_psfs, name_model='Base PSF'):
+    for meas_psf in meas_psfs:
+        model = meas_psf.measurements[name_model]
+        flux = calib.magnitudeToInstFlux(model.mag) if calib is not None else mag_to_flux(model.mag)
+        img_psf = psf.computeImage(geom.Point2D(x=model.ellipse.centroid.x, y=model.ellipse.centroid.y))
+        img_psf.array *= flux
+        bbox_intersect = img_psf.getBBox().clippedTo(img.getBBox())
+        if bbox_intersect.area > 0:
+            img.subset(bbox_intersect).array += img_psf.subset(bbox_intersect).array
+
+
 @dc.dataclass
 class Deblend:
+    band_ref: str
     cat_ref: afwTable.SourceCatalog
     children: afwTable.SourceCatalog = dc.field(init=False, repr=False)
     data: Dict[str, CatExp]
@@ -90,8 +134,8 @@ class Deblend:
     def plot(
         self, bands_weights, bbox=None, plot_sig=False, data_residual_factor=1, bands=None,
         sources=None, sources_true=None, sources_sig=None, measmodels=None, chi_clip=3, residual_scale=1,
-        label_data=None, label_model=None, offsetxy_texts=None, color_true=None, show=True,
-        idx_children_sub=None, ax_legend=1, **kwargs
+        label_data=None, label_model=None, offsetxy_texts=None, color_true=None,
+        models_psf=None, model_psf_true=False, show=True, idx_children_sub=None, ax_legend=1, **kwargs
     ):
         if bands is None:
             if len(bands_weights) == 3:
@@ -109,6 +153,8 @@ class Deblend:
         if color_true is None:
             color_true = 'pink'
         imgs, models, weights = {}, {}, {}
+        if models_psf and len(models_psf) != 1:
+            raise ValueError('models_psf must be dict with one entry')
         for b in bands:
             datum = self.data[b]
             weight = bands_weights.get(b, 1.)
@@ -117,7 +163,19 @@ class Deblend:
                 (x.subset(bbox) if bbox is not None else x)
                 for x in (datum.img, datum.model)
             )
-            if idx_children_sub is not None:
+            if models_psf:
+                cat_band = datum.cat
+                # TODO: determine why this is necessary
+                children_band = [int(np.where(cat_band['id'] == child['id'])[0]) for child in self.children]
+                meas_psfs = get_sources_meas(
+                    cat_band, self.cat_ref, b, children_band, models_psf,
+                    sources_true=sources_true if model_psf_true else None,
+                    model_true=list(models_psf.keys())[0] if model_psf_true else None,
+                    photoCalib=datum.photoCalib, offsets=measmodels['Base PSF'].get('offset', (0, 0)),
+                )
+                model = afwImage.ImageD(img.getBBox())
+                add_psf_models(model, datum.psf, calib=datum.photoCalib, meas_psfs=meas_psfs)
+            elif idx_children_sub is not None:
                 model = model.clone()
                 bbox_img = img.getBBox()
                 cat = self.data[b].cat
@@ -129,6 +187,7 @@ class Deblend:
                         model.subset(bbox_intersect).array -= model_child
             imgs[b] = weight * img.array
             models[b] = model
+
         img_rgb = make_lupton_rgb(*(imgs.values()), **kwargs)
         img_model_rgb = make_lupton_rgb(
             *(i.array*w for i, w in zip(models.values(), weights.values())),
@@ -143,7 +202,7 @@ class Deblend:
         n_y, n_x, n_c = img_rgb.shape
         if sources_true is not None:
             handle = plot_sources(
-                ax, *get_source_points(sources_true),
+                ax, *get_source_points(bands[0], sources_true),
                 kwargs_annotate=dict(color=color_true, fontsize=5, ha='right', va='top'),
                 kwargs_scatter=dict(marker='o', color=color_true, s=0.5)
             )[ax_legend]
@@ -157,7 +216,7 @@ class Deblend:
                 measure = source.measurements.get(model)
                 if measure is not None:
                     ellipse = measure.ellipse
-                    cx, cy = ellipse.centroid
+                    cx, cy = ellipse.centroid.cen
                     cx += offsets[0]
                     cy += offsets[1]
                     if (cx > 0) & (cx < n_x) & (cy > 0) & (cy < n_y):
@@ -200,6 +259,9 @@ class Deblend:
             chi_rgb = np.zeros_like(img_rgb)
             res_rgb = np.zeros_like(img_rgb)
 
+            chisq = 0
+            n_chi = 0
+
             for idx, band in enumerate(bands):
                 data_band = self.data[band]
                 model_b, img_b, siginv_b = (
@@ -208,16 +270,22 @@ class Deblend:
                 )
                 residual = model_b.array - data_residual_factor * img_b.array
                 chi = residual * siginv_b.array
+                chi_finite = chi[np.isfinite(chi)]
+                n_chi += chi_finite.size
+                chisq += np.sum(chi_finite**2)
+
                 chi_rgb[:, :, idx] = 256 * np.clip(chi / (2 * chi_clip) + 0.5, 0, 1)
                 res_rgb[:, :, idx] = 256 * np.clip(residual / (2 * residual_scale) + 0.5, 0, 1)
+
             ax_sig[0].imshow(res_rgb)
-            ax_sig[0].set_title(f'{label_bands} Residuals (clipped +/- {residual_scale:.2f})')
+            ax_sig[0].set_title(f'{label_bands} Model - Data Residuals (clipped +/- {residual_scale:.2f})')
             ax_sig[1].imshow(chi_rgb)
-            ax_sig[1].set_title(f'{label_bands} Chi (clipped +/- {chi_clip:.2f})')
+            ax_sig[1].set_title(f'{label_bands} Model - Data Chi (clipped +/- {chi_clip:.2f})'
+                                f' chisqred={chisq/n_chi:.2f}')
 
             if sources_sig is not None:
                 handle = plot_sources(
-                    ax_sig, *get_source_points(sources_sig),
+                    ax_sig, *get_source_points(bands[0], sources_sig),
                     # Can also try bbox=dict(facecolor='black', pad=1)
                     # I find that obscures the image too much
                     kwargs_annotate=dict(color='w', fontsize=4.5, ha='right', va='top'),
@@ -275,19 +343,24 @@ class Blend:
                     band=band,
                     img=catexp.img.subset(bbox),
                     model=img_model,
+                    photoCalib=catexp.photoCalib,
+                    psf=catexp.psf,
                     siginv=catexp.siginv.subset(bbox),
                     cat=cat,
                 )
             data[deblend_in.name_deblender] = Deblend(
-                cat_ref=deblend_in.cat_ref, data=data_d, idx_parent=deblend_in.idx_parent,
-                name_deblender=deblend_in.name_deblender,
+                band_ref=deblend_in.band_ref, cat_ref=deblend_in.cat_ref, data=data_d,
+                idx_parent=deblend_in.idx_parent, name_deblender=deblend_in.name_deblender,
             )
 
         self.bbox = bbox
         self.data = data
 
 
-def get_sources_meas(cat_meas, cat_ref, band_ref, idx_children, models_meas):
+def get_sources_meas(
+    cat_meas, cat_ref, band, idx_children, models_meas, sources_true=None, model_true=None, photoCalib=None,
+    offsets=None,
+):
     sources = []
     for idx, idx_row in enumerate(idx_children):
         child = cat_meas[idx_row]
@@ -299,8 +372,19 @@ def get_sources_meas(cat_meas, cat_ref, band_ref, idx_children, models_meas):
             cen = Centroid(
                 x=model.get_cen(child, 'x', comp=1) + (cxo if is_mpf else 0),
                 y=model.get_cen(child, 'y', comp=1) + (cyo if is_mpf else 0),
+                x_err=model.get_cen(child, 'xErr', comp=1),
+                y_err=model.get_cen(child, 'yErr', comp=1),
             )
-            mag = model.get_mag_total(child, band=band_ref)
+            try:
+                mag = model.get_mag_total(child, band=band)
+            except:
+                cat_meas = photoCalib.calibrateCatalog(cat_meas)
+                child = cat_meas[idx_row]
+            mag = model.get_mag_total(child, band=band)
+            try:
+                mag_err = child[f'{model.get_field_prefix(band=band)}_magErr']
+            except:
+                mag_err = np.nan
             # This is stupid, I know, but necessary for now... sorry
             if model.n_comps > 0:
                 # It can't be a single child but must be a table for some reason
@@ -308,9 +392,47 @@ def get_sources_meas(cat_meas, cat_ref, band_ref, idx_children, models_meas):
                 shape = Shape(r_maj=r_maj[0], r_min=r_maj[0]*axrat[0], ang=ang[0])
             else:
                 shape = None
-            measures[name_model] = Measurement(mag=mag, ellipse=Ellipse(centroid=cen, shape=shape))
+            measures[name_model] = Measurement(mag=mag, mag_err=mag_err, ellipse=Ellipse(centroid=cen, shape=shape))
 
         sources.append(Source(idx_row=idx_row, measurements=measures))
+
+    if sources_true is not None:
+        if model_true is None:
+            raise ValueError('Must specify model_true if providing sources_true')
+        if offsets is None:
+            offsets = (0, 0)
+        n_true = len(sources_true)
+        mag_true, x_true, y_true = (np.zeros(n_true) for _ in range(3))
+        unmatched = np.ones(n_true, dtype=bool)
+        for idx, source in enumerate(sources_true):
+            meas = source.measurements[band]
+            mag_true[idx] = meas.mag
+            x_true[idx] = meas.ellipse.centroid.x
+            y_true[idx] = meas.ellipse.centroid.y
+
+        n_unmatched = n_true
+        for source in sorted(sources, key=lambda source: source.measurements[model_true].mag):
+            if n_unmatched > 0:
+                is_unmatched = unmatched == True
+                meas = source.measurements[model_true]
+                cen = meas.ellipse.centroid
+                chi_sqs = np.zeros(n_unmatched)
+                for truth, value, err in (
+                    (mag_true, meas.mag, meas.mag_err),
+                    (x_true, cen.x + offsets[0], cen.x_err),
+                    (y_true, cen.y + offsets[1], cen.y_err),
+                ):
+                    chi_sqs += ((truth[is_unmatched] - value)/err)**2
+                min = np.argmin(chi_sqs)
+                chi_sq = chi_sqs[min]
+                if chi_sq > 0 and np.isfinite(chi_sq):
+                    mag_true_matched = mag_true[is_unmatched][min]
+                    # Set the matched array element
+                    unmatched[np.where(mag_true == mag_true_matched)[0][0]] = False
+                    source.measurements[model_true] = Measurement(
+                        mag=mag_true_matched, ellipse=meas.ellipse, mag_err=meas.mag_err)
+                    n_unmatched -= 1
+
     return sources
 
 
@@ -480,7 +602,7 @@ class Model:
         if self.is_psf:
             return None
         if flux is None:
-            flux = 'flux'
+            flux = 'instFlux'
         if self.is_multiprofit:
             postfix = f'_{band}_{flux}'
             data = [
