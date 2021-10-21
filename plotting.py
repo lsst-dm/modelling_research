@@ -117,6 +117,7 @@ def plotjoint(tab, columns, labels=None, columncolor=None, colorbaropts=None,
     :param limitsxratio: float[2], optional; x-axis limits for ratio plots. Default None.
     :param limitsyratio: float[2], optional; y-axis limits for ratio plots. Default None.
     :param bins: Int, optional; number of bins for marginal histograms. Default 20.
+    :param kwargs: Dict, additional keyword arguments to pass to seaborn.plot_joint.
     :return: jointplot, jointgrids; lists of jointplot (and jointgrid if plotratiosjoint) handles.
     """
     ratios = {
@@ -170,7 +171,7 @@ def plotjoint(tab, columns, labels=None, columncolor=None, colorbaropts=None,
                 x0, x1 = jointplot.ax_joint.get_xlim()
                 y0, y1 = jointplot.ax_joint.get_ylim()
                 lims = [max(x0, y0), min(x1, y1)]
-                jointplot.ax_joint.plot(lims, lims, '-k', zorder=1)
+                jointplot.ax_joint.plot(x=lims, y=lims, fmt='-k', zorder=1)
                 if hascolor:
                     colorbarinset(jointplot, **colorbaropts)
                 if plotmarginals:
@@ -187,7 +188,7 @@ def plotjoint(tab, columns, labels=None, columncolor=None, colorbaropts=None,
                 labelprefix + '({}) ({})'.format(columnx, prefixx),
                 labelprefix + '({} ratio) ({}/{})'.format(columnx, prefixy, prefixx))
         x0, x1 = jointplot.ax_joint.get_xlim()
-        jointplot.ax_joint.plot([x0, x1], [0, 0], '-k', zorder=1)
+        jointplot.ax_joint.plot(x=[x0, x1], y=[0, 0], fmt='-k', zorder=1)
         jointplots.append(jointplot)
         if hascolor:
             colorbarinset(jointplot, **colorbaropts)
@@ -236,8 +237,9 @@ def plotjoint_running_percentiles(
     :param scatterleft: Bool; scatter plot points leftwards of the leftmost bin center?
     :param scatterright: Bool; scatter plot points rightwards of the rightmost bin center?
     :param drawzeroline: Bool; draw line at y=0?
-    :param density: Seaborn plot function; plotting function used for density plot. Default sns.kdeplot (may be slow).
-    :param kwargs: Additional keyword arguments to pass to seaborn.plot_joint.
+    :param densityplot: Seaborn plot function to use for density plot. Default sns.histplot.
+        kdeplot may be very slow.
+    :param kwargs: Additional keyword arguments to pass to plotjoint.
     :return: seaborn.JointGrid handle for the plot.
     """
     numpoints = len(x)
@@ -254,7 +256,7 @@ def plotjoint_running_percentiles(
             len(percentiles), len(percentilecolours)
         ))
     if densityplot is None:
-        densityplot = sns.kdeplot
+        densityplot = sns.histplot
     # TODO: Check all inputs
     if ndivisions is None:
         ndivisions = int(np.ceil(numpoints**(1./3.)))
@@ -329,7 +331,7 @@ def plotjoint_running_percentiles(
                 for condplot, markercond, sizecond in [(condoutlier & condy2, marker, 4),
                                                        (condoutlier & (~condy2), '.', 2)]:
                     if np.sum(condplot) > 0:
-                        joint.scatter(xcond[condplot], ycond[condplot], s=sizecond, marker=markercond,
+                        joint.scatter(x=xcond[condplot], y=ycond[condplot], s=sizecond, marker=markercond,
                                       color=colourpc)
                 #plt.scatter(xcond[condoutlier], ycond[condoutlier], s=2, marker=markercond, color='k')
         xlowerp = xupperp
