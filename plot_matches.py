@@ -133,8 +133,8 @@ def plot_compure(
         plt.errorbar, yerr=errors, color='k', label='All match' if has_false else None
     ).set_axis_labels(label_x, label_y)
     if has_false:
-        sns.lineplot(x_mags, compure_true, color='b', label='Right type')
-        sns.lineplot(x_mags, compure_false, color='r', label='Wrong type')
+        sns.lineplot(x=x_mags, y=compure_true, color='b', label='Right type')
+        sns.lineplot(x=x_mags, y=compure_false, color='r', label='Wrong type')
     fig.ax_marg_y.set_axis_off()
     ax = fig.ax_marg_x
     # I couldn't figure out a compelling way to do this in seaborn with distplot,

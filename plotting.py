@@ -79,7 +79,7 @@ def colorbarinset(jointplot, label='', ticks=None, ticklabels=None, labelsize='x
 
 
 def plot_marg_hist(ax_marg, x, orient_x=True, limit_ceiling=True, tick_spacing=None, **kwargs):
-    ax_marg.hist(x, **kwargs)
+    ax_marg.hist(x=x, **kwargs)
     plt.setp(ax_marg.get_yticklabels() if orient_x else ax_marg.get_xticklabels(), visible=True)
     axis_y = ax_marg.yaxis if orient_x else ax_marg.xaxis
     if tick_spacing is not None:
@@ -341,7 +341,7 @@ def plotjoint_running_percentiles(
     for idxbin in ([0] if scatterleft else []) + ([nbinsover-1] if scatterright else []):
         cond = (y > ybins[0][idxbin]) & (y < ybins[-1][idxbin])
         cond = cond & ((x < xbins[idxbin]) if (idxbin == 0) else (x > xbins[idxbin]))
-        joint.scatter(x[cond], y[cond], s=1, marker='+', color='k')
+        joint.scatter(x=x[cond], y=y[cond], s=1, marker='+', color='k')
     plot_marg_hist(
         p.ax_marg_x, x, tick_spacing=histtickspacingxmaj,
         bins=ndivisions * 2, weights=np.repeat(1.0 / len(x), len(x)), histtype='stepfilled', linewidth=0,
@@ -350,7 +350,7 @@ def plotjoint_running_percentiles(
     plot_marg_hist(
         p.ax_marg_y, y, tick_spacing=histtickspacingymaj, orient_x=False, orientation='horizontal',
         bins=ndivisions*4, weights=np.repeat(1.0 / len(y), len(y)), histtype='stepfilled', linewidth=0,
-        limit_ceiling = marginal_hist_limit_ceil,
+        limit_ceiling=marginal_hist_limit_ceil,
     )
     if title is not None:
         p.fig.suptitle(title, y=1., verticalalignment='bottom')
