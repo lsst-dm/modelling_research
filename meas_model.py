@@ -474,6 +474,7 @@ class Model:
     """A class for models used to measure sources in MultiProFit catalogs.
     """
     column_band_prefixed = False
+    column_band_separator: str = '_'
     column_flux: str = 'instFlux'
     column_separator: str = '_'
     prefix_centroid_default: str = 'base_SdssCentroid_'
@@ -545,7 +546,7 @@ class Model:
         """
         prefix = self.name
         if self.column_band_prefixed:
-            prefix = f'{band}{prefix}'
+            prefix = f'{band}{self.column_band_separator}{prefix}'
         else:
             if (self.is_psf and self.is_multiprofit) or self.is_ngmix or self.is_modelfit_forced \
                     or self.is_scarlet:
@@ -668,6 +669,8 @@ class Model:
             A filter name.
         zeropoint : `float`
             A magnitude zeropoint. Used only in fallback if mag column does not exist.
+        kwargs : `dict`
+            Additional keyword arguments to pass to `get_flux_total`.
 
         Returns
         -------
@@ -697,7 +700,7 @@ class Model:
 
     def __init__(self, desc, name, n_comps, is_psf=False, mag_offset=None,
                  column_flux=None, column_separator=None, column_band_prefixed=None,
-                 prefix_centroid_default=None):
+                 column_band_separator=None, prefix_centroid_default=None):
         """Describe a model and enable retrieval of its parameters.
 
         Parameters
@@ -743,5 +746,7 @@ class Model:
             self.column_separator = column_separator
         if column_band_prefixed is not None:
             self.column_band_prefixed = column_band_prefixed
+        if column_band_separator is not None:
+            self.column_band_separator = column_band_separator
         if prefix_centroid_default is not None:
             self.prefix_centroid_default = prefix_centroid_default
