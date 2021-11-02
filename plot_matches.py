@@ -250,20 +250,22 @@ def _plot_purity(
 
 
 def plot_matches(
-    cat_ref, cat_target, resolved, models, fluxes_true, select_target, centroids_true=None,
+    cat_ref, cat_target, resolved, models, fluxes_true, select_target, centroids_ref=None,
     colors=None, mag_max=None, mag_max_compure=None, match_dist_asec=None, mag_bin_complete=0.1,
     models_diff=None, models_dist=None, models_purity=None,
-    limits_y_diff=None, limits_y_dist=None, limits_y_chi=None, limits_color=None, limits_y_color_diff=None,
+    limits_x_color=None, limits_y_diff=None, limits_y_dist=None, limits_y_chi=None, limits_y_color_diff=None,
     plot_compure=True, plot_chi=False,
-    compare_mags_psf_lim=None, mag_ref_zeropoint=None, title=None, kwargs_get_mag=None,
+    compare_mags_psf_lim=None, mag_zeropoint_ref=None, title=None, kwargs_get_mag=None,
     **kwargs
 ):
     """ Make plots of completeness, purity and delta mag/colour for sources in two matched catalogs.
 
     Parameters
     ----------
-    cat_ref: TBD
-    cat_target: TBD
+    cat_ref: `pandas.DataFrame`
+        Catalog of reference sources.
+    cat_target: `pandas.DataFrame`
+        Catalog of target (measured) sources.
     resolved: `bool`
         Is this plot for resolved objects (galaxies) or unresolved (stars, etc.)?
     models: `dict` [`str`, `modelling_research.meas_model.Model`]
@@ -272,6 +274,11 @@ def plot_matches(
         A dict of true fluxes for the input catalog, keyed by band.
     colors : iterable [`tuple` [`str`, `str`]]
         A list of pairs of filters to plot colours for (filter1 - filter2).
+    select_target : `np.array`
+        Boolean array of target sources eligible for matching.
+    centroids_ref : `dict` [`str`]
+        Dict with x, y entries specifying column names for the centroids
+        of reference sources. 
     mag_max : `float`
         The maximum (faintest) magnitude to filter data points.
     mag_max_compure : `float`
@@ -286,12 +293,24 @@ def plot_matches(
         A list of models to plot distances for. Must all be in `models` and `models_diff`.
     models_purity : iterable of `str`
         A list of models to plot compurity for. Must all be in `models`.
+    limits_x_color:
+        x-axis limits for color plots.
     limits_y_diff : tuple `float`
         y-axis limits for diff plots.
+    limits_y_dist : tuple `float`
+        y-axis limits for dist plots.
     limits_y_chi:
         y-axis limits for chi plots.
+    limits_y_color_diff : tuple `float`
+        y-axis limits for diff plots with color x-axes.
+    plot_compure : `bool`
+        Whether to make plots of completeness and purity.
     plot_chi : `bool`
         Whether to make plots of chi (delta/error).
+    mag_zeropoint_ref : `float`
+        The zeropoint magnitude for the reference catalog, if needed.
+    title : `str`
+        A prefix string for all plot titles.
     compare_mags_psf_lim : `float`
         The y-axis (delta mag) limit for delta mag plots accompanying purity.
     kwargs_get_mag : `dict`
@@ -328,15 +347,15 @@ def plot_matches(
     if plot_chi:
         sigmas_mag_band = {}
 
-    if centroids_true is None:
+    if centroids_ref is None:
         if models_dist:
-            raise ValueError('centroids_true must be provided if models_dists is specified')
+            raise ValueError('centroids_ref must be provided if models_dists is specified')
     else:
-        x_true = cat_ref[centroids_true['x']]
-        y_true = cat_ref[centroids_true['y']]
+        x_true = cat_ref[centroids_ref['x']]
+        y_true = cat_ref[centroids_ref['y']]
 
     bands = list(fluxes_true.keys())
-    mags_true = {band: -2.5*np.log10(flux) + mag_ref_zeropoint for band, flux in fluxes_true.items()}
+    mags_true = {band: -2.5*np.log10(flux) + mag_zeropoint_ref for band, flux in fluxes_true.items()}
 
     args_plot = {
         'mag_max': mag_max_compure, 'mag_bin_complete': mag_bin_complete,
@@ -349,7 +368,7 @@ def plot_matches(
         _plot_purity(
             bands, cat_target, truth_matched, indices,
             select_truth, select_target, resolved, models_purity,
-            compare_mags_lim_y=compare_mags_psf_lim, mag_zeropoint=mag_ref_zeropoint,
+            compare_mags_lim_y=compare_mags_psf_lim, mag_zeropoint=mag_zeropoint_ref,
             **args_plot
         )
 
@@ -358,7 +377,7 @@ def plot_matches(
     for name in models_diff:
         model = models[name]
         mags_band = {}
-        plot_dist = (name in models_dist) and (centroids_true is not None)
+        plot_dist = (name in models_dist) and (centroids_ref is not None)
 
         for band in bands:
             matched = select_truth & truth_matched
@@ -453,7 +472,7 @@ def plot_matches(
                 y = mags_band[b1][0] - mags_band[b2][0]
                 labely = f'${band}_{{true}}$'
                 limx = kwargs['limx']
-                kwargs['limx'] = limits_color
+                kwargs['limx'] = limits_x_color
                 limy = (-limits_y_dist[1], limits_y_dist[1])
                 good_col = np.isfinite(y)
                 for axis, values in (('x', dx), ('y', dy)):
