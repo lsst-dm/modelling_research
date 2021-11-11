@@ -380,7 +380,7 @@ def get_sources_meas(
             except:
                 cat_meas = photoCalib.calibrateCatalog(cat_meas)
                 child = cat_meas[idx_row]
-            mag = model.get_mag_total(child, band=band)
+                mag = model.get_mag_total(child, band=band)
             try:
                 mag_err = child[f'{model.get_field_prefix(band=band)}_magErr']
             except:
@@ -473,10 +473,16 @@ def is_field_scarlet(field):
 class Model:
     """A class for models used to measure sources in MultiProFit catalogs.
     """
+    column_band_prefixed = False
+    column_band_separator: str = '_'
+    column_flux: str = 'instFlux'
+    column_separator: str = '_'
+    prefix_centroid_default: str = 'base_SdssCentroid_'
+
     def get_cen(self, cat, axis, comp=None):
         if self.is_multiprofit:
-            return cat[f'{get_prefix_comp_multiprofit(self.name, comp)}_cen{axis}']
-        return cat[f'base_SdssCentroid_{axis}']
+            return cat[f'{get_prefix_comp_multiprofit(self.name, comp)}{self.column_separator}cen{axis}']
+        return cat[f'{self.prefix_centroid_default}{axis}']
 
     def get_color_total(self, cat, band1, band2):
         """Return a single total color.
@@ -528,34 +534,44 @@ class Model:
 
         Parameters
         ----------
-        band
-        comp
+        band : `str`
+            The band of the field, if any.
+        comp : `str`
+            The component, if any.
 
         Returns
         -------
-
+        prefix : `str`
+            The field prefix.
         """
         prefix = self.name
-        if (self.is_psf and self.is_multiprofit) or self.is_ngmix or self.is_modelfit_forced \
-                or self.is_scarlet:
-            prefix = f'{prefix}_{band}'
+        if self.column_band_prefixed:
+            prefix = f'{band}{self.column_band_separator}{prefix}'
+        else:
+            if (self.is_psf and self.is_multiprofit) or self.is_ngmix or self.is_modelfit_forced \
+                    or self.is_scarlet:
+                prefix = f'{prefix}{self.column_separator}{band}'
         if comp is not None:
             return self.get_prefix_comp(prefix, comp)
         return prefix
 
     def get_moment_xy(self, cat, band='', comp=None):
         if self.is_multiprofit:
-            self.get_rho(cat) * \
-                self.get_moment(cat, 'x', band=band, comp=comp) * \
-                self.get_moment(cat, 'y', band=band, comp=comp)
+            return (
+                self.get_rho(cat)
+                * self.get_moment(cat, 'x', band=band, comp=comp)
+                * self.get_moment(cat, 'y', band=band, comp=comp)
+            )
         else:
-            return cat[f'{self.get_field_prefix(band=band, comp=comp)}_{self.prefix_ellipse}xy']
+            return cat[(f'{self.get_field_prefix(band=band, comp=comp)}{self.column_separator}'
+                        f'{self.prefix_ellipse}xy')]
 
     def get_moment(self, cat, axis, band='', comp=None):
         if self.is_multiprofit:
-            return cat[
-                f'{self.get_field_prefix(band=band, comp=comp)}_sigma_{axis}'
-            ]
+            return cat[(
+                f'{self.get_field_prefix(band=band, comp=comp)}{self.column_separator}sigma'
+                f'{self.column_separator}{axis}'
+            )]
         else:
             return np.sqrt(self.get_moment2(cat, axis))
 
@@ -563,20 +579,21 @@ class Model:
         if self.is_multiprofit:
             return self.get_moment(cat, axis, band=band, comp=comp)**2
         else:
-            return cat[
-                f'{self.get_field_prefix(band=band, comp=comp)}_{self.prefix_ellipse}{axis}{axis}'
-            ]
+            return cat[(
+                f'{self.get_field_prefix(band=band, comp=comp)}{self.column_separator}'
+                f'{self.prefix_ellipse}{axis}{axis}'
+            )]
 
     def get_prefix_comp(self, prefix, comp):
         if self.is_multiprofit:
             return get_prefix_comp_multiprofit(prefix, comp)
         elif self.is_psf:
-            return f'{prefix}_{comp}'
+            return f'{prefix}{self.column_separator}{comp}'
         return prefix
 
     def get_rho(self, cat, band='', comp=None):
         if self.is_multiprofit:
-            return cat[f'{self.get_field_prefix(band=band, comp=comp)}_rho']
+            return cat[f'{self.get_field_prefix(band=band, comp=comp)}{self.column_separator}rho']
         else:
             return self.get_moment_xy(cat, band=band, comp=comp)/(
                 self.get_moment(cat, 'x', band=band, comp=comp) *
@@ -602,9 +619,9 @@ class Model:
         if self.is_psf:
             return None
         if flux is None:
-            flux = 'instFlux'
+            flux = self.column_flux
         if self.is_multiprofit:
-            postfix = f'_{band}_{flux}'
+            postfix = f'{self.column_separator}{band}{self.column_separator}{flux}'
             data = [
                 cat[f'{self.get_prefix_comp(self.name, comp + 1)}{postfix}']
                 for comp in range(self.n_comps)
@@ -613,7 +630,7 @@ class Model:
                 return data[0]
             else:
                 return np.sum(data, axis=0)
-        return cat[f'{self.name}_{flux}']
+        return cat[f'{self.get_field_prefix(band=band)}{self.column_separator}{flux}']
 
     def get_mag_comp(self, cat, band, comp):
         """Get a single component's magnitude.
@@ -635,12 +652,13 @@ class Model:
         if self.is_psf:
             return None
         elif self.is_multiprofit:
-            return cat[f'{get_prefix_comp_multiprofit(self.name, comp=comp)}_{band}_mag']
+            return cat[(f'{get_prefix_comp_multiprofit(self.name, comp=comp)}'
+                        f'{self.column_separator}{band}{self.column_separator}mag')]
         else:
             #TODO: Implement for modelfit if necessary
             return None
 
-    def get_mag_total(self, cat, band):
+    def get_mag_total(self, cat, band, zeropoint=None, **kwargs):
         """Get total model magnitude.
 
         Parameters
@@ -649,6 +667,10 @@ class Model:
             A table-like with equal-length array-likes of magnitudes of each component.
         band : `str`
             A filter name.
+        zeropoint : `float`
+            A magnitude zeropoint. Used only in fallback if mag column does not exist.
+        kwargs : `dict`
+            Additional keyword arguments to pass to `get_flux_total`.
 
         Returns
         -------
@@ -665,13 +687,20 @@ class Model:
                     mags += mag_to_flux(self.get_mag_comp(cat=cat, band=band, comp=idx))
                 mags = flux_to_mag(mags)
         else:
-            mags = cat[f'{self.get_field_prefix(band=band)}_mag']
+            try:
+                mags = cat[f'{self.get_field_prefix(band=band)}{self.column_separator}mag']
+            except:
+                mags = flux_to_mag(self.get_flux_total(cat, band, **kwargs))
+                if zeropoint is not None:
+                    mags += zeropoint
         if self.mag_offset is not None:
             mags = np.copy(mags)
             mags += self.mag_offset
         return mags
 
-    def __init__(self, desc, name, n_comps, is_psf=False, mag_offset=None):
+    def __init__(self, desc, name, n_comps, is_psf=False, mag_offset=None,
+                 column_flux=None, column_separator=None, column_band_prefixed=None,
+                 column_band_separator=None, prefix_centroid_default=None):
         """Describe a model and enable retrieval of its parameters.
 
         Parameters
@@ -711,3 +740,13 @@ class Model:
         self.multiband = self.is_multiprofit or self.is_ngmix or self.is_scarlet
         self.prefix_ellipse = 'ellipse_' if self.is_modelfit_model else ''
         self.mag_offset = mag_offset
+        if column_flux is not None:
+            self.column_flux = column_flux
+        if column_separator is not None:
+            self.column_separator = column_separator
+        if column_band_prefixed is not None:
+            self.column_band_prefixed = column_band_prefixed
+        if column_band_separator is not None:
+            self.column_band_separator = column_band_separator
+        if prefix_centroid_default is not None:
+            self.prefix_centroid_default = prefix_centroid_default
