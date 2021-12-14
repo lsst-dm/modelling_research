@@ -23,16 +23,98 @@ from astropy.visualization import make_lupton_rgb
 import dataclasses as dc
 import lsst.afw.image as afwImage
 import lsst.afw.table as afwTable
+import lsst.meas.algorithms as measAlg
 import lsst.geom as geom
 import matplotlib.patches as patches
 import matplotlib.patheffects as pathfx
 import matplotlib.pyplot as plt
-from gauss2d.utils import covar_to_ellipse
-import lsst.meas.algorithms as measAlg
-from lsst.meas.extensions.multiprofit.utils import get_spanned_image
-from multiprofit.utils import flux_to_mag, mag_to_flux
-from typing import Dict, Sequence
 import numpy as np
+from typing import Dict, Sequence
+
+try:
+    from lsst.meas.extensions.multiprofit.utils import get_spanned_image
+except ModuleNotFoundError:
+    def get_spanned_image(footprint, bbox=None):
+        spans = footprint.getSpans()
+        bbox_is_none = bbox is None
+        if bbox_is_none:
+            bbox = footprint.getBBox()
+        if not (bbox.getHeight() > 0 and bbox.getWidth() > 0):
+            return None, bbox
+        bbox_fp = bbox if bbox_is_none else footprint.getBBox()
+        img = afwImage.Image(bbox_fp, dtype='D')
+        spans.setImage(img, 1)
+        img.array[img.array == 1] = footprint.getImageArray()
+        if not bbox_is_none:
+            img = img.subset(bbox)
+        return img.array, bbox
+
+try:
+    from multiprofit.utils import flux_to_mag, mag_to_flux
+except ModuleNotFoundError:
+    def flux_to_mag(ndarray):
+        return -2.5 * np.log10(ndarray)
+
+    def mag_to_flux(ndarray):
+        return 10 ** (-0.4 * ndarray)
+
+try:
+    from gauss2d.utils import covar_to_ellipse
+except ModuleNotFoundError:
+    def covar_to_ellipse(sigma_x_sq, sigma_y_sq, cov_xy, degrees=False):
+        """Convert covariance matrix terms to ellipse major axis, axis ratio and
+        position angle representation.
+
+        Parameters
+        ----------
+        sigma_x_sq, sigma_y_sq : `float` or array-like
+            x- and y-axis squared standard deviations of a 2-dimensional normal
+            distribution (diagonal terms of its covariance matrix).
+            Must be scalar or identical length array-likes.
+        cov_xy : `float` or array-like
+            x-y covariance of a of a 2-dimensional normal distribution
+            (off-diagonal term of its covariance matrix).
+            Must be scalar or identical length array-likes.
+        degrees : `bool`
+            Whether to return the position angle in degrees instead of radians.
+
+        Returns
+        -------
+        r_major, axrat, angle : `float` or array-like
+            Converted major-axis radius, axis ratio and position angle
+            (counter-clockwise from the +x axis) of the ellipse defined by
+            each set of input covariance matrix terms.
+
+        Notes
+        -----
+        The eigenvalues from the determinant of a covariance matrix are:
+        |a-m b|
+        |b c-m|
+        det = (a-m)(c-m) - b^2 = ac - (a+c)m + m^2 - b^2 = m^2 - (a+c)m + (ac-b^2)
+        Solving:
+        m = ((a+c) +/- sqrt((a+c)^2 - 4(ac-b^2)))/2
+        ...or equivalently:
+        m = ((a+c) +/- sqrt((a-c)^2 + 4b^2))/2
+
+        Unfortunately, the latter simplification is not as well-behaved
+        in floating point math, leading to square roots of negative numbers when
+        one of a or c is very close to zero.
+
+        The values from this function should match those from
+        `Ellipse.make_ellipse_major` to within rounding error, except in the
+        special case of sigma_x == sigma_y == 0, which returns a NaN axis ratio
+        here by default. This function mainly intended to be more convenient
+        (and possibly faster) for array-like inputs.
+        """
+        apc = sigma_x_sq + sigma_y_sq
+        x = apc / 2
+        pm = np.sqrt(apc ** 2 - 4 * (sigma_x_sq * sigma_y_sq - cov_xy ** 2)) / 2
+
+        r_major = x + pm
+        axrat = np.sqrt((x - pm) / r_major)
+        r_major = np.sqrt(r_major)
+        angle = np.arctan2(2 * cov_xy, sigma_x_sq - sigma_y_sq) / 2
+        return r_major, axrat, (np.degrees(angle) if degrees else angle)
 
 
 # Classes for row-wise measurements
