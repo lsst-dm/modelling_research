@@ -33,7 +33,7 @@ dataId = {"tract": 9813, "patch": "4,4", "filter": filters[0]}
 sources = butler.get("deepCoadd_meas", dataId)
 exposures = {band: butler.get("deepCoadd_calexp", dataId, filter=band) for band in filters}
 
-n_eval = 50
+n_eval = 10
 # 1338 takes a while if you want to benchmark a source dominated by model evaluation time
 idx_source = 1337
 name_source = f"profile_{idx_source}"
@@ -98,3 +98,4 @@ for noiseReplacer in noiseReplacers.values():
 
 p = pstats.Stats(name_source)
 p.sort_stats(pstats.SortKey.TIME).print_stats(50)
+
