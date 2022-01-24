@@ -129,22 +129,26 @@ class Centroid:
     def cen(self):
         return self.x, self.y
 
+
 @dc.dataclass(frozen=True)
 class Shape:
     r_maj: float
     r_min: float
     ang: float
 
+
 @dc.dataclass(frozen=True)
 class Ellipse:
     centroid: Centroid
     shape: Shape
+
 
 @dc.dataclass(frozen=True)
 class Measurement:
     mag: float
     ellipse: Ellipse
     mag_err: float
+
 
 @dc.dataclass(frozen=True)
 class Source:
