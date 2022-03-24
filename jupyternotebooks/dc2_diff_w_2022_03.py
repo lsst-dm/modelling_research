@@ -48,8 +48,8 @@ butlers = tuple(
         ]
     )
     for collection in (
-        f'u/dtaranu/DM-33221/w_2022_03_diff',
-        f'u/dtaranu/DM-33221/w_2022_03_diff_01',
+        f'u/dtaranu/DM-33221/w_2022_03/diff',
+        f'u/dtaranu/DM-33221/w_2022_03/diff_01',
     )
 )
 
