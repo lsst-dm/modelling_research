@@ -96,7 +96,8 @@ def get_xy(ras, decs, wcs):
     xy_true = wcs.skyToPixel(radec_true)
     return np.array([xy[0] for xy in xy_true]), np.array([xy[1] for xy in xy_true])
 
-skymap = butler.get('skyMap')
+name_skymap = 'DC2'
+skymap = butler.get('skyMap', name=name_skymap)
 
 cats_in, cats_out = {}, {}
 
@@ -107,6 +108,7 @@ for tract in tracts:
         butler.get(
             dataset,
             tract=tract,
+            skymap=name_skymap,
             parameters={"columns": columns},
         )
         for dataset, columns in (
@@ -122,7 +124,7 @@ for tract in tracts:
     cats_out[tract] = (cat_match_ref, None)
 
 
-# In[ ]:
+# In[5]:
 
 
 # Concat tracts
@@ -158,7 +160,7 @@ if n_matched_uniq != n_matched + 1:
 print(f'Matched {n_matched}/{len(cat_ref_all)}')
 
 
-# In[ ]:
+# In[6]:
 
 
 # Plot basics
@@ -196,7 +198,7 @@ plt.figure()
 plt.plot(bins[:-1], n_matched/n_obj)
 
 
-# In[ ]:
+# In[7]:
 
 
 # Plot matches nicely
@@ -255,7 +257,7 @@ _ = plot_matches(
 )
 
 
-# In[ ]:
+# In[8]:
 
 
 # Plot probable point sources
