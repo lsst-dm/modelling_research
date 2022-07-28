@@ -19,7 +19,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from lsst.daf.persistence import Butler
+import gauss2d as g2
+import lsst.daf.butler as dafButler
 from lsst.meas.base.measurementInvestigationLib import rebuildNoiseReplacer
 import numpy as np
 import multiprofit.fitutils as mpfFit
@@ -27,11 +28,11 @@ import multiprofit.objects as mpfObj
 import cProfile
 import pstats
 
-butler = Butler("/datasets/hsc/repo/rerun/RC/w_2020_36/DM-26637/")
-filters = ['HSC-I']
-dataId = {"tract": 9813, "patch": "4,4", "filter": filters[0]}
+butler = dafButler.Butler("/repo/main", collections=["HSC/runs/RC2/w_2022_24/DM-35231"])
+filters = ('i',)
+dataId = {"tract": 9813, "patch": 40, "band": filters[0], "skymap": "hsc_rings_v1"}
 sources = butler.get("deepCoadd_meas", dataId)
-exposures = {band: butler.get("deepCoadd_calexp", dataId, filter=band) for band in filters}
+exposures = {band: butler.get("deepCoadd_calexp", dataId, band=band) for band in filters}
 
 n_eval = 10
 # 1338 takes a while if you want to benchmark a source dominated by model evaluation time
@@ -71,8 +72,9 @@ for noiseReplacer in noiseReplacers.values():
 exposures_data = {
     band: (
         mpfObj.Exposure(
-            band=band, image=np.float64(exposure.image.subset(bbox).array),
-            error_inverse=1 / np.float64(exposure.variance.subset(bbox).array),
+            band=band,
+            image=g2.ImageD(np.float64(exposure.image.subset(bbox).array)),
+            error_inverse=g2.ImageD(1/np.float64(exposure.variance.subset(bbox).array)),
             is_error_sigma=False,
         ),
         exposure.getPsf().computeKernelImage(center),
